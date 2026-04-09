@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { CalendarDays, Trophy, Settings, AlertTriangle, Wand2, Download, Building2 } from "lucide-react";
 
 const DIVISIONS = [
