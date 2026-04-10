@@ -1271,6 +1271,8 @@ function generateScheduleEngine(config) {
   const schedule = [];
   const unscheduled = [];
 
+  scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config);
+
   const teamMap = Object.fromEntries(teams.map((team) => [team.id, team]));
 
   for (const division of DIVISIONS) {
