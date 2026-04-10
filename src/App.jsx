@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import type { ReactNode, ComponentType, CSSProperties } from "react";
 import {
   CalendarDays,
   Trophy,
@@ -10,118 +9,6 @@ import {
   Building2,
 } from "lucide-react";
 
-type CourtConfig = {
-  name: string;
-  enabled: boolean;
-  startTime?: string;
-};
-
-type SaturdayConfig = {
-  date: string;
-  enabled: boolean;
-};
-
-type TimeSlotConfig = {
-  time: string;
-  enabled: boolean;
-};
-
-type Team = {
-  id: string;
-  name: string;
-  division: string;
-  gamesScheduled: number;
-  targetGames: number;
-  earlyGames: number;
-  home: number;
-  away: number;
-  doubleHeaders: number;
-  maxSameTimeSlot: number;
-  allowDoubleheaders: boolean;
-  gamesByDate: Record<string, number>;
-  gamesByTime: Record<string, number>;
-  opponents: Record<string, number>;
-  scheduledGames: Array<{
-    date: string;
-    time: string;
-    court: string;
-    opponentName: string;
-    isHome: boolean;
-  }>;
-  morningGames: number;
-  afternoonGames: number;
-};
-
-type Slot = {
-  key: string;
-  date: string;
-  time: string;
-  court: string;
-  used: boolean;
-};
-
-type ScheduleGame = {
-  division: string;
-  date: string;
-  time: string;
-  court: string;
-  home: string;
-  away: string;
-};
-
-type AuditRow = {
-  team: string;
-  division: string;
-  games: number;
-  target: number;
-  early: number;
-  home: number;
-  away: number;
-  dh: number;
-  maxSameTime: number;
-  morning: number;
-  afternoon: number;
-  issues: string[];
-};
-
-type AuditSummary = {
-  totalGames: number;
-  totalTeams: number;
-  allTeamsScheduled: boolean;
-  earlyViolations: number;
-  homeAwayIssues: number;
-  missingTeams: number;
-  enabledDates: number;
-  enabledCourts: number;
-  fifthBoysDhTeamsMet: boolean;
-};
-
-type UnscheduledIssue = {
-  matchup: string;
-  reason: string;
-  suggestion: string;
-};
-
-type AppConfig = {
-  seasonYear: number;
-  maxEarlyGames: number;
-  globalAllowDoubleheaders: boolean;
-  selectedDateForCourts: string;
-  fifthBoysDoubleheaderDate: string;
-  timeSlots: TimeSlotConfig[];
-  divisions: Record<string, number>;
-  divisionGames: Record<string, number>;
-  saturdays: SaturdayConfig[];
-  dateCourtSettings: Record<string, CourtConfig[]>;
-};
-
-type ScheduleResult = {
-  schedule: ScheduleGame[];
-  auditRows: AuditRow[];
-  auditSummary: AuditSummary;
-  unscheduled: UnscheduledIssue[];
-};
-
 const DIVISIONS = [
   "5th Boys",
   "6th Boys",
@@ -129,9 +16,9 @@ const DIVISIONS = [
   "8th Boys",
   "5th/6th Girls",
   "7th/8th Girls",
-] as const;
+];
 
-const DEFAULT_COURTS: CourtConfig[] = [
+const DEFAULT_COURTS = [
   { name: "MGMS-AB", enabled: true },
   { name: "MGMS-DE", enabled: true },
   { name: "MGCG-FG", enabled: true },
@@ -157,14 +44,14 @@ const DEFAULT_TIMES = [
   "3:35",
   "4:40",
   "5:45",
-] as const;
+];
 
 const SEASON_YEAR_OPTIONS = Array.from({ length: 8 }, (_, i) => 2026 + i);
 const TEAM_COUNT_OPTIONS = Array.from({ length: 21 }, (_, i) => String(i + 4));
 const GAME_COUNT_OPTIONS = ["6", "7", "8", "9", "10", "11", "12"];
 const MAX_EARLY_OPTIONS = ["0", "1", "2", "3", "4"];
 
-const styles: Record<string, CSSProperties> = {
+const styles = {
   page: {
     minHeight: "100vh",
     background: "#f8fafc",
@@ -336,19 +223,11 @@ const styles: Record<string, CSSProperties> = {
   },
 };
 
-function Card({ children }: { children: ReactNode }) {
+function Card({ children }) {
   return <div style={styles.card}>{children}</div>;
 }
 
-function StatCard({
-  label,
-  value,
-  subvalue,
-}: {
-  label: string;
-  value: ReactNode;
-  subvalue?: ReactNode;
-}) {
+function StatCard({ label, value, subvalue }) {
   return (
     <Card>
       <div style={{ fontSize: 14, color: "#64748b" }}>{label}</div>
@@ -362,13 +241,7 @@ function StatCard({
   );
 }
 
-function SectionTitle({
-  icon: Icon,
-  children,
-}: {
-  icon?: ComponentType<{ size?: number }>;
-  children: ReactNode;
-}) {
+function SectionTitle({ icon: Icon, children }) {
   return (
     <div
       style={{
@@ -386,25 +259,19 @@ function SectionTitle({
   );
 }
 
-function Badge({
-  children,
-  danger = false,
-}: {
-  children: ReactNode;
-  danger?: boolean;
-}) {
+function Badge({ children, danger = false }) {
   return <span style={danger ? styles.badgeDanger : styles.badge}>{children}</span>;
 }
 
-function formatShortDate(date: Date) {
+function formatShortDate(date) {
   const m = date.getMonth() + 1;
   const d = date.getDate();
   const y = String(date.getFullYear()).slice(-2);
   return `${m}/${d}/${y}`;
 }
 
-function getSeasonSaturdays(startYear: number) {
-  const dates: string[] = [];
+function getSeasonSaturdays(startYear) {
+  const dates = [];
   const start = new Date(startYear, 10, 1);
   const end = new Date(startYear + 1, 1, 28);
   const cursor = new Date(start);
@@ -415,12 +282,8 @@ function getSeasonSaturdays(startYear: number) {
   return dates;
 }
 
-function buildDateCourtSettings(
-  dates: string[],
-  previous: Record<string, CourtConfig[]> = {},
-  baseCourts: CourtConfig[] = DEFAULT_COURTS,
-) {
-  const next: Record<string, CourtConfig[]> = {};
+function buildDateCourtSettings(dates, previous = {}, baseCourts = DEFAULT_COURTS) {
+  const next = {};
   for (const date of dates) {
     const prior = previous[date] || [];
     next[date] = baseCourts.map((court, idx) => {
@@ -436,7 +299,7 @@ function buildDateCourtSettings(
   return next;
 }
 
-function createInitialState(): AppConfig {
+function createInitialState() {
   const seasonYear = 2026;
   const saturdays = getSeasonSaturdays(seasonYear).map((date) => ({
     date,
@@ -470,36 +333,36 @@ function createInitialState(): AppConfig {
   };
 }
 
-function isEarlyTime(time: string) {
+function isEarlyTime(time) {
   return time === "8:00";
 }
 
-function maxSameTimeSlot(gamesByTime: Record<string, number>) {
+function maxSameTimeSlot(gamesByTime) {
   const values = Object.values(gamesByTime);
   return values.length ? Math.max(...values) : 0;
 }
 
-function isMorningTime(time: string) {
+function isMorningTime(time) {
   return ["8:00", "9:05", "10:10", "11:15"].includes(time);
 }
 
-function isAfternoonTime(time: string) {
+function isAfternoonTime(time) {
   return ["12:20", "1:25", "2:30", "3:35", "4:40", "5:45"].includes(time);
 }
 
-function getIdealMorningGames(team: Team) {
+function getIdealMorningGames(team) {
   return Math.floor((team.targetGames || 0) / 2);
 }
 
-function getIdealAfternoonGames(team: Team) {
+function getIdealAfternoonGames(team) {
   return Math.ceil((team.targetGames || 0) / 2);
 }
 
-function getProjectedTimeCount(team: Team, time: string) {
+function getProjectedTimeCount(team, time) {
   return (team.gamesByTime?.[time] || 0) + 1;
 }
 
-function getTimeSpreadPenalty(team: Team, slotTime: string) {
+function getTimeSpreadPenalty(team, slotTime) {
   const counts = DEFAULT_TIMES.filter(
     (time) => team.gamesByTime?.[time] != null || time === slotTime,
   ).map((time) => (team.gamesByTime?.[time] || 0) + (time === slotTime ? 1 : 0));
@@ -508,7 +371,7 @@ function getTimeSpreadPenalty(team: Team, slotTime: string) {
   return (Math.max(...counts) - Math.min(...counts)) * 10;
 }
 
-function fairnessScore(team: Team) {
+function fairnessScore(team) {
   const morningGames = team.morningGames || 0;
   const afternoonGames = team.afternoonGames || 0;
   const dayPartImbalance = Math.abs(morningGames - afternoonGames);
@@ -526,8 +389,8 @@ function fairnessScore(team: Team) {
   );
 }
 
-function buildTeams(config: AppConfig) {
-  const teams: Team[] = [];
+function buildTeams(config) {
+  const teams = [];
   for (const division of DIVISIONS) {
     const count = Number(config.divisions[division] || 0);
     const allowDoubleheaders =
@@ -558,12 +421,12 @@ function buildTeams(config: AppConfig) {
   return teams;
 }
 
-function getEnabledCourtsForDate(config: AppConfig, date: string) {
+function getEnabledCourtsForDate(config, date) {
   const courts = config.dateCourtSettings[date] || [];
   return courts.filter((c) => c.enabled && String(c.name || "").trim() !== "");
 }
 
-function getSlotsRemainingForCourt(config: AppConfig, court: CourtConfig) {
+function getSlotsRemainingForCourt(config, court) {
   const enabledTimes = config.timeSlots.filter((t) => t.enabled).map((t) => t.time);
   const startIndex = enabledTimes.indexOf(court.startTime || "8:00");
   if (!court.enabled || String(court.name || "").trim() === "") return 0;
@@ -571,15 +434,15 @@ function getSlotsRemainingForCourt(config: AppConfig, court: CourtConfig) {
   return enabledTimes.length - startIndex;
 }
 
-function getTotalSlotsForDate(config: AppConfig, date: string) {
+function getTotalSlotsForDate(config, date) {
   const courts = config.dateCourtSettings[date] || [];
   return courts.reduce((sum, court) => sum + getSlotsRemainingForCourt(config, court), 0);
 }
 
-function buildOpenSlots(config: AppConfig) {
+function buildOpenSlots(config) {
   const enabledDates = config.saturdays.filter((d) => d.enabled).map((d) => d.date);
   const enabledTimes = config.timeSlots.filter((t) => t.enabled).map((t) => t.time);
-  const slots: Slot[] = [];
+  const slots = [];
 
   for (const date of enabledDates) {
     const courts = getEnabledCourtsForDate(config, date);
@@ -602,7 +465,7 @@ function buildOpenSlots(config: AppConfig) {
   return slots;
 }
 
-function chooseHomeTeam(teamA: Team, teamB: Team) {
+function chooseHomeTeam(teamA, teamB) {
   const diffA = (teamA.home || 0) - (teamA.away || 0);
   const diffB = (teamB.home || 0) - (teamB.away || 0);
   if (diffA < diffB) return teamA;
@@ -610,7 +473,7 @@ function chooseHomeTeam(teamA: Team, teamB: Team) {
   return teamA.name < teamB.name ? teamA : teamB;
 }
 
-function applyGame(team: Team, slot: Slot, opponentName: string, isHome: boolean) {
+function applyGame(team, slot, opponentName, isHome) {
   team.gamesScheduled += 1;
   team.gamesByDate[slot.date] = (team.gamesByDate[slot.date] || 0) + 1;
   team.gamesByTime[slot.time] = (team.gamesByTime[slot.time] || 0) + 1;
@@ -632,21 +495,21 @@ function applyGame(team: Team, slot: Slot, opponentName: string, isHome: boolean
   team.maxSameTimeSlot = maxSameTimeSlot(team.gamesByTime);
 }
 
-function getTimeIndex(time: string) {
-  return DEFAULT_TIMES.indexOf(time as (typeof DEFAULT_TIMES)[number]);
+function getTimeIndex(time) {
+  return DEFAULT_TIMES.indexOf(time);
 }
 
-function areBackToBackTimes(timeA: string, timeB: string) {
+function areBackToBackTimes(timeA, timeB) {
   const a = getTimeIndex(timeA);
   const b = getTimeIndex(timeB);
   return a >= 0 && b >= 0 && Math.abs(a - b) === 1;
 }
 
-function getScheduledGamesOnDate(team: Team, date: string) {
+function getScheduledGamesOnDate(team, date) {
   return (team.scheduledGames || []).filter((game) => game.date === date);
 }
 
-function canPairInSlot(teamA: Team, teamB: Team, slot: Slot, config: AppConfig) {
+function canPairInSlot(teamA, teamB, slot, config) {
   if (teamA.id === teamB.id) return false;
   if (teamA.division !== teamB.division) return false;
   if (slot.used) return false;
@@ -663,8 +526,9 @@ function canPairInSlot(teamA: Team, teamB: Team, slot: Slot, config: AppConfig) 
       !existingA ||
       !areBackToBackTimes(existingA.time, slot.time) ||
       existingA.court !== slot.court
-    )
+    ) {
       return false;
+    }
   }
 
   if (bOnDate === 1) {
@@ -673,8 +537,9 @@ function canPairInSlot(teamA: Team, teamB: Team, slot: Slot, config: AppConfig) 
       !existingB ||
       !areBackToBackTimes(existingB.time, slot.time) ||
       existingB.court !== slot.court
-    )
+    ) {
       return false;
+    }
   }
 
   if (config.fifthBoysDoubleheaderDate) {
@@ -696,7 +561,7 @@ function canPairInSlot(teamA: Team, teamB: Team, slot: Slot, config: AppConfig) 
   return true;
 }
 
-function getProjectedDayPartPenalty(team: Team, slotTime: string) {
+function getProjectedDayPartPenalty(team, slotTime) {
   const projectedMorning = (team.morningGames || 0) + (isMorningTime(slotTime) ? 1 : 0);
   const projectedAfternoon =
     (team.afternoonGames || 0) + (isAfternoonTime(slotTime) ? 1 : 0);
@@ -710,7 +575,7 @@ function getProjectedDayPartPenalty(team: Team, slotTime: string) {
   );
 }
 
-function slotPenalty(teamA: Team, teamB: Team, slot: Slot) {
+function slotPenalty(teamA, teamB, slot) {
   let penalty = 0;
   const timeIndex = getTimeIndex(slot.time);
   penalty += Math.max(0, timeIndex) * 10;
@@ -730,21 +595,23 @@ function slotPenalty(teamA: Team, teamB: Team, slot: Slot) {
     existingA &&
     areBackToBackTimes(existingA.time, slot.time) &&
     existingA.court === slot.court
-  )
+  ) {
     penalty -= 30;
+  }
   if (
     existingB &&
     areBackToBackTimes(existingB.time, slot.time) &&
     existingB.court === slot.court
-  )
+  ) {
     penalty -= 30;
+  }
   if ((teamA.gamesByDate[slot.date] || 0) >= 1) penalty += 8;
   if ((teamB.gamesByDate[slot.date] || 0) >= 1) penalty += 8;
 
   return penalty;
 }
 
-function scheduleGame(schedule: ScheduleGame[], slot: Slot, teamA: Team, teamB: Team) {
+function scheduleGame(schedule, slot, teamA, teamB) {
   const homeTeam = chooseHomeTeam(teamA, teamB);
   const awayTeam = homeTeam.id === teamA.id ? teamB : teamA;
   slot.used = true;
@@ -760,14 +627,14 @@ function scheduleGame(schedule: ScheduleGame[], slot: Slot, teamA: Team, teamB: 
   });
 }
 
-function buildRoundRobinRounds(teamList: Team[]) {
+function buildRoundRobinRounds(teamList) {
   const teams = [...teamList];
-  if (teams.length % 2 === 1) teams.push(null as unknown as Team);
-  const rounds: Array<Array<[Team, Team]>> = [];
+  if (teams.length % 2 === 1) teams.push(null);
+  const rounds = [];
   let arr = [...teams];
   const totalRounds = arr.length - 1;
   for (let round = 0; round < totalRounds; round += 1) {
-    const pairings: Array<[Team, Team]> = [];
+    const pairings = [];
     for (let i = 0; i < arr.length / 2; i += 1) {
       const a = arr[i];
       const b = arr[arr.length - 1 - i];
@@ -780,11 +647,11 @@ function buildRoundRobinRounds(teamList: Team[]) {
 }
 
 function scheduleFifthBoysDoubleheaderDay(
-  teams: Team[],
-  openSlots: Slot[],
-  schedule: ScheduleGame[],
-  unscheduled: UnscheduledIssue[],
-  config: AppConfig,
+  teams,
+  openSlots,
+  schedule,
+  unscheduled,
+  config,
 ) {
   if (!config.fifthBoysDoubleheaderDate) return;
   const teamList = teams.filter((t) => t.division === "5th Boys");
@@ -836,11 +703,11 @@ function scheduleFifthBoysDoubleheaderDay(
   }
 }
 
-function chooseBestCandidate(team: Team, allTeams: Team[], openSlots: Slot[], config: AppConfig) {
+function chooseBestCandidate(team, allTeams, openSlots, config) {
   const divisionTeams = allTeams.filter(
     (t) => t.division === team.division && t.id !== team.id && t.gamesScheduled < t.targetGames,
   );
-  let best: { teamA: Team; teamB: Team; slot: Slot } | null = null;
+  let best = null;
   let bestScore = Infinity;
   for (const opponent of divisionTeams) {
     const repeatPenalty = (team.opponents[opponent.name] || 0) * 3;
@@ -860,11 +727,11 @@ function chooseBestCandidate(team: Team, allTeams: Team[], openSlots: Slot[], co
   return best;
 }
 
-function generateScheduleEngine(config: AppConfig): ScheduleResult {
+function generateScheduleEngine(config) {
   const teams = buildTeams(config);
   const openSlots = buildOpenSlots(config);
-  const schedule: ScheduleGame[] = [];
-  const unscheduled: UnscheduledIssue[] = [];
+  const schedule = [];
+  const unscheduled = [];
 
   scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config);
 
@@ -934,7 +801,7 @@ function generateScheduleEngine(config: AppConfig): ScheduleResult {
     }
   }
 
-  const parseDate = (d: string) => {
+  const parseDate = (d) => {
     const [m, day, y] = String(d).split("/");
     return new Date(`20${y}`, Number(m) - 1, Number(day)).getTime();
   };
@@ -947,7 +814,7 @@ function generateScheduleEngine(config: AppConfig): ScheduleResult {
     return a.court.localeCompare(b.court);
   });
 
-  const auditRows: AuditRow[] = teams.map((team) => ({
+  const auditRows = teams.map((team) => ({
     team: team.name,
     division: team.division,
     games: team.gamesScheduled,
@@ -963,7 +830,7 @@ function generateScheduleEngine(config: AppConfig): ScheduleResult {
       team.gamesScheduled !== team.targetGames ? "Missing games" : null,
       team.earlyGames > Number(config.maxEarlyGames) ? "Too many early games" : null,
       Math.abs(team.home - team.away) > 2 ? "Home/away imbalance" : null,
-    ].filter(Boolean) as string[],
+    ].filter(Boolean),
   }));
 
   const fifthBoysDhTeamsMet = teams
@@ -973,7 +840,7 @@ function generateScheduleEngine(config: AppConfig): ScheduleResult {
       return (t.gamesByDate[config.fifthBoysDoubleheaderDate] || 0) === 2;
     });
 
-  const auditSummary: AuditSummary = {
+  const auditSummary = {
     totalGames: schedule.length,
     totalTeams: teams.length,
     allTeamsScheduled: auditRows.every((r) => r.games === r.target),
@@ -992,7 +859,7 @@ function generateScheduleEngine(config: AppConfig): ScheduleResult {
   return { schedule, auditRows, auditSummary, unscheduled };
 }
 
-function exportCsv(filename: string, rows: Array<Array<string | number>>) {
+function exportCsv(filename, rows) {
   const csv = rows
     .map((row) =>
       row
@@ -1062,8 +929,8 @@ function runSelfChecks() {
 }
 
 export default function App() {
-  const [config, setConfig] = useState<AppConfig>(createInitialState());
-  const [result, setResult] = useState<ScheduleResult | null>(null);
+  const [config, setConfig] = useState(createInitialState());
+  const [result, setResult] = useState(null);
   const [activeTab, setActiveTab] = useState("setup");
   const [scheduleDivisionFilter, setScheduleDivisionFilter] = useState("all");
   const [scheduleTeamFilter, setScheduleTeamFilter] = useState("all");
@@ -1079,7 +946,10 @@ export default function App() {
     );
     const totalNeededGames = DIVISIONS.reduce(
       (sum, division) =>
-        sum + (Number(config.divisions[division] || 0) * Number(config.divisionGames[division] || 0)) / 2,
+        sum +
+        (Number(config.divisions[division] || 0) *
+          Number(config.divisionGames[division] || 0)) /
+          2,
       0,
     );
     return { enabledDates, totalSlots, totalTeams, totalNeededGames };
@@ -1121,7 +991,7 @@ export default function App() {
       return divisionOk && teamOk;
     });
 
-    const parseDate = (d: string) => {
+    const parseDate = (d) => {
       const [m, day, y] = d.split("/");
       return new Date(`20${y}`, Number(m) - 1, Number(day)).getTime();
     };
@@ -1133,21 +1003,21 @@ export default function App() {
     });
   }, [result, scheduleDivisionFilter, scheduleTeamFilter]);
 
-  function setDivisionCount(division: string, value: string) {
+  function setDivisionCount(division, value) {
     setConfig((prev) => ({
       ...prev,
       divisions: { ...prev.divisions, [division]: Number(value) },
     }));
   }
 
-  function setDivisionGames(division: string, value: string) {
+  function setDivisionGames(division, value) {
     setConfig((prev) => ({
       ...prev,
       divisionGames: { ...prev.divisionGames, [division]: Number(value) },
     }));
   }
 
-  function toggleSaturday(index: number, enabled: boolean) {
+  function toggleSaturday(index, enabled) {
     setConfig((prev) => ({
       ...prev,
       saturdays: prev.saturdays.map((entry, i) =>
@@ -1156,7 +1026,7 @@ export default function App() {
     }));
   }
 
-  function updateSaturdayDate(index: number, date: string) {
+  function updateSaturdayDate(index, date) {
     setConfig((prev) => {
       const nextSaturdays = prev.saturdays.map((entry, i) =>
         i === index ? { ...entry, date } : entry,
@@ -1177,7 +1047,7 @@ export default function App() {
     });
   }
 
-  function toggleTime(index: number, enabled: boolean) {
+  function toggleTime(index, enabled) {
     setConfig((prev) => ({
       ...prev,
       timeSlots: prev.timeSlots.map((entry, i) =>
@@ -1186,7 +1056,7 @@ export default function App() {
     }));
   }
 
-  function changeSeasonYear(value: string) {
+  function changeSeasonYear(value) {
     const seasonYear = Number(value);
     setConfig((prev) => {
       const saturdays = getSeasonSaturdays(seasonYear).map((date) => ({
@@ -1207,7 +1077,7 @@ export default function App() {
     });
   }
 
-  function updateCourtForDate(date: string, courtIndex: number, patch: Partial<CourtConfig>) {
+  function updateCourtForDate(date, courtIndex, patch) {
     setConfig((prev) => ({
       ...prev,
       dateCourtSettings: {
