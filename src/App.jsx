@@ -735,12 +735,37 @@ function buildDivisionMatchPlan(divisionTeams, targetGames, config, division) {
 
 function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allowIgnoreTimeVariety = false) {
   const slotGroups = buildOrderedSlotGroups(openSlots);
+  let best = null;
+  let bestScore = Infinity;
 
   for (const group of slotGroups) {
     for (const slot of group.slots) {
       if (!canPairInSlot(teamA, teamB, slot, config, { ignoreTimeVariety: allowIgnoreTimeVariety })) continue;
-      return slot;
+
+      let penalty = 0;
+      penalty += slotPenalty(teamA, teamB, slot) * (allowIgnoreTimeVariety ? 0.15 : 0.35);
+      penalty += (teamA.gamesByDate[slot.date] || 0) * 20;
+      penalty += (teamB.gamesByDate[slot.date] || 0) * 20;
+      penalty += group.groupIndex * 3;
+      if (isEarlyTime(slot.time)) {
+        penalty += (teamA.earlyGames || 0) * 40;
+        penalty += (teamB.earlyGames || 0) * 40;
+      }
+      if (teamA.division === '5th Boys' && config.fifthBoysDoubleheaderDate) {
+        const aOnDhDate = teamA.gamesByDate[config.fifthBoysDoubleheaderDate] || 0;
+        const bOnDhDate = teamB.gamesByDate[config.fifthBoysDoubleheaderDate] || 0;
+        if (slot.date === config.fifthBoysDoubleheaderDate) {
+          if (aOnDhDate === 0) penalty -= 35;
+          if (bOnDhDate === 0) penalty -= 35;
+        }
+      }
+
+      if (penalty < bestScore) {
+        bestScore = penalty;
+        best = slot;
+      }
     }
+    if (best) return best;
   }
 
   return null;
@@ -1336,6 +1361,128 @@ function generateScheduleEngine(config) {
   return { schedule: improvedSchedule, auditRows, auditSummary, unscheduled };
 }
 
+
+function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
+  const improvedSchedule = schedule
+    .map((game) => ({ ...game }))
+    .sort((a, b) => {
+      const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
+      if (dateDiff !== 0) return dateDiff;
+      const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
+      if (timeDiff !== 0) return timeDiff;
+      return a.court.localeCompare(b.court);
+    });
+
+  const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
+  const finalTeams = Object.values(finalTeamMap);
+  const builtTeams = buildTeams(config);
+
+  const auditRows = finalTeams.map((team) => ({
+    team: team.name,
+    division: team.division,
+    games: team.gamesScheduled,
+    target: team.targetGames,
+    early: team.earlyGames,
+    home: team.home,
+    away: team.away,
+    dh: team.doubleHeaders,
+    morning: team.morningGames || 0,
+    afternoon: team.afternoonGames || 0,
+    maxSameTime: team.maxSameTimeSlot,
+    issues: [
+      team.gamesScheduled !== team.targetGames ? 'Missing games' : null,
+      team.earlyGames > Number(config.maxEarlyGames) ? 'Too many early games' : null,
+      Math.abs(team.home - team.away) > 2 ? 'Home/away imbalance' : null,
+      team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? 'Too many doubleheaders' : null,
+      team.maxSameTimeSlot > (team.targetGames <= 8 ? 2 : 3) ? 'Time slot concentration' : null,
+      Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.65)
+        ? 'Poor AM/PM balance'
+        : null,
+    ].filter(Boolean),
+  }));
+
+  const auditSummary = {
+    totalGames: improvedSchedule.length,
+    totalTeams: builtTeams.length,
+    allTeamsScheduled: auditRows.every((row) => row.games === row.target),
+    earlyViolations: auditRows.filter((row) => row.early > Number(config.maxEarlyGames)).length,
+    homeAwayIssues: auditRows.filter((row) => Math.abs(row.home - row.away) > 2).length,
+    missingTeams: auditRows.filter((row) => row.games !== row.target).length,
+    timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
+    enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
+    enabledCourts: Object.values(config.dateCourtSettings).reduce(
+      (sum, courts) => sum + courts.filter((court) => court.enabled && String(court.name || '').trim() !== '').length,
+      0
+    ),
+  };
+
+  return {
+    schedule: improvedSchedule,
+    auditRows,
+    auditSummary,
+    unscheduled: Array.isArray(priorUnscheduled) ? [...priorUnscheduled] : [],
+  };
+}
+
+function getGameAtCell(result, date, time, court) {
+  return result?.schedule?.find((entry) => entry.date === date && entry.time === time && entry.court === court) || null;
+}
+
+function validateManualMove(schedule, gameToMove, target, config) {
+  const targetOccupied = schedule.some(
+    (game) => game !== gameToMove && game.date === target.date && game.time === target.time && game.court === target.court
+  );
+  if (targetOccupied) return 'That slot is already occupied.';
+
+  const enabledCourts = getEnabledCourtsForDate(config, target.date).map((court) => court.name);
+  if (!enabledCourts.includes(target.court)) return 'That court is not enabled for the selected date.';
+
+  const enabledTimes = config.timeSlots.filter((entry) => entry.enabled).map((entry) => entry.time);
+  if (!enabledTimes.includes(target.time)) return 'That time is not enabled.';
+
+  const startSetting = (config.dateCourtSettings[target.date] || []).find((court) => court.name === target.court);
+  if (startSetting) {
+    const startIndex = enabledTimes.indexOf(startSetting.startTime || '8:00');
+    const timeIndex = enabledTimes.indexOf(target.time);
+    if (timeIndex >= 0 && startIndex >= 0 && timeIndex < startIndex) {
+      return 'That slot is before the selected start time for the court.';
+    }
+  }
+
+  const affectedTeams = [gameToMove.home, gameToMove.away];
+  for (const teamName of affectedTeams) {
+    const teamGames = schedule.filter(
+      (game) =>
+        game !== gameToMove &&
+        (game.home === teamName || game.away === teamName)
+    );
+
+    const targetDateGames = teamGames.filter((game) => game.date === target.date);
+    if (targetDateGames.some((game) => game.time === target.time)) {
+      return `${teamName} already has a game at ${target.time}.`;
+    }
+
+    if (targetDateGames.length >= 2) {
+      return `${teamName} would exceed two games on ${target.date}.`;
+    }
+
+    if (targetDateGames.length === 1) {
+      const existing = targetDateGames[0];
+      if (!areBackToBackTimes(existing.time, target.time) || existing.court !== target.court) {
+        return `${teamName} doubleheaders must stay back-to-back on the same court.`;
+      }
+    }
+
+    const earlyCountExcludingThis = teamGames.filter((game) => isEarlyTime(game.time)).length;
+    const projectedEarly = earlyCountExcludingThis + (isEarlyTime(target.time) ? 1 : 0);
+    if (projectedEarly > Number(config.maxEarlyGames)) {
+      return `${teamName} would exceed the 8:00 game limit.`;
+    }
+  }
+
+  return '';
+}
+
 function exportCsv(filename, rows) {
   const csv = rows
     .map((row) =>
@@ -1449,6 +1596,8 @@ export default function App() {
   const [publishedMeta, setPublishedMeta] = useState(null);
   const [publishNotice, setPublishNotice] = useState("");
   const [adminScheduleDate, setAdminScheduleDate] = useState("");
+  const [dragState, setDragState] = useState(null);
+  const [gridNotice, setGridNotice] = useState("");
 
   useEffect(() => {
     async function loadPublicSchedule() {
@@ -1598,6 +1747,52 @@ export default function App() {
     }));
   }
 
+  function startGridDrag(date, time, court) {
+    if (isPublicMode || !result) return;
+    const game = getGameAtCell(result, date, time, court);
+    if (!game) return;
+    setDragState({ date, time, court, label: `${game.away} @ ${game.home}`, game });
+    setGridNotice(`Dragging ${game.away} @ ${game.home}`);
+  }
+
+  function clearGridDrag() {
+    setDragState(null);
+  }
+
+  function handleGridDrop(date, time, court) {
+    if (!dragState || !result) return;
+    const source = dragState;
+    if (source.date === date && source.time === time && source.court === court) {
+      setGridNotice('Game stayed in the same slot.');
+      setDragState(null);
+      return;
+    }
+
+    const sourceGame = result.schedule.find(
+      (game) => game.date === source.date && game.time === source.time && game.court === source.court && game.home === source.game.home && game.away === source.game.away
+    );
+    if (!sourceGame) {
+      setGridNotice('Could not find the dragged game anymore.');
+      setDragState(null);
+      return;
+    }
+
+    const validationMessage = validateManualMove(result.schedule, sourceGame, { date, time, court }, config);
+    if (validationMessage) {
+      setGridNotice(validationMessage);
+      setDragState(null);
+      return;
+    }
+
+    const nextSchedule = result.schedule.map((game) =>
+      game === sourceGame ? { ...game, date, time, court } : { ...game }
+    );
+    const nextResult = buildResultFromSchedule(nextSchedule, config, result.unscheduled);
+    setResult(nextResult);
+    setGridNotice(`Moved ${sourceGame.away} @ ${sourceGame.home} to ${date} ${time} ${court}.`);
+    setDragState(null);
+  }
+
   function resetAll() {
     setConfig(createInitialState());
     setResult(null);
@@ -1607,6 +1802,8 @@ export default function App() {
     setPublishNotice("");
     setPublishedMeta(null);
     setAdminScheduleDate("");
+    setDragState(null);
+    setGridNotice("");
   }
 
   function runScheduler() {
@@ -1616,6 +1813,8 @@ export default function App() {
     setScheduleTeamFilter("all");
     setActiveTab("schedule");
     setPublishNotice("");
+    setDragState(null);
+    setGridNotice("");
   }
 
   async function publishSchedule() {
@@ -1923,9 +2122,14 @@ export default function App() {
                         </select>
                       </div>
                       <div style={{ fontSize: 14, color: "#475569" }}>
-                        Review every enabled time slot and court for the selected date so you can spot gaps or open slots immediately.
+                        Drag a scheduled game to another open slot on this date to manually adjust the grid. The drop is blocked if it would break daily limits, 8:00 caps, or same-court back-to-back doubleheader rules.
                       </div>
                     </div>
+                    {gridNotice ? (
+                      <div style={{ marginBottom: 12, border: "1px solid #dbeafe", background: dragState ? "#eff6ff" : "#f8fafc", color: "#1e3a8a", borderRadius: 12, padding: 12, fontSize: 14, fontWeight: 600 }}>
+                        {gridNotice}
+                      </div>
+                    ) : null}
                     <div style={{ ...styles.tableWrap, marginBottom: 20, maxHeight: 500 }}>
                       <table style={styles.table}>
                         <thead>
@@ -1938,11 +2142,47 @@ export default function App() {
                           {adminScheduleGrid.map((row) => (
                             <tr key={row.time}>
                               <td style={styles.td}><strong>{row.time}</strong></td>
-                              {adminScheduleCourts.map((court) => (
-                                <td key={`${row.time}-${court.name}`} style={styles.td}>
-                                  {row[court.name] || <span style={{ color: "#94a3b8" }}>Open</span>}
-                                </td>
-                              ))}
+                              {adminScheduleCourts.map((court) => {
+                                const cellGame = getGameAtCell(result, adminScheduleDate, row.time, court.name);
+                                const isDropTarget = dragState && dragState.date === adminScheduleDate && dragState.time === row.time && dragState.court === court.name;
+                                return (
+                                  <td
+                                    key={`${row.time}-${court.name}`}
+                                    style={{
+                                      ...styles.td,
+                                      background: isDropTarget ? '#dbeafe' : 'transparent',
+                                      cursor: !isPublicMode ? 'pointer' : 'default',
+                                    }}
+                                    onDragOver={(e) => {
+                                      if (!isPublicMode) e.preventDefault();
+                                    }}
+                                    onDrop={(e) => {
+                                      e.preventDefault();
+                                      handleGridDrop(adminScheduleDate, row.time, court.name);
+                                    }}
+                                  >
+                                    {cellGame ? (
+                                      <div
+                                        draggable={!isPublicMode}
+                                        onDragStart={() => startGridDrag(adminScheduleDate, row.time, court.name)}
+                                        onDragEnd={clearGridDrag}
+                                        style={{
+                                          border: '1px solid #bfdbfe',
+                                          background: '#eff6ff',
+                                          borderRadius: 10,
+                                          padding: 10,
+                                          fontWeight: 600,
+                                        }}
+                                        title="Drag to another open slot"
+                                      >
+                                        {cellGame.away} @ {cellGame.home}
+                                      </div>
+                                    ) : (
+                                      <span style={{ color: '#94a3b8' }}>Open</span>
+                                    )}
+                                  </td>
+                                );
+                              })}
                             </tr>
                           ))}
                         </tbody>
