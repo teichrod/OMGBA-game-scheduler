@@ -578,8 +578,60 @@ function violatesTimeVariety(team, slotTime) {
   return false;
 }
 
-function canPairInSlot(teamA, teamB, slot, config) {
+
+function getEnabledDates(config) {
+  return config.saturdays.filter((entry) => entry.enabled).map((entry) => entry.date);
+}
+
+function getDivisionTeams(allTeams, division) {
+  return allTeams.filter((team) => team.division === division);
+}
+
+function getTeamNeed(team) {
+  return Math.max(0, (team.targetGames || 0) - (team.gamesScheduled || 0));
+}
+
+function getMaxGamesPerDay(team, date, config) {
+  if (config.globalAllowDoubleheaders) return 2;
+  if (team.division === "5th Boys") {
+    if (config.fifthBoysDoubleheaderDate && date === config.fifthBoysDoubleheaderDate) return 2;
+    const teamCount = Number(config.divisions["5th Boys"] || 0);
+    return teamCount % 2 === 1 ? 2 : 1;
+  }
+  const teamCount = Number(config.divisions[team.division] || 0);
+  return teamCount % 2 === 1 ? 2 : 1;
+}
+
+function getFutureCapacity(team, currentDate, config) {
+  const enabledDates = getEnabledDates(config);
+  return enabledDates
+    .filter((date) => parseShortDate(date) >= parseShortDate(currentDate))
+    .reduce((sum, date) => {
+      const already = team.gamesByDate[date] || 0;
+      return sum + Math.max(0, getMaxGamesPerDay(team, date, config) - already);
+    }, 0);
+}
+
+function canStillReachTarget(team, currentDate, config) {
+  const need = getTeamNeed(team);
+  if (need <= 0) return true;
+  return getFutureCapacity(team, currentDate, config) >= need;
+}
+
+function countLegalOpponents(team, allTeams, slot, config) {
+  return allTeams.filter(
+    (candidate) =>
+      candidate.id !== team.id &&
+      candidate.division === team.division &&
+      getTeamNeed(candidate) > 0 &&
+      canPairInSlot(team, candidate, slot, config, allTeams, false)
+  ).length;
+}
+
+
+function canPairInSlot(teamA, teamB, slot, config, allTeams = null, enforceCapacity = true) {
   if (teamA.id === teamB.id || teamA.division !== teamB.division || slot.used) return false;
+  if (getTeamNeed(teamA) <= 0 || getTeamNeed(teamB) <= 0) return false;
 
   const repeatLimit = getAllowedRepeatLimit(config, teamA.division);
   if ((teamA.opponents[teamB.name] || 0) >= repeatLimit) return false;
@@ -587,6 +639,10 @@ function canPairInSlot(teamA, teamB, slot, config) {
 
   const aOnDate = teamA.gamesByDate[slot.date] || 0;
   const bOnDate = teamB.gamesByDate[slot.date] || 0;
+  const aMaxPerDay = getMaxGamesPerDay(teamA, slot.date, config);
+  const bMaxPerDay = getMaxGamesPerDay(teamB, slot.date, config);
+
+  if (aOnDate >= aMaxPerDay || bOnDate >= bMaxPerDay) return false;
   if (aOnDate >= 2 || bOnDate >= 2) return false;
 
   if (aOnDate >= 1 && (teamA.doubleHeaders || 0) >= (teamA.maxDoubleheadersPerTeam || 0)) return false;
@@ -626,8 +682,46 @@ function canPairInSlot(teamA, teamB, slot, config) {
   if (violatesTimeVariety(teamA, slot.time)) return false;
   if (violatesTimeVariety(teamB, slot.time)) return false;
 
+  if (enforceCapacity) {
+    if ((teamA.gamesScheduled || 0) + 1 > (teamA.targetGames || 0)) return false;
+    if ((teamB.gamesScheduled || 0) + 1 > (teamB.targetGames || 0)) return false;
+
+    const trialA = {
+      ...teamA,
+      gamesScheduled: (teamA.gamesScheduled || 0) + 1,
+      gamesByDate: { ...(teamA.gamesByDate || {}), [slot.date]: (teamA.gamesByDate?.[slot.date] || 0) + 1 },
+    };
+    const trialB = {
+      ...teamB,
+      gamesScheduled: (teamB.gamesScheduled || 0) + 1,
+      gamesByDate: { ...(teamB.gamesByDate || {}), [slot.date]: (teamB.gamesByDate?.[slot.date] || 0) + 1 },
+    };
+
+    if (!canStillReachTarget(trialA, slot.date, config)) return false;
+    if (!canStillReachTarget(trialB, slot.date, config)) return false;
+
+    if (allTeams) {
+      const divisionTeams = allTeams.filter((candidate) => candidate.division === teamA.division);
+      const remainingNeedy = divisionTeams.filter(
+        (candidate) => candidate.id !== teamA.id && candidate.id !== teamB.id && getTeamNeed(candidate) > 0
+      );
+      const futureSlotsExist = buildOrderedSlotGroups(
+        buildOpenSlots(config).filter(
+          (candidateSlot) =>
+            !candidateSlot.used &&
+            (parseShortDate(candidateSlot.date) > parseShortDate(slot.date) ||
+              (candidateSlot.date === slot.date &&
+                (getTimeIndex(candidateSlot.time) > getTimeIndex(slot.time) ||
+                  (candidateSlot.time === slot.time && candidateSlot.court !== slot.court))))
+        )
+      );
+      if (remainingNeedy.length > 0 && futureSlotsExist.length === 0) return false;
+    }
+  }
+
   return true;
 }
+
 
 function slotPenalty(teamA, teamB, slot) {
   let penalty = 0;
@@ -740,6 +834,7 @@ function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unschedule
   }
 }
 
+
 function chooseBestCandidate(team, allTeams, slotGroups, config) {
   const divisionTeams = allTeams.filter(
     (candidate) => candidate.division === team.division && candidate.id !== team.id && candidate.gamesScheduled < candidate.targetGames
@@ -749,23 +844,40 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
   let bestScore = Infinity;
 
   for (const group of slotGroups) {
-    for (const opponent of divisionTeams) {
-      const remainingOptionsA = divisionTeams.filter(
-        (other) => other.id !== opponent.id && (team.opponents[other.name] || 0) < getAllowedRepeatLimit(config, team.division)
-      ).length;
-      const remainingOptionsB = divisionTeams.filter(
-        (other) => other.id !== team.id && (opponent.opponents[other.name] || 0) < getAllowedRepeatLimit(config, opponent.division)
-      ).length;
-      const constraintPenalty = (10 - Math.min(10, remainingOptionsA)) * 6 + (10 - Math.min(10, remainingOptionsB)) * 6;
+    for (const slot of group.slots) {
+      const anchorFlexPenalty = Math.max(0, 8 - countLegalOpponents(team, allTeams, slot, config)) * 18;
 
-      for (const slot of group.slots) {
-        if (!canPairInSlot(team, opponent, slot, config)) continue;
+      for (const opponent of divisionTeams) {
+        if (!canPairInSlot(team, opponent, slot, config, allTeams, true)) continue;
+
+        const teamNeed = getTeamNeed(team);
+        const opponentNeed = getTeamNeed(opponent);
+        const remainingOptionsA = divisionTeams.filter(
+          (other) =>
+            other.id !== opponent.id &&
+            canPairInSlot(team, other, slot, config, allTeams, false)
+        ).length;
+        const remainingOptionsB = divisionTeams.filter(
+          (other) =>
+            other.id !== team.id &&
+            canPairInSlot(opponent, other, slot, config, allTeams, false)
+        ).length;
+
+        const constraintPenalty =
+          (10 - Math.min(10, remainingOptionsA)) * 18 +
+          (10 - Math.min(10, remainingOptionsB)) * 18;
+
+        const urgencyPenalty = -teamNeed * 900 - opponentNeed * 900;
+        const imbalancePenalty = Math.abs(teamNeed - opponentNeed) * 70;
         const score =
-          fairnessScore(team) +
-          fairnessScore(opponent) +
+          urgencyPenalty +
+          fairnessScore(team) * 12 +
+          fairnessScore(opponent) * 12 +
           slotPenalty(team, opponent, slot) +
           constraintPenalty +
-          group.groupIndex * 4;
+          anchorFlexPenalty +
+          imbalancePenalty +
+          group.groupIndex * 3;
 
         if (score < bestScore) {
           bestScore = score;
@@ -778,6 +890,7 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
 
   return best;
 }
+
 
 function buildOrderedSlotGroups(openSlots) {
   const freeSlots = openSlots
@@ -1007,6 +1120,7 @@ function rebalanceScheduleTimes(schedule, config) {
   return nextSchedule;
 }
 
+
 function generateScheduleEngine(config) {
   const teams = buildTeams(config);
   const openSlots = buildOpenSlots(config);
@@ -1019,7 +1133,7 @@ function generateScheduleEngine(config) {
     const divisionTeams = teams.filter((team) => team.division === division);
     let safety = 0;
 
-    while (divisionTeams.some((team) => team.gamesScheduled < team.targetGames) && safety < 12000) {
+    while (divisionTeams.some((team) => team.gamesScheduled < team.targetGames) && safety < 20000) {
       safety += 1;
 
       const needyTeams = divisionTeams
@@ -1028,7 +1142,9 @@ function generateScheduleEngine(config) {
           const aNeed = a.targetGames - a.gamesScheduled;
           const bNeed = b.targetGames - b.gamesScheduled;
           if (bNeed !== aNeed) return bNeed - aNeed;
-          return fairnessScore(b) - fairnessScore(a);
+          const fairnessDiff = fairnessScore(b) - fairnessScore(a);
+          if (fairnessDiff !== 0) return fairnessDiff;
+          return a.name.localeCompare(b.name);
         });
 
       let scheduledOne = false;
@@ -1042,55 +1158,63 @@ function generateScheduleEngine(config) {
         break;
       }
 
-      if (!scheduledOne) {
-        unscheduled.push({
-          matchup: `${division} remaining teams`,
-          reason: "No legal matchup/slot found during main pass",
-          suggestion: "Add more capacity, loosen a constraint, or increase the number of teams/games balance for this division.",
-        });
-        break;
-      }
+      if (!scheduledOne) break;
     }
-  }
 
-  const remainingTeams = teams
-    .filter((team) => team.gamesScheduled < team.targetGames)
-    .sort((a, b) => (b.targetGames - b.gamesScheduled) - (a.targetGames - a.gamesScheduled));
-
-  for (const team of remainingTeams) {
-    let safety = 0;
-    while (team.gamesScheduled < team.targetGames && safety < 600) {
-      safety += 1;
+    let repairSafety = 0;
+    while (divisionTeams.some((team) => team.gamesScheduled < team.targetGames) && repairSafety < 4000) {
+      repairSafety += 1;
+      let repaired = false;
       const slotGroups = buildOrderedSlotGroups(openSlots);
-      let found = false;
-
-      for (const group of slotGroups) {
-        const opponent = teams.find(
-          (candidate) =>
-            candidate.id !== team.id &&
-            candidate.division === team.division &&
-            candidate.gamesScheduled < candidate.targetGames &&
-            group.slots.some((slot) => canPairInSlot(team, candidate, slot, config))
-        );
-
-        if (!opponent) continue;
-        const slot = group.slots.find((candidateSlot) => canPairInSlot(team, opponent, candidateSlot, config));
-        if (!slot) continue;
-        scheduleGame(schedule, slot, team, opponent);
-        found = true;
-        break;
-      }
-
-      if (!found) {
-        unscheduled.push({
-          matchup: team.name,
-          reason: "No legal opponent/slot found in cleanup pass",
-          suggestion: "Increase slot capacity or relax fairness constraints slightly for this division.",
+      const needyTeams = divisionTeams
+        .filter((team) => team.gamesScheduled < team.targetGames)
+        .sort((a, b) => {
+          const aNeed = getTeamNeed(a);
+          const bNeed = getTeamNeed(b);
+          if (bNeed !== aNeed) return bNeed - aNeed;
+          return fairnessScore(b) - fairnessScore(a);
         });
-        break;
+
+      for (const team of needyTeams) {
+        const divisionOpponents = divisionTeams
+          .filter((candidate) => candidate.id !== team.id && candidate.gamesScheduled < candidate.targetGames)
+          .sort((a, b) => {
+            const aNeed = getTeamNeed(a);
+            const bNeed = getTeamNeed(b);
+            if (bNeed !== aNeed) return bNeed - aNeed;
+            return fairnessScore(b) - fairnessScore(a);
+          });
+
+        for (const group of slotGroups) {
+          let placed = false;
+          for (const slot of group.slots) {
+            for (const opponent of divisionOpponents) {
+              if (!canPairInSlot(team, opponent, slot, config, teams, true)) continue;
+              scheduleGame(schedule, slot, team, opponent);
+              repaired = true;
+              placed = true;
+              break;
+            }
+            if (placed) break;
+          }
+          if (placed) break;
+        }
+        if (repaired) break;
       }
+
+      if (!repaired) break;
+    }
+
+    const unresolved = divisionTeams.filter((team) => team.gamesScheduled < team.targetGames);
+    if (unresolved.length > 0) {
+      unscheduled.push({
+        matchup: `${division} remaining teams`,
+        reason: `${unresolved.length} team(s) still below target after main pass and repair pass`,
+        suggestion: "Add more slots, allow more repeat matchups, or relax time-balance constraints for this division.",
+      });
     }
   }
+
   const improvedSchedule = rebalanceScheduleTimes(schedule, config);
 
   improvedSchedule.sort((a, b) => {
@@ -1100,6 +1224,7 @@ function generateScheduleEngine(config) {
     if (timeDiff !== 0) return timeDiff;
     return a.court.localeCompare(b.court);
   });
+
   const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
   const finalTeams = Object.values(finalTeamMap);
 
@@ -1142,6 +1267,7 @@ function generateScheduleEngine(config) {
 
   return { schedule: improvedSchedule, auditRows, auditSummary, unscheduled };
 }
+
 
 function exportCsv(filename, rows) {
   const csv = rows
