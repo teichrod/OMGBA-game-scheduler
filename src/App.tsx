@@ -1,5 +1,126 @@
 import { useMemo, useState } from "react";
-import { CalendarDays, Trophy, Settings, AlertTriangle, Wand2, Download, Building2 } from "lucide-react";
+import type { ReactNode, ComponentType, CSSProperties } from "react";
+import {
+  CalendarDays,
+  Trophy,
+  Settings,
+  AlertTriangle,
+  Wand2,
+  Download,
+  Building2,
+} from "lucide-react";
+
+type CourtConfig = {
+  name: string;
+  enabled: boolean;
+  startTime?: string;
+};
+
+type SaturdayConfig = {
+  date: string;
+  enabled: boolean;
+};
+
+type TimeSlotConfig = {
+  time: string;
+  enabled: boolean;
+};
+
+type Team = {
+  id: string;
+  name: string;
+  division: string;
+  gamesScheduled: number;
+  targetGames: number;
+  earlyGames: number;
+  home: number;
+  away: number;
+  doubleHeaders: number;
+  maxSameTimeSlot: number;
+  allowDoubleheaders: boolean;
+  gamesByDate: Record<string, number>;
+  gamesByTime: Record<string, number>;
+  opponents: Record<string, number>;
+  scheduledGames: Array<{
+    date: string;
+    time: string;
+    court: string;
+    opponentName: string;
+    isHome: boolean;
+  }>;
+  morningGames: number;
+  afternoonGames: number;
+};
+
+type Slot = {
+  key: string;
+  date: string;
+  time: string;
+  court: string;
+  used: boolean;
+};
+
+type ScheduleGame = {
+  division: string;
+  date: string;
+  time: string;
+  court: string;
+  home: string;
+  away: string;
+};
+
+type AuditRow = {
+  team: string;
+  division: string;
+  games: number;
+  target: number;
+  early: number;
+  home: number;
+  away: number;
+  dh: number;
+  maxSameTime: number;
+  morning: number;
+  afternoon: number;
+  issues: string[];
+};
+
+type AuditSummary = {
+  totalGames: number;
+  totalTeams: number;
+  allTeamsScheduled: boolean;
+  earlyViolations: number;
+  homeAwayIssues: number;
+  missingTeams: number;
+  enabledDates: number;
+  enabledCourts: number;
+  fifthBoysDhTeamsMet: boolean;
+};
+
+type UnscheduledIssue = {
+  matchup: string;
+  reason: string;
+  suggestion: string;
+};
+
+type AppConfig = {
+  seasonYear: number;
+  maxEarlyGames: number;
+  globalAllowDoubleheaders: boolean;
+  selectedDateForCourts: string;
+  fifthBoysDoubleheaderDate: string;
+  timeSlots: TimeSlotConfig[];
+  divisions: Record<string, number>;
+  divisionGames: Record<string, number>;
+  saturdays: SaturdayConfig[];
+  dateCourtSettings: Record<string, CourtConfig[]>;
+};
+
+type ScheduleResult = {
+  schedule: ScheduleGame[];
+  auditRows: AuditRow[];
+  auditSummary: AuditSummary;
+  unscheduled: UnscheduledIssue[];
+};
 
 const DIVISIONS = [
   "5th Boys",
@@ -8,9 +129,9 @@ const DIVISIONS = [
   "8th Boys",
   "5th/6th Girls",
   "7th/8th Girls",
-];
+] as const;
 
-const DEFAULT_COURTS = [
+const DEFAULT_COURTS: CourtConfig[] = [
   { name: "MGMS-AB", enabled: true },
   { name: "MGMS-DE", enabled: true },
   { name: "MGCG-FG", enabled: true },
@@ -25,13 +146,25 @@ const DEFAULT_COURTS = [
   { name: "", enabled: false },
 ];
 
-const DEFAULT_TIMES = ["8:00", "9:05", "10:10", "11:15", "12:20", "1:25", "2:30", "3:35", "4:40", "5:45"];
+const DEFAULT_TIMES = [
+  "8:00",
+  "9:05",
+  "10:10",
+  "11:15",
+  "12:20",
+  "1:25",
+  "2:30",
+  "3:35",
+  "4:40",
+  "5:45",
+] as const;
+
 const SEASON_YEAR_OPTIONS = Array.from({ length: 8 }, (_, i) => 2026 + i);
 const TEAM_COUNT_OPTIONS = Array.from({ length: 21 }, (_, i) => String(i + 4));
 const GAME_COUNT_OPTIONS = ["6", "7", "8", "9", "10", "11", "12"];
 const MAX_EARLY_OPTIONS = ["0", "1", "2", "3", "4"];
 
-const styles = {
+const styles: Record<string, CSSProperties> = {
   page: {
     minHeight: "100vh",
     background: "#f8fafc",
@@ -203,42 +336,75 @@ const styles = {
   },
 };
 
-function Card({ children }) {
+function Card({ children }: { children: ReactNode }) {
   return <div style={styles.card}>{children}</div>;
 }
 
-function StatCard({ label, value, subvalue }) {
+function StatCard({
+  label,
+  value,
+  subvalue,
+}: {
+  label: string;
+  value: ReactNode;
+  subvalue?: ReactNode;
+}) {
   return (
     <Card>
       <div style={{ fontSize: 14, color: "#64748b" }}>{label}</div>
       <div style={{ fontSize: 32, fontWeight: 700, marginTop: 6 }}>{value}</div>
-      {subvalue ? <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>{subvalue}</div> : null}
+      {subvalue ? (
+        <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
+          {subvalue}
+        </div>
+      ) : null}
     </Card>
   );
 }
 
-function SectionTitle({ icon: Icon, children }) {
+function SectionTitle({
+  icon: Icon,
+  children,
+}: {
+  icon?: ComponentType<{ size?: number }>;
+  children: ReactNode;
+}) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 20, fontWeight: 700, marginBottom: 14 }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: 20,
+        fontWeight: 700,
+        marginBottom: 14,
+      }}
+    >
       {Icon ? <Icon size={20} /> : null}
       {children}
     </div>
   );
 }
 
-function Badge({ children, danger = false }) {
+function Badge({
+  children,
+  danger = false,
+}: {
+  children: ReactNode;
+  danger?: boolean;
+}) {
   return <span style={danger ? styles.badgeDanger : styles.badge}>{children}</span>;
 }
 
-function formatShortDate(date) {
+function formatShortDate(date: Date) {
   const m = date.getMonth() + 1;
   const d = date.getDate();
   const y = String(date.getFullYear()).slice(-2);
   return `${m}/${d}/${y}`;
 }
 
-function getSeasonSaturdays(startYear) {
-  const dates = [];
+function getSeasonSaturdays(startYear: number) {
+  const dates: string[] = [];
   const start = new Date(startYear, 10, 1);
   const end = new Date(startYear + 1, 1, 28);
   const cursor = new Date(start);
@@ -249,8 +415,12 @@ function getSeasonSaturdays(startYear) {
   return dates;
 }
 
-function buildDateCourtSettings(dates, previous = {}, baseCourts = DEFAULT_COURTS) {
-  const next = {};
+function buildDateCourtSettings(
+  dates: string[],
+  previous: Record<string, CourtConfig[]> = {},
+  baseCourts: CourtConfig[] = DEFAULT_COURTS,
+) {
+  const next: Record<string, CourtConfig[]> = {};
   for (const date of dates) {
     const prior = previous[date] || [];
     next[date] = baseCourts.map((court, idx) => {
@@ -266,9 +436,12 @@ function buildDateCourtSettings(dates, previous = {}, baseCourts = DEFAULT_COURT
   return next;
 }
 
-function createInitialState() {
+function createInitialState(): AppConfig {
   const seasonYear = 2026;
-  const saturdays = getSeasonSaturdays(seasonYear).map((date) => ({ date, enabled: false }));
+  const saturdays = getSeasonSaturdays(seasonYear).map((date) => ({
+    date,
+    enabled: false,
+  }));
   return {
     seasonYear,
     maxEarlyGames: 2,
@@ -297,44 +470,45 @@ function createInitialState() {
   };
 }
 
-function isEarlyTime(time) {
+function isEarlyTime(time: string) {
   return time === "8:00";
 }
 
-function maxSameTimeSlot(gamesByTime) {
+function maxSameTimeSlot(gamesByTime: Record<string, number>) {
   const values = Object.values(gamesByTime);
   return values.length ? Math.max(...values) : 0;
 }
 
-function isMorningTime(time) {
+function isMorningTime(time: string) {
   return ["8:00", "9:05", "10:10", "11:15"].includes(time);
 }
 
-function isAfternoonTime(time) {
+function isAfternoonTime(time: string) {
   return ["12:20", "1:25", "2:30", "3:35", "4:40", "5:45"].includes(time);
 }
 
-function getIdealMorningGames(team) {
+function getIdealMorningGames(team: Team) {
   return Math.floor((team.targetGames || 0) / 2);
 }
 
-function getIdealAfternoonGames(team) {
+function getIdealAfternoonGames(team: Team) {
   return Math.ceil((team.targetGames || 0) / 2);
 }
 
-function getProjectedTimeCount(team, time) {
+function getProjectedTimeCount(team: Team, time: string) {
   return (team.gamesByTime?.[time] || 0) + 1;
 }
 
-function getTimeSpreadPenalty(team, slotTime) {
-  const counts = DEFAULT_TIMES.filter((time) => team.gamesByTime?.[time] != null || time === slotTime)
-    .map((time) => (team.gamesByTime?.[time] || 0) + (time === slotTime ? 1 : 0));
+function getTimeSpreadPenalty(team: Team, slotTime: string) {
+  const counts = DEFAULT_TIMES.filter(
+    (time) => team.gamesByTime?.[time] != null || time === slotTime,
+  ).map((time) => (team.gamesByTime?.[time] || 0) + (time === slotTime ? 1 : 0));
 
   if (counts.length === 0) return 0;
   return (Math.max(...counts) - Math.min(...counts)) * 10;
 }
 
-function fairnessScore(team) {
+function fairnessScore(team: Team) {
   const morningGames = team.morningGames || 0;
   const afternoonGames = team.afternoonGames || 0;
   const dayPartImbalance = Math.abs(morningGames - afternoonGames);
@@ -352,11 +526,12 @@ function fairnessScore(team) {
   );
 }
 
-function buildTeams(config) {
-  const teams = [];
+function buildTeams(config: AppConfig) {
+  const teams: Team[] = [];
   for (const division of DIVISIONS) {
     const count = Number(config.divisions[division] || 0);
-    const allowDoubleheaders = config.globalAllowDoubleheaders || count % 2 === 1 || division === "5th Boys";
+    const allowDoubleheaders =
+      config.globalAllowDoubleheaders || count % 2 === 1 || division === "5th Boys";
     const targetGames = Number(config.divisionGames[division] || 8);
     for (let i = 1; i <= count; i += 1) {
       teams.push({
@@ -383,12 +558,12 @@ function buildTeams(config) {
   return teams;
 }
 
-function getEnabledCourtsForDate(config, date) {
+function getEnabledCourtsForDate(config: AppConfig, date: string) {
   const courts = config.dateCourtSettings[date] || [];
   return courts.filter((c) => c.enabled && String(c.name || "").trim() !== "");
 }
 
-function getSlotsRemainingForCourt(config, court) {
+function getSlotsRemainingForCourt(config: AppConfig, court: CourtConfig) {
   const enabledTimes = config.timeSlots.filter((t) => t.enabled).map((t) => t.time);
   const startIndex = enabledTimes.indexOf(court.startTime || "8:00");
   if (!court.enabled || String(court.name || "").trim() === "") return 0;
@@ -396,15 +571,15 @@ function getSlotsRemainingForCourt(config, court) {
   return enabledTimes.length - startIndex;
 }
 
-function getTotalSlotsForDate(config, date) {
+function getTotalSlotsForDate(config: AppConfig, date: string) {
   const courts = config.dateCourtSettings[date] || [];
   return courts.reduce((sum, court) => sum + getSlotsRemainingForCourt(config, court), 0);
 }
 
-function buildOpenSlots(config) {
+function buildOpenSlots(config: AppConfig) {
   const enabledDates = config.saturdays.filter((d) => d.enabled).map((d) => d.date);
   const enabledTimes = config.timeSlots.filter((t) => t.enabled).map((t) => t.time);
-  const slots = [];
+  const slots: Slot[] = [];
 
   for (const date of enabledDates) {
     const courts = getEnabledCourtsForDate(config, date);
@@ -413,7 +588,13 @@ function buildOpenSlots(config) {
         const startIndex = enabledTimes.indexOf(court.startTime || "8:00");
         const timeIndex = enabledTimes.indexOf(time);
         if (timeIndex < startIndex) continue;
-        slots.push({ key: `${date}|${time}|${court.name}`, date, time, court: court.name, used: false });
+        slots.push({
+          key: `${date}|${time}|${court.name}`,
+          date,
+          time,
+          court: court.name,
+          used: false,
+        });
       }
     }
   }
@@ -421,7 +602,7 @@ function buildOpenSlots(config) {
   return slots;
 }
 
-function chooseHomeTeam(teamA, teamB) {
+function chooseHomeTeam(teamA: Team, teamB: Team) {
   const diffA = (teamA.home || 0) - (teamA.away || 0);
   const diffB = (teamB.home || 0) - (teamB.away || 0);
   if (diffA < diffB) return teamA;
@@ -429,36 +610,43 @@ function chooseHomeTeam(teamA, teamB) {
   return teamA.name < teamB.name ? teamA : teamB;
 }
 
-function applyGame(team, slot, opponentName, isHome) {
+function applyGame(team: Team, slot: Slot, opponentName: string, isHome: boolean) {
   team.gamesScheduled += 1;
   team.gamesByDate[slot.date] = (team.gamesByDate[slot.date] || 0) + 1;
   team.gamesByTime[slot.time] = (team.gamesByTime[slot.time] || 0) + 1;
   team.opponents[opponentName] = (team.opponents[opponentName] || 0) + 1;
-  team.scheduledGames.push({ date: slot.date, time: slot.time, court: slot.court, opponentName, isHome });
+  team.scheduledGames.push({
+    date: slot.date,
+    time: slot.time,
+    court: slot.court,
+    opponentName,
+    isHome,
+  });
   if (isHome) team.home += 1;
   else team.away += 1;
   if (isEarlyTime(slot.time)) team.earlyGames += 1;
   if (isMorningTime(slot.time)) team.morningGames = (team.morningGames || 0) + 1;
-  if (isAfternoonTime(slot.time)) team.afternoonGames = (team.afternoonGames || 0) + 1;
+  if (isAfternoonTime(slot.time))
+    team.afternoonGames = (team.afternoonGames || 0) + 1;
   if ((team.gamesByDate[slot.date] || 0) > 1) team.doubleHeaders += 1;
   team.maxSameTimeSlot = maxSameTimeSlot(team.gamesByTime);
 }
 
-function getTimeIndex(time) {
-  return DEFAULT_TIMES.indexOf(time);
+function getTimeIndex(time: string) {
+  return DEFAULT_TIMES.indexOf(time as (typeof DEFAULT_TIMES)[number]);
 }
 
-function areBackToBackTimes(timeA, timeB) {
+function areBackToBackTimes(timeA: string, timeB: string) {
   const a = getTimeIndex(timeA);
   const b = getTimeIndex(timeB);
   return a >= 0 && b >= 0 && Math.abs(a - b) === 1;
 }
 
-function getScheduledGamesOnDate(team, date) {
+function getScheduledGamesOnDate(team: Team, date: string) {
   return (team.scheduledGames || []).filter((game) => game.date === date);
 }
 
-function canPairInSlot(teamA, teamB, slot, config) {
+function canPairInSlot(teamA: Team, teamB: Team, slot: Slot, config: AppConfig) {
   if (teamA.id === teamB.id) return false;
   if (teamA.division !== teamB.division) return false;
   if (slot.used) return false;
@@ -471,12 +659,22 @@ function canPairInSlot(teamA, teamB, slot, config) {
 
   if (aOnDate === 1) {
     const existingA = getScheduledGamesOnDate(teamA, slot.date)[0];
-    if (!existingA || !areBackToBackTimes(existingA.time, slot.time) || existingA.court !== slot.court) return false;
+    if (
+      !existingA ||
+      !areBackToBackTimes(existingA.time, slot.time) ||
+      existingA.court !== slot.court
+    )
+      return false;
   }
 
   if (bOnDate === 1) {
     const existingB = getScheduledGamesOnDate(teamB, slot.date)[0];
-    if (!existingB || !areBackToBackTimes(existingB.time, slot.time) || existingB.court !== slot.court) return false;
+    if (
+      !existingB ||
+      !areBackToBackTimes(existingB.time, slot.time) ||
+      existingB.court !== slot.court
+    )
+      return false;
   }
 
   if (config.fifthBoysDoubleheaderDate) {
@@ -498,9 +696,10 @@ function canPairInSlot(teamA, teamB, slot, config) {
   return true;
 }
 
-function getProjectedDayPartPenalty(team, slotTime) {
+function getProjectedDayPartPenalty(team: Team, slotTime: string) {
   const projectedMorning = (team.morningGames || 0) + (isMorningTime(slotTime) ? 1 : 0);
-  const projectedAfternoon = (team.afternoonGames || 0) + (isAfternoonTime(slotTime) ? 1 : 0);
+  const projectedAfternoon =
+    (team.afternoonGames || 0) + (isAfternoonTime(slotTime) ? 1 : 0);
   const idealMorning = getIdealMorningGames(team);
   const idealAfternoon = getIdealAfternoonGames(team);
 
@@ -511,7 +710,7 @@ function getProjectedDayPartPenalty(team, slotTime) {
   );
 }
 
-function slotPenalty(teamA, teamB, slot) {
+function slotPenalty(teamA: Team, teamB: Team, slot: Slot) {
   let penalty = 0;
   const timeIndex = getTimeIndex(slot.time);
   penalty += Math.max(0, timeIndex) * 10;
@@ -527,15 +726,25 @@ function slotPenalty(teamA, teamB, slot) {
   const existingA = getScheduledGamesOnDate(teamA, slot.date)[0];
   const existingB = getScheduledGamesOnDate(teamB, slot.date)[0];
 
-  if (existingA && areBackToBackTimes(existingA.time, slot.time) && existingA.court === slot.court) penalty -= 30;
-  if (existingB && areBackToBackTimes(existingB.time, slot.time) && existingB.court === slot.court) penalty -= 30;
+  if (
+    existingA &&
+    areBackToBackTimes(existingA.time, slot.time) &&
+    existingA.court === slot.court
+  )
+    penalty -= 30;
+  if (
+    existingB &&
+    areBackToBackTimes(existingB.time, slot.time) &&
+    existingB.court === slot.court
+  )
+    penalty -= 30;
   if ((teamA.gamesByDate[slot.date] || 0) >= 1) penalty += 8;
   if ((teamB.gamesByDate[slot.date] || 0) >= 1) penalty += 8;
 
   return penalty;
 }
 
-function scheduleGame(schedule, slot, teamA, teamB) {
+function scheduleGame(schedule: ScheduleGame[], slot: Slot, teamA: Team, teamB: Team) {
   const homeTeam = chooseHomeTeam(teamA, teamB);
   const awayTeam = homeTeam.id === teamA.id ? teamB : teamA;
   slot.used = true;
@@ -551,14 +760,14 @@ function scheduleGame(schedule, slot, teamA, teamB) {
   });
 }
 
-function buildRoundRobinRounds(teamList) {
+function buildRoundRobinRounds(teamList: Team[]) {
   const teams = [...teamList];
-  if (teams.length % 2 === 1) teams.push(null);
-  const rounds = [];
+  if (teams.length % 2 === 1) teams.push(null as unknown as Team);
+  const rounds: Array<Array<[Team, Team]>> = [];
   let arr = [...teams];
   const totalRounds = arr.length - 1;
   for (let round = 0; round < totalRounds; round += 1) {
-    const pairings = [];
+    const pairings: Array<[Team, Team]> = [];
     for (let i = 0; i < arr.length / 2; i += 1) {
       const a = arr[i];
       const b = arr[arr.length - 1 - i];
@@ -570,7 +779,13 @@ function buildRoundRobinRounds(teamList) {
   return rounds;
 }
 
-function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config) {
+function scheduleFifthBoysDoubleheaderDay(
+  teams: Team[],
+  openSlots: Slot[],
+  schedule: ScheduleGame[],
+  unscheduled: UnscheduledIssue[],
+  config: AppConfig,
+) {
   if (!config.fifthBoysDoubleheaderDate) return;
   const teamList = teams.filter((t) => t.division === "5th Boys");
   if (teamList.length === 0) return;
@@ -583,7 +798,9 @@ function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unschedule
     return;
   }
 
-  const slots = openSlots.filter((s) => !s.used && s.date === config.fifthBoysDoubleheaderDate);
+  const slots = openSlots.filter(
+    (s) => !s.used && s.date === config.fifthBoysDoubleheaderDate,
+  );
   const rounds = buildRoundRobinRounds(teamList);
   const neededGames = teamList.length;
   if (slots.length < neededGames) {
@@ -619,15 +836,21 @@ function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unschedule
   }
 }
 
-function chooseBestCandidate(team, allTeams, openSlots, config) {
-  const divisionTeams = allTeams.filter((t) => t.division === team.division && t.id !== team.id && t.gamesScheduled < t.targetGames);
-  let best = null;
+function chooseBestCandidate(team: Team, allTeams: Team[], openSlots: Slot[], config: AppConfig) {
+  const divisionTeams = allTeams.filter(
+    (t) => t.division === team.division && t.id !== team.id && t.gamesScheduled < t.targetGames,
+  );
+  let best: { teamA: Team; teamB: Team; slot: Slot } | null = null;
   let bestScore = Infinity;
   for (const opponent of divisionTeams) {
     const repeatPenalty = (team.opponents[opponent.name] || 0) * 3;
     for (const slot of openSlots) {
       if (!canPairInSlot(team, opponent, slot, config)) continue;
-      const score = fairnessScore(team) + fairnessScore(opponent) + slotPenalty(team, opponent, slot) + repeatPenalty;
+      const score =
+        fairnessScore(team) +
+        fairnessScore(opponent) +
+        slotPenalty(team, opponent, slot) +
+        repeatPenalty;
       if (score < bestScore) {
         bestScore = score;
         best = { teamA: team, teamB: opponent, slot };
@@ -637,11 +860,11 @@ function chooseBestCandidate(team, allTeams, openSlots, config) {
   return best;
 }
 
-function generateScheduleEngine(config) {
+function generateScheduleEngine(config: AppConfig): ScheduleResult {
   const teams = buildTeams(config);
   const openSlots = buildOpenSlots(config);
-  const schedule = [];
-  const unscheduled = [];
+  const schedule: ScheduleGame[] = [];
+  const unscheduled: UnscheduledIssue[] = [];
 
   scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config);
 
@@ -652,7 +875,7 @@ function generateScheduleEngine(config) {
       safety += 1;
       const needyTeams = divisionTeams
         .filter((t) => t.gamesScheduled < t.targetGames)
-        .sort((a, b) => (b.targetGames - b.gamesScheduled) - (a.targetGames - a.gamesScheduled));
+        .sort((a, b) => b.targetGames - b.gamesScheduled - (a.targetGames - a.gamesScheduled));
 
       let scheduledOne = false;
       for (const team of needyTeams) {
@@ -677,7 +900,7 @@ function generateScheduleEngine(config) {
 
   const remainingTeams = teams
     .filter((t) => t.gamesScheduled < t.targetGames)
-    .sort((a, b) => (b.targetGames - b.gamesScheduled) - (a.targetGames - a.gamesScheduled));
+    .sort((a, b) => b.targetGames - b.gamesScheduled - (a.targetGames - a.gamesScheduled));
 
   for (const team of remainingTeams) {
     let safety = 0;
@@ -711,7 +934,7 @@ function generateScheduleEngine(config) {
     }
   }
 
-  const parseDate = (d) => {
+  const parseDate = (d: string) => {
     const [m, day, y] = String(d).split("/");
     return new Date(`20${y}`, Number(m) - 1, Number(day)).getTime();
   };
@@ -724,7 +947,7 @@ function generateScheduleEngine(config) {
     return a.court.localeCompare(b.court);
   });
 
-  const auditRows = teams.map((team) => ({
+  const auditRows: AuditRow[] = teams.map((team) => ({
     team: team.name,
     division: team.division,
     games: team.gamesScheduled,
@@ -740,7 +963,7 @@ function generateScheduleEngine(config) {
       team.gamesScheduled !== team.targetGames ? "Missing games" : null,
       team.earlyGames > Number(config.maxEarlyGames) ? "Too many early games" : null,
       Math.abs(team.home - team.away) > 2 ? "Home/away imbalance" : null,
-    ].filter(Boolean),
+    ].filter(Boolean) as string[],
   }));
 
   const fifthBoysDhTeamsMet = teams
@@ -750,7 +973,7 @@ function generateScheduleEngine(config) {
       return (t.gamesByDate[config.fifthBoysDoubleheaderDate] || 0) === 2;
     });
 
-  const auditSummary = {
+  const auditSummary: AuditSummary = {
     totalGames: schedule.length,
     totalTeams: teams.length,
     allTeamsScheduled: auditRows.every((r) => r.games === r.target),
@@ -759,7 +982,8 @@ function generateScheduleEngine(config) {
     missingTeams: auditRows.filter((r) => r.games !== r.target).length,
     enabledDates: config.saturdays.filter((d) => d.enabled).length,
     enabledCourts: Object.values(config.dateCourtSettings).reduce(
-      (sum, courts) => sum + courts.filter((c) => c.enabled && String(c.name || "").trim() !== "").length,
+      (sum, courts) =>
+        sum + courts.filter((c) => c.enabled && String(c.name || "").trim() !== "").length,
       0,
     ),
     fifthBoysDhTeamsMet,
@@ -768,7 +992,7 @@ function generateScheduleEngine(config) {
   return { schedule, auditRows, auditSummary, unscheduled };
 }
 
-function exportCsv(filename, rows) {
+function exportCsv(filename: string, rows: Array<Array<string | number>>) {
   const csv = rows
     .map((row) =>
       row
@@ -799,12 +1023,17 @@ function runSelfChecks() {
     { name: "5th Boys default to 10 games", pass: initial.divisionGames["5th Boys"] === 10 },
     {
       name: "Combined girls divisions default to 8 games",
-      pass: initial.divisionGames["5th/6th Girls"] === 8 && initial.divisionGames["7th/8th Girls"] === 8,
+      pass:
+        initial.divisionGames["5th/6th Girls"] === 8 &&
+        initial.divisionGames["7th/8th Girls"] === 8,
     },
     { name: "Team count selector reaches 24", pass: TEAM_COUNT_OPTIONS.includes("24") },
     {
       name: "Extra courts start disabled",
-      pass: initial.dateCourtSettings[firstDate]?.some((c) => c.name === "OMS" && c.enabled === false) ?? true,
+      pass:
+        initial.dateCourtSettings[firstDate]?.some(
+          (c) => c.name === "OMS" && c.enabled === false,
+        ) ?? true,
     },
     {
       name: "Courts default to 8:00 start",
@@ -832,9 +1061,9 @@ function runSelfChecks() {
   return checks;
 }
 
-export default function YouthSchedulerWebApp() {
-  const [config, setConfig] = useState(createInitialState());
-  const [result, setResult] = useState(null);
+export default function App() {
+  const [config, setConfig] = useState<AppConfig>(createInitialState());
+  const [result, setResult] = useState<ScheduleResult | null>(null);
   const [activeTab, setActiveTab] = useState("setup");
   const [scheduleDivisionFilter, setScheduleDivisionFilter] = useState("all");
   const [scheduleTeamFilter, setScheduleTeamFilter] = useState("all");
@@ -844,39 +1073,55 @@ export default function YouthSchedulerWebApp() {
   const capacity = useMemo(() => {
     const enabledDates = config.saturdays.filter((d) => d.enabled).length;
     const totalSlots = buildOpenSlots(config).length;
-    const totalTeams = DIVISIONS.reduce((sum, division) => sum + Number(config.divisions[division] || 0), 0);
+    const totalTeams = DIVISIONS.reduce(
+      (sum, division) => sum + Number(config.divisions[division] || 0),
+      0,
+    );
     const totalNeededGames = DIVISIONS.reduce(
-      (sum, division) => sum + (Number(config.divisions[division] || 0) * Number(config.divisionGames[division] || 0)) / 2,
+      (sum, division) =>
+        sum + (Number(config.divisions[division] || 0) * Number(config.divisionGames[division] || 0)) / 2,
       0,
     );
     return { enabledDates, totalSlots, totalTeams, totalNeededGames };
   }, [config]);
 
-  const selectedDateSlotTotal = useMemo(() => getTotalSlotsForDate(config, selectedCourtDate), [config, selectedCourtDate]);
+  const selectedDateSlotTotal = useMemo(
+    () => getTotalSlotsForDate(config, selectedCourtDate),
+    [config, selectedCourtDate],
+  );
+
   const decemberSaturdayOptions = useMemo(
     () => config.saturdays.filter((entry) => String(entry.date).split("/")[0] === "12"),
     [config.saturdays],
   );
+
   const selfChecks = useMemo(() => runSelfChecks(), []);
   const highlightedIssues = result?.auditRows.filter((row) => row.issues.length > 0) ?? [];
 
   const availableScheduleTeams = useMemo(() => {
     if (!result) return [];
-    const divisionFilteredGames = scheduleDivisionFilter === "all"
-      ? result.schedule
-      : result.schedule.filter((game) => game.division === scheduleDivisionFilter);
-    return Array.from(new Set(divisionFilteredGames.flatMap((game) => [game.home, game.away]))).sort((a, b) => a.localeCompare(b));
+    const divisionFilteredGames =
+      scheduleDivisionFilter === "all"
+        ? result.schedule
+        : result.schedule.filter((game) => game.division === scheduleDivisionFilter);
+    return Array.from(new Set(divisionFilteredGames.flatMap((game) => [game.home, game.away]))).sort(
+      (a, b) => a.localeCompare(b),
+    );
   }, [result, scheduleDivisionFilter]);
 
   const filteredSchedule = useMemo(() => {
     if (!result) return [];
     const filtered = result.schedule.filter((game) => {
-      const divisionOk = scheduleDivisionFilter === "all" || game.division === scheduleDivisionFilter;
-      const teamOk = scheduleTeamFilter === "all" || game.home === scheduleTeamFilter || game.away === scheduleTeamFilter;
+      const divisionOk =
+        scheduleDivisionFilter === "all" || game.division === scheduleDivisionFilter;
+      const teamOk =
+        scheduleTeamFilter === "all" ||
+        game.home === scheduleTeamFilter ||
+        game.away === scheduleTeamFilter;
       return divisionOk && teamOk;
     });
 
-    const parseDate = (d) => {
+    const parseDate = (d: string) => {
       const [m, day, y] = d.split("/");
       return new Date(`20${y}`, Number(m) - 1, Number(day)).getTime();
     };
@@ -888,64 +1133,88 @@ export default function YouthSchedulerWebApp() {
     });
   }, [result, scheduleDivisionFilter, scheduleTeamFilter]);
 
-  function setDivisionCount(division, value) {
-    setConfig((prev) => ({ ...prev, divisions: { ...prev.divisions, [division]: Number(value) } }));
-  }
-
-  function setDivisionGames(division, value) {
-    setConfig((prev) => ({ ...prev, divisionGames: { ...prev.divisionGames, [division]: Number(value) } }));
-  }
-
-  function toggleSaturday(index, enabled) {
+  function setDivisionCount(division: string, value: string) {
     setConfig((prev) => ({
       ...prev,
-      saturdays: prev.saturdays.map((entry, i) => (i === index ? { ...entry, enabled: Boolean(enabled) } : entry)),
+      divisions: { ...prev.divisions, [division]: Number(value) },
     }));
   }
 
-  function updateSaturdayDate(index, date) {
+  function setDivisionGames(division: string, value: string) {
+    setConfig((prev) => ({
+      ...prev,
+      divisionGames: { ...prev.divisionGames, [division]: Number(value) },
+    }));
+  }
+
+  function toggleSaturday(index: number, enabled: boolean) {
+    setConfig((prev) => ({
+      ...prev,
+      saturdays: prev.saturdays.map((entry, i) =>
+        i === index ? { ...entry, enabled: Boolean(enabled) } : entry,
+      ),
+    }));
+  }
+
+  function updateSaturdayDate(index: number, date: string) {
     setConfig((prev) => {
-      const nextSaturdays = prev.saturdays.map((entry, i) => (i === index ? { ...entry, date } : entry));
+      const nextSaturdays = prev.saturdays.map((entry, i) =>
+        i === index ? { ...entry, date } : entry,
+      );
       const dates = nextSaturdays.map((s) => s.date);
       const nextDateCourtSettings = buildDateCourtSettings(dates, prev.dateCourtSettings);
       return {
         ...prev,
         saturdays: nextSaturdays,
         dateCourtSettings: nextDateCourtSettings,
-        selectedDateForCourts: dates.includes(prev.selectedDateForCourts) ? prev.selectedDateForCourts : dates[0] || "",
-        fifthBoysDoubleheaderDate: dates.includes(prev.fifthBoysDoubleheaderDate) ? prev.fifthBoysDoubleheaderDate : "",
+        selectedDateForCourts: dates.includes(prev.selectedDateForCourts)
+          ? prev.selectedDateForCourts
+          : dates[0] || "",
+        fifthBoysDoubleheaderDate: dates.includes(prev.fifthBoysDoubleheaderDate)
+          ? prev.fifthBoysDoubleheaderDate
+          : "",
       };
     });
   }
 
-  function toggleTime(index, enabled) {
+  function toggleTime(index: number, enabled: boolean) {
     setConfig((prev) => ({
       ...prev,
-      timeSlots: prev.timeSlots.map((entry, i) => (i === index ? { ...entry, enabled: Boolean(enabled) } : entry)),
+      timeSlots: prev.timeSlots.map((entry, i) =>
+        i === index ? { ...entry, enabled: Boolean(enabled) } : entry,
+      ),
     }));
   }
 
-  function changeSeasonYear(value) {
+  function changeSeasonYear(value: string) {
     const seasonYear = Number(value);
     setConfig((prev) => {
-      const saturdays = getSeasonSaturdays(seasonYear).map((date) => ({ date, enabled: false }));
+      const saturdays = getSeasonSaturdays(seasonYear).map((date) => ({
+        date,
+        enabled: false,
+      }));
       return {
         ...prev,
         seasonYear,
         saturdays,
         selectedDateForCourts: saturdays[0]?.date || "",
         fifthBoysDoubleheaderDate: "",
-        dateCourtSettings: buildDateCourtSettings(saturdays.map((s) => s.date), prev.dateCourtSettings),
+        dateCourtSettings: buildDateCourtSettings(
+          saturdays.map((s) => s.date),
+          prev.dateCourtSettings,
+        ),
       };
     });
   }
 
-  function updateCourtForDate(date, courtIndex, patch) {
+  function updateCourtForDate(date: string, courtIndex: number, patch: Partial<CourtConfig>) {
     setConfig((prev) => ({
       ...prev,
       dateCourtSettings: {
         ...prev.dateCourtSettings,
-        [date]: (prev.dateCourtSettings[date] || []).map((court, i) => (i === courtIndex ? { ...court, ...patch } : court)),
+        [date]: (prev.dateCourtSettings[date] || []).map((court, i) =>
+          i === courtIndex ? { ...court, ...patch } : court,
+        ),
       },
     }));
   }
@@ -971,11 +1240,20 @@ export default function YouthSchedulerWebApp() {
         <div style={styles.headerRow}>
           <div>
             <h1 style={styles.title}>Youth Sports Scheduler</h1>
-            <div style={styles.subtitle}>Editable setup, date-specific court selection, fairness-based scheduling, audit checks, and CSV export.</div>
+            <div style={styles.subtitle}>
+              Editable setup, date-specific court selection, fairness-based scheduling,
+              audit checks, and CSV export.
+            </div>
           </div>
           <div style={styles.row}>
-            <button style={styles.button} onClick={resetAll}>Reset</button>
-            <button style={styles.primaryButton} onClick={runScheduler}><span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Wand2 size={16} /> Generate Schedule</span></button>
+            <button style={styles.button} onClick={resetAll}>
+              Reset
+            </button>
+            <button style={styles.primaryButton} onClick={runScheduler}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <Wand2 size={16} /> Generate Schedule
+              </span>
+            </button>
           </div>
         </div>
 
@@ -984,7 +1262,11 @@ export default function YouthSchedulerWebApp() {
             <AlertTriangle size={18} />
             <div>
               <div style={{ fontWeight: 700, marginBottom: 4 }}>Capacity warning</div>
-              <div>You need about <strong>{capacity.totalNeededGames}</strong> games but only have <strong>{capacity.totalSlots}</strong> available slots with the current Saturdays, date-specific courts, and times.</div>
+              <div>
+                You need about <strong>{capacity.totalNeededGames}</strong> games but only have{" "}
+                <strong>{capacity.totalSlots}</strong> available slots with the current Saturdays,
+                date-specific courts, and times.
+              </div>
             </div>
           </div>
         ) : null}
@@ -996,7 +1278,13 @@ export default function YouthSchedulerWebApp() {
             ["audit", "Audit"],
             ["issues", "Issues"],
           ].map(([key, label]) => (
-            <button key={key} style={activeTab === key ? styles.tabButtonActive : styles.tabButton} onClick={() => setActiveTab(key)}>{label}</button>
+            <button
+              key={key}
+              style={activeTab === key ? styles.tabButtonActive : styles.tabButton}
+              onClick={() => setActiveTab(key)}
+            >
+              {label}
+            </button>
           ))}
         </div>
 
@@ -1008,30 +1296,81 @@ export default function YouthSchedulerWebApp() {
                 <div style={{ display: "grid", gap: 16 }}>
                   <div>
                     <label style={styles.smallLabel}>Season year</label>
-                    <select style={styles.select} value={String(config.seasonYear)} onChange={(e) => changeSeasonYear(e.target.value)}>
+                    <select
+                      style={styles.select}
+                      value={String(config.seasonYear)}
+                      onChange={(e) => changeSeasonYear(e.target.value)}
+                    >
                       {SEASON_YEAR_OPTIONS.map((year) => (
-                        <option key={year} value={String(year)}>{year}-{String(year + 1).slice(-2)}</option>
+                        <option key={year} value={String(year)}>
+                          {year}-{String(year + 1).slice(-2)}
+                        </option>
                       ))}
                     </select>
                   </div>
                   <div>
                     <label style={styles.smallLabel}>5th Boys doubleheader Saturday</label>
-                    <select style={styles.select} value={config.fifthBoysDoubleheaderDate || "none"} onChange={(e) => setConfig((prev) => ({ ...prev, fifthBoysDoubleheaderDate: e.target.value === "none" ? "" : e.target.value }))}>
+                    <select
+                      style={styles.select}
+                      value={config.fifthBoysDoubleheaderDate || "none"}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          fifthBoysDoubleheaderDate:
+                            e.target.value === "none" ? "" : e.target.value,
+                        }))
+                      }
+                    >
                       <option value="none">None</option>
                       {decemberSaturdayOptions.map((entry) => (
-                        <option key={entry.date} value={entry.date}>{entry.date}</option>
+                        <option key={entry.date} value={entry.date}>
+                          {entry.date}
+                        </option>
                       ))}
                     </select>
                   </div>
                   <div>
                     <label style={styles.smallLabel}>Max 8:00 games per team</label>
-                    <select style={styles.select} value={String(config.maxEarlyGames)} onChange={(e) => setConfig((prev) => ({ ...prev, maxEarlyGames: Number(e.target.value) }))}>
-                      {MAX_EARLY_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
+                    <select
+                      style={styles.select}
+                      value={String(config.maxEarlyGames)}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          maxEarlyGames: Number(e.target.value),
+                        }))
+                      }
+                    >
+                      {MAX_EARLY_OPTIONS.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
                     </select>
                   </div>
-                  <label style={{ display: "flex", gap: 10, alignItems: "center", border: "1px solid #e2e8f0", padding: 12, borderRadius: 12 }}>
-                    <input type="checkbox" checked={config.globalAllowDoubleheaders} onChange={(e) => setConfig((prev) => ({ ...prev, globalAllowDoubleheaders: e.target.checked }))} />
-                    <span style={{ fontWeight: 600, fontSize: 14 }}>Allow doubleheaders for all divisions</span>
+                  <label
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "center",
+                      border: "1px solid #e2e8f0",
+                      padding: 12,
+                      borderRadius: 12,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={config.globalAllowDoubleheaders}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          globalAllowDoubleheaders: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>
+                      Allow doubleheaders for all divisions
+                    </span>
                   </label>
                 </div>
               </Card>
@@ -1044,16 +1383,45 @@ export default function YouthSchedulerWebApp() {
                     const targetGames = Number(config.divisionGames[division]);
                     const odd = count % 2 === 1;
                     return (
-                      <div key={division} style={{ display: "grid", gridTemplateColumns: "1fr 110px 120px auto", gap: 12, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                      <div
+                        key={division}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 110px 120px auto",
+                          gap: 12,
+                          alignItems: "center",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 12,
+                          padding: 12,
+                        }}
+                      >
                         <div>
                           <div style={{ fontWeight: 700 }}>{division}</div>
-                          <div style={{ fontSize: 12, color: "#64748b" }}>{odd ? "Odd team count: DH allowed automatically" : "Even team count"}</div>
+                          <div style={{ fontSize: 12, color: "#64748b" }}>
+                            {odd ? "Odd team count: DH allowed automatically" : "Even team count"}
+                          </div>
                         </div>
-                        <select style={styles.select} value={String(count)} onChange={(e) => setDivisionCount(division, e.target.value)}>
-                          {TEAM_COUNT_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
+                        <select
+                          style={styles.select}
+                          value={String(count)}
+                          onChange={(e) => setDivisionCount(division, e.target.value)}
+                        >
+                          {TEAM_COUNT_OPTIONS.map((value) => (
+                            <option key={value} value={value}>
+                              {value}
+                            </option>
+                          ))}
                         </select>
-                        <select style={styles.select} value={String(targetGames)} onChange={(e) => setDivisionGames(division, e.target.value)}>
-                          {GAME_COUNT_OPTIONS.map((value) => <option key={value} value={value}>{value} games</option>)}
+                        <select
+                          style={styles.select}
+                          value={String(targetGames)}
+                          onChange={(e) => setDivisionGames(division, e.target.value)}
+                        >
+                          {GAME_COUNT_OPTIONS.map((value) => (
+                            <option key={value} value={value}>
+                              {value} games
+                            </option>
+                          ))}
                         </select>
                         <Badge>{odd ? "Odd" : "Even"}</Badge>
                       </div>
@@ -1066,14 +1434,50 @@ export default function YouthSchedulerWebApp() {
             <div style={{ display: "grid", gap: 24 }}>
               <Card>
                 <SectionTitle icon={CalendarDays}>Saturdays With Games</SectionTitle>
-                <div style={{ border: "1px solid #e2e8f0", background: "#f8fafc", padding: 12, borderRadius: 12, fontSize: 14, color: "#475569", marginBottom: 12 }}>
-                  Choose the season year, then select the Saturdays to use from November through February.
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    background: "#f8fafc",
+                    padding: 12,
+                    borderRadius: 12,
+                    fontSize: 14,
+                    color: "#475569",
+                    marginBottom: 12,
+                  }}
+                >
+                  Choose the season year, then select the Saturdays to use from November through
+                  February.
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 12 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, minmax(0,1fr))",
+                    gap: 12,
+                  }}
+                >
                   {config.saturdays.map((entry, index) => (
-                    <div key={`${entry.date}-${index}`} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
-                      <input type="checkbox" checked={entry.enabled} onChange={(e) => toggleSaturday(index, e.target.checked)} />
-                      <input style={styles.input} value={entry.date} onChange={(e) => updateSaturdayDate(index, e.target.value)} />
+                    <div
+                      key={`${entry.date}-${index}`}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "auto 1fr",
+                        gap: 10,
+                        alignItems: "center",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 12,
+                        padding: 12,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={entry.enabled}
+                        onChange={(e) => toggleSaturday(index, e.target.checked)}
+                      />
+                      <input
+                        style={styles.input}
+                        value={entry.date}
+                        onChange={(e) => updateSaturdayDate(index, e.target.value)}
+                      />
                     </div>
                   ))}
                 </div>
@@ -1083,31 +1487,123 @@ export default function YouthSchedulerWebApp() {
                 <SectionTitle icon={Building2}>Court Availability by Date</SectionTitle>
                 <div style={{ maxWidth: 280, marginBottom: 12 }}>
                   <label style={styles.smallLabel}>Select date to edit courts</label>
-                  <select style={styles.select} value={selectedCourtDate} onChange={(e) => setConfig((prev) => ({ ...prev, selectedDateForCourts: e.target.value }))}>
-                    {config.saturdays.map((entry) => <option key={entry.date} value={entry.date}>{entry.date}</option>)}
+                  <select
+                    style={styles.select}
+                    value={selectedCourtDate}
+                    onChange={(e) =>
+                      setConfig((prev) => ({ ...prev, selectedDateForCourts: e.target.value }))
+                    }
+                  >
+                    {config.saturdays.map((entry) => (
+                      <option key={entry.date} value={entry.date}>
+                        {entry.date}
+                      </option>
+                    ))}
                   </select>
                 </div>
-                <div style={{ border: "1px solid #e2e8f0", background: "#f8fafc", padding: 12, borderRadius: 12, fontSize: 14, color: "#475569", marginBottom: 12 }}>
-                  Choose which courts are active on the selected date, choose the first game start time for each court, and review how many slots remain on that court for the day. Courts default to an 8:00 AM first game.
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    background: "#f8fafc",
+                    padding: 12,
+                    borderRadius: 12,
+                    fontSize: 14,
+                    color: "#475569",
+                    marginBottom: 12,
+                  }}
+                >
+                  Choose which courts are active on the selected date, choose the first game start
+                  time for each court, and review how many slots remain on that court for the day.
+                  Courts default to an 8:00 AM first game.
                 </div>
                 <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 140px 110px", gap: 12, padding: "0 12px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#64748b" }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "80px 1fr 140px 110px",
+                      gap: 12,
+                      padding: "0 12px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      color: "#64748b",
+                    }}
+                  >
                     <div>Use</div>
                     <div>Court</div>
                     <div>First game</div>
                     <div>Slots left</div>
                   </div>
                   {(config.dateCourtSettings[selectedCourtDate] || []).map((court, index) => (
-                    <div key={`${selectedCourtDate}-${court.name || "custom"}-${index}`} style={{ display: "grid", gridTemplateColumns: "80px 1fr 140px 110px", gap: 12, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
-                      <div><input type="checkbox" checked={court.enabled} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { enabled: e.target.checked })} /></div>
-                      <input style={styles.input} value={court.name} placeholder={index === (config.dateCourtSettings[selectedCourtDate] || []).length - 1 ? "Custom court name" : "Court name"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { name: e.target.value })} />
-                      <select style={styles.select} value={court.startTime || "8:00"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { startTime: e.target.value })}>
-                        {DEFAULT_TIMES.map((time) => <option key={time} value={time}>{time} start</option>)}
+                    <div
+                      key={`${selectedCourtDate}-${court.name || "custom"}-${index}`}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "80px 1fr 140px 110px",
+                        gap: 12,
+                        alignItems: "center",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 12,
+                        padding: 12,
+                      }}
+                    >
+                      <div>
+                        <input
+                          type="checkbox"
+                          checked={court.enabled}
+                          onChange={(e) =>
+                            updateCourtForDate(selectedCourtDate, index, {
+                              enabled: e.target.checked,
+                            })
+                          }
+                        />
+                      </div>
+                      <input
+                        style={styles.input}
+                        value={court.name}
+                        placeholder={
+                          index === (config.dateCourtSettings[selectedCourtDate] || []).length - 1
+                            ? "Custom court name"
+                            : "Court name"
+                        }
+                        onChange={(e) =>
+                          updateCourtForDate(selectedCourtDate, index, {
+                            name: e.target.value,
+                          })
+                        }
+                      />
+                      <select
+                        style={styles.select}
+                        value={court.startTime || "8:00"}
+                        onChange={(e) =>
+                          updateCourtForDate(selectedCourtDate, index, {
+                            startTime: e.target.value,
+                          })
+                        }
+                      >
+                        {DEFAULT_TIMES.map((time) => (
+                          <option key={time} value={time}>
+                            {time} start
+                          </option>
+                        ))}
                       </select>
-                      <div style={{ fontWeight: 700 }}>{getSlotsRemainingForCourt(config, court)}</div>
+                      <div style={{ fontWeight: 700 }}>
+                        {getSlotsRemainingForCourt(config, court)}
+                      </div>
                     </div>
                   ))}
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, background: "#f8fafc", fontWeight: 700 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 12,
+                      padding: 12,
+                      background: "#f8fafc",
+                      fontWeight: 700,
+                    }}
+                  >
                     <span>Total slots for {selectedCourtDate || "selected date"}</span>
                     <span>{selectedDateSlotTotal}</span>
                   </div>
@@ -1116,10 +1612,31 @@ export default function YouthSchedulerWebApp() {
 
               <Card>
                 <SectionTitle>Time Slots</SectionTitle>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, minmax(0,1fr))",
+                    gap: 10,
+                  }}
+                >
                   {config.timeSlots.map((slot, index) => (
-                    <label key={slot.time} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, fontSize: 14 }}>
-                      <input type="checkbox" checked={slot.enabled} onChange={(e) => toggleTime(index, e.target.checked)} />
+                    <label
+                      key={slot.time}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 12,
+                        padding: 12,
+                        fontSize: 14,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={slot.enabled}
+                        onChange={(e) => toggleTime(index, e.target.checked)}
+                      />
                       {slot.time}
                     </label>
                   ))}
@@ -1127,17 +1644,35 @@ export default function YouthSchedulerWebApp() {
               </Card>
 
               <div style={styles.statsGrid}>
-                <StatCard label="Teams" value={capacity.totalTeams} subvalue={`Season ${config.seasonYear}-${String(config.seasonYear + 1).slice(-2)}`} />
+                <StatCard
+                  label="Teams"
+                  value={capacity.totalTeams}
+                  subvalue={`Season ${config.seasonYear}-${String(config.seasonYear + 1).slice(-2)}`}
+                />
                 <StatCard label="Needed games" value={capacity.totalNeededGames} />
                 <StatCard label="Available slots" value={capacity.totalSlots} />
-                <StatCard label="5th Boys DH" value={config.fifthBoysDoubleheaderDate || "Not set"} />
+                <StatCard
+                  label="5th Boys DH"
+                  value={config.fifthBoysDoubleheaderDate || "Not set"}
+                />
               </div>
 
               <Card>
                 <SectionTitle>Built-in checks</SectionTitle>
                 <div style={{ display: "grid", gap: 8 }}>
                   {selfChecks.map((check) => (
-                    <div key={check.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, fontSize: 14 }}>
+                    <div
+                      key={check.name}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 12,
+                        padding: 12,
+                        fontSize: 14,
+                      }}
+                    >
                       <span>{check.name}</span>
                       <Badge danger={!check.pass}>{check.pass ? "Pass" : "Fail"}</Badge>
                     </div>
@@ -1155,33 +1690,95 @@ export default function YouthSchedulerWebApp() {
               {result ? (
                 <button
                   style={styles.button}
-                  onClick={() => exportCsv("filtered_schedule.csv", [["Division", "Date", "Time", "Court", "Home", "Away"], ...filteredSchedule.map((g) => [g.division, g.date, g.time, g.court, g.home, g.away])])}
+                  onClick={() =>
+                    exportCsv("filtered_schedule.csv", [
+                      ["Division", "Date", "Time", "Court", "Home", "Away"],
+                      ...filteredSchedule.map((g) => [
+                        g.division,
+                        g.date,
+                        g.time,
+                        g.court,
+                        g.home,
+                        g.away,
+                      ]),
+                    ])
+                  }
                 >
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Download size={16} /> Export View</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <Download size={16} /> Export View
+                  </span>
                 </button>
               ) : null}
             </div>
             {!result ? (
-              <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>Generate a schedule to see schedule views here.</div>
+              <div
+                style={{
+                  border: "1px dashed #cbd5e1",
+                  borderRadius: 14,
+                  padding: 40,
+                  textAlign: "center",
+                  color: "#64748b",
+                }}
+              >
+                Generate a schedule to see schedule views here.
+              </div>
             ) : (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "220px 280px 1fr", gap: 16, marginBottom: 16 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "220px 280px 1fr",
+                    gap: 16,
+                    marginBottom: 16,
+                  }}
+                >
                   <div>
                     <label style={styles.smallLabel}>Filter by division</label>
-                    <select style={styles.select} value={scheduleDivisionFilter} onChange={(e) => { setScheduleDivisionFilter(e.target.value); setScheduleTeamFilter("all"); }}>
+                    <select
+                      style={styles.select}
+                      value={scheduleDivisionFilter}
+                      onChange={(e) => {
+                        setScheduleDivisionFilter(e.target.value);
+                        setScheduleTeamFilter("all");
+                      }}
+                    >
                       <option value="all">All divisions</option>
-                      {DIVISIONS.map((division) => <option key={division} value={division}>{division}</option>)}
+                      {DIVISIONS.map((division) => (
+                        <option key={division} value={division}>
+                          {division}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>
                     <label style={styles.smallLabel}>Filter by team</label>
-                    <select style={styles.select} value={scheduleTeamFilter} onChange={(e) => setScheduleTeamFilter(e.target.value)}>
+                    <select
+                      style={styles.select}
+                      value={scheduleTeamFilter}
+                      onChange={(e) => setScheduleTeamFilter(e.target.value)}
+                    >
                       <option value="all">All teams</option>
-                      {availableScheduleTeams.map((team) => <option key={team} value={team}>{team}</option>)}
+                      {availableScheduleTeams.map((team) => (
+                        <option key={team} value={team}>
+                          {team}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div style={{ display: "flex", alignItems: "end" }}>
-                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, background: "#f8fafc", padding: "12px 16px", fontSize: 14, color: "#475569" }}>Showing <strong style={{ color: "#0f172a" }}>{filteredSchedule.length}</strong> games</div>
+                    <div
+                      style={{
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 12,
+                        background: "#f8fafc",
+                        padding: "12px 16px",
+                        fontSize: 14,
+                        color: "#475569",
+                      }}
+                    >
+                      Showing <strong style={{ color: "#0f172a" }}>{filteredSchedule.length}</strong>{" "}
+                      games
+                    </div>
                   </div>
                 </div>
                 <div style={styles.tableWrap}>
@@ -1218,16 +1815,41 @@ export default function YouthSchedulerWebApp() {
         {activeTab === "audit" ? (
           <div style={{ display: "grid", gap: 24 }}>
             <div style={styles.statsGrid5}>
-              <StatCard label="All teams scheduled" value={result ? (result.auditSummary.allTeamsScheduled ? "Yes" : "No") : "—"} />
-              <StatCard label="Missing teams" value={result ? result.auditSummary.missingTeams : "—"} />
-              <StatCard label="Early violations" value={result ? result.auditSummary.earlyViolations : "—"} />
-              <StatCard label="Home/away issues" value={result ? result.auditSummary.homeAwayIssues : "—"} />
-              <StatCard label="5th Boys DH day" value={result ? (result.auditSummary.fifthBoysDhTeamsMet ? "OK" : "Issue") : "—"} />
+              <StatCard
+                label="All teams scheduled"
+                value={result ? (result.auditSummary.allTeamsScheduled ? "Yes" : "No") : "—"}
+              />
+              <StatCard
+                label="Missing teams"
+                value={result ? result.auditSummary.missingTeams : "—"}
+              />
+              <StatCard
+                label="Early violations"
+                value={result ? result.auditSummary.earlyViolations : "—"}
+              />
+              <StatCard
+                label="Home/away issues"
+                value={result ? result.auditSummary.homeAwayIssues : "—"}
+              />
+              <StatCard
+                label="5th Boys DH day"
+                value={result ? (result.auditSummary.fifthBoysDhTeamsMet ? "OK" : "Issue") : "—"}
+              />
             </div>
             <Card>
               <SectionTitle>Team Audit</SectionTitle>
               {!result ? (
-                <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>Generate a schedule to audit the teams.</div>
+                <div
+                  style={{
+                    border: "1px dashed #cbd5e1",
+                    borderRadius: 14,
+                    padding: 40,
+                    textAlign: "center",
+                    color: "#64748b",
+                  }}
+                >
+                  Generate a schedule to audit the teams.
+                </div>
               ) : (
                 <div style={{ ...styles.tableWrap, maxHeight: 620 }}>
                   <table style={styles.table}>
@@ -1263,7 +1885,13 @@ export default function YouthSchedulerWebApp() {
                           <td style={styles.td}>{row.maxSameTime}</td>
                           <td style={styles.td}>
                             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              {row.issues.length ? row.issues.map((issue) => <Badge key={issue} danger>{issue}</Badge>) : <Badge>OK</Badge>}
+                              {row.issues.length
+                                ? row.issues.map((issue) => (
+                                    <Badge key={issue} danger>
+                                      {issue}
+                                    </Badge>
+                                  ))
+                                : <Badge>OK</Badge>}
                             </div>
                           </td>
                         </tr>
@@ -1280,22 +1908,54 @@ export default function YouthSchedulerWebApp() {
           <Card>
             <SectionTitle icon={AlertTriangle}>Scheduling Issues</SectionTitle>
             {!result ? (
-              <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>Generate a schedule to see unresolved issues.</div>
+              <div
+                style={{
+                  border: "1px dashed #cbd5e1",
+                  borderRadius: 14,
+                  padding: 40,
+                  textAlign: "center",
+                  color: "#64748b",
+                }}
+              >
+                Generate a schedule to see unresolved issues.
+              </div>
             ) : highlightedIssues.length === 0 && result.unscheduled.length === 0 ? (
-              <div style={{ border: "1px solid #bbf7d0", color: "#166534", borderRadius: 14, padding: 40, textAlign: "center" }}>No major scheduling issues found.</div>
+              <div
+                style={{
+                  border: "1px solid #bbf7d0",
+                  color: "#166534",
+                  borderRadius: 14,
+                  padding: 40,
+                  textAlign: "center",
+                }}
+              >
+                No major scheduling issues found.
+              </div>
             ) : (
               <div style={{ display: "grid", gap: 16 }}>
                 {result.unscheduled.map((issue, idx) => (
-                  <div key={`${issue.matchup}-${idx}`} style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
+                  <div
+                    key={`${issue.matchup}-${idx}`}
+                    style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}
+                  >
                     <div style={{ fontWeight: 700 }}>{issue.matchup}</div>
-                    <div style={{ fontSize: 14, color: "#475569", marginTop: 6 }}>Reason: {issue.reason}</div>
-                    <div style={{ fontSize: 14, color: "#475569", marginTop: 4 }}>Suggestion: {issue.suggestion}</div>
+                    <div style={{ fontSize: 14, color: "#475569", marginTop: 6 }}>
+                      Reason: {issue.reason}
+                    </div>
+                    <div style={{ fontSize: 14, color: "#475569", marginTop: 4 }}>
+                      Suggestion: {issue.suggestion}
+                    </div>
                   </div>
                 ))}
                 {highlightedIssues.map((row) => (
-                  <div key={row.team} style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
+                  <div
+                    key={row.team}
+                    style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}
+                  >
                     <div style={{ fontWeight: 700 }}>{row.team}</div>
-                    <div style={{ fontSize: 14, color: "#475569", marginTop: 6 }}>{row.issues.join(" • ")}</div>
+                    <div style={{ fontSize: 14, color: "#475569", marginTop: 6 }}>
+                      {row.issues.join(" • ")}
+                    </div>
                   </div>
                 ))}
               </div>
