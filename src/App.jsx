@@ -566,14 +566,12 @@ function violatesTimeVariety(team, slotTime) {
   const targetGames = team.targetGames || 0;
   const projectedCountAtTime = (team.gamesByTime?.[slotTime] || 0) + 1;
 
-  const maxPerExactTime =
-    targetGames <= 8 ? 3 :
-    targetGames <= 10 ? 3 :
-    4;
+  const hardMaxPerExactTime =
+    targetGames <= 8 ? 4 :
+    targetGames <= 10 ? 4 :
+    5;
 
-  if (projectedCountAtTime > maxPerExactTime) return true;
-
-  return false;
+  return projectedCountAtTime > hardMaxPerExactTime;
 }
 
 function canPairInSlot(teamA, teamB, slot, config) {
@@ -633,8 +631,8 @@ function slotPenalty(teamA, teamB, slot) {
   const projectedA = getProjectedTimeCount(teamA, slot.time);
   const projectedB = getProjectedTimeCount(teamB, slot.time);
 
-  penalty += projectedA * projectedA * 60;
-  penalty += projectedB * projectedB * 60;
+  penalty += projectedA * projectedA * 80;
+  penalty += projectedB * projectedB * 80;
 
   penalty += getProjectedTimeSpreadPenalty(teamA, slot.time);
   penalty += getProjectedTimeSpreadPenalty(teamB, slot.time);
@@ -642,18 +640,17 @@ function slotPenalty(teamA, teamB, slot) {
   penalty += getProjectedDayPartPenalty(teamA, slot.time);
   penalty += getProjectedDayPartPenalty(teamB, slot.time);
 
-  penalty += (teamA.gamesByDate[slot.date] || 0) * 10;
-  penalty += (teamB.gamesByDate[slot.date] || 0) * 10;
+  penalty += (teamA.gamesByDate[slot.date] || 0) * 8;
+  penalty += (teamB.gamesByDate[slot.date] || 0) * 8;
 
   const existingA = getScheduledGamesOnDate(teamA, slot.date)[0];
   const existingB = getScheduledGamesOnDate(teamB, slot.date)[0];
 
-  if (existingA && areBackToBackTimes(existingA.time, slot.time) && existingA.court === slot.court) penalty -= 18;
-  if (existingB && areBackToBackTimes(existingB.time, slot.time) && existingB.court === slot.court) penalty -= 18;
+  if (existingA && areBackToBackTimes(existingA.time, slot.time) && existingA.court === slot.court) penalty -= 15;
+  if (existingB && areBackToBackTimes(existingB.time, slot.time) && existingB.court === slot.court) penalty -= 15;
 
   return penalty;
 }
-
 function scheduleGame(schedule, slot, teamA, teamB) {
   const homeTeam = chooseHomeTeam(teamA, teamB);
   const awayTeam = homeTeam.id === teamA.id ? teamB : teamA;
@@ -755,7 +752,7 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
   let best = null;
   let bestScore = Infinity;
 
-  const groupsToConsider = slotGroups.slice(0, 4);
+  const groupsToConsider = slotGroups.slice(0, 8);
 
   for (const group of groupsToConsider) {
     for (const opponent of divisionTeams) {
@@ -783,7 +780,7 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
           fairnessScore(opponent) +
           slotPenalty(team, opponent, slot) +
           constraintPenalty +
-          group.groupIndex * 8;
+          group.groupIndex * 3;
 
         if (score < bestScore) {
           bestScore = score;
@@ -934,7 +931,7 @@ function generateScheduleEngine(config) {
       Math.abs(team.home - team.away) > 2 ? "Home/away imbalance" : null,
       team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? "Too many doubleheaders" : null,
       team.maxSameTimeSlot > (team.targetGames <= 8 ? 2 : 3) ? "Time slot concentration" : null,
-      Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.65) ? "Poor AM/PM balance" : null,
+      Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.75) ? "Poor AM/PM balance" : null,
     ].filter(Boolean),
   }));
 
