@@ -735,37 +735,12 @@ function buildDivisionMatchPlan(divisionTeams, targetGames, config, division) {
 
 function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allowIgnoreTimeVariety = false) {
   const slotGroups = buildOrderedSlotGroups(openSlots);
-  let best = null;
-  let bestScore = Infinity;
 
   for (const group of slotGroups) {
     for (const slot of group.slots) {
       if (!canPairInSlot(teamA, teamB, slot, config, { ignoreTimeVariety: allowIgnoreTimeVariety })) continue;
-
-      let penalty = 0;
-      penalty += slotPenalty(teamA, teamB, slot) * (allowIgnoreTimeVariety ? 0.15 : 0.35);
-      penalty += (teamA.gamesByDate[slot.date] || 0) * 20;
-      penalty += (teamB.gamesByDate[slot.date] || 0) * 20;
-      penalty += group.groupIndex * 3;
-      if (isEarlyTime(slot.time)) {
-        penalty += (teamA.earlyGames || 0) * 40;
-        penalty += (teamB.earlyGames || 0) * 40;
-      }
-      if (teamA.division === '5th Boys' && config.fifthBoysDoubleheaderDate) {
-        const aOnDhDate = teamA.gamesByDate[config.fifthBoysDoubleheaderDate] || 0;
-        const bOnDhDate = teamB.gamesByDate[config.fifthBoysDoubleheaderDate] || 0;
-        if (slot.date === config.fifthBoysDoubleheaderDate) {
-          if (aOnDhDate === 0) penalty -= 35;
-          if (bOnDhDate === 0) penalty -= 35;
-        }
-      }
-
-      if (penalty < bestScore) {
-        bestScore = penalty;
-        best = slot;
-      }
+      return slot;
     }
-    if (best) return best;
   }
 
   return null;
