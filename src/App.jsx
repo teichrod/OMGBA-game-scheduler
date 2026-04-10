@@ -379,11 +379,41 @@ function buildTeams(config) {
   const teams = [];
   for (const division of DIVISIONS) {
     const count = Number(config.divisions[division] || 0);
-    const allowDoubleheaders = config.globalAllowDoubleheaders || count % 2 === 1 || division === "5th Boys";
     const targetGames = Number(config.divisionGames[division] || 8);
-    for (let i = 1; i <= count; i += 1) {
-      teams.push({ id: `${division}::${i}`, name: `${division} Team ${i}`, division, gamesScheduled: 0, targetGames, earlyGames: 0, home: 0, away: 0, doubleHeaders: 0, maxSameTimeSlot: 0, allowDoubleheaders, gamesByDate: {}, gamesByTime: {}, opponents: {}, scheduledGames: [], morningGames: 0, afternoonGames: 0 });
-    }
+const isOddDivision = count % 2 === 1;
+
+let maxDoubleheadersPerTeam = 0;
+
+if (config.globalAllowDoubleheaders) {
+  maxDoubleheadersPerTeam = 99;
+} else if (division === "5th Boys") {
+  maxDoubleheadersPerTeam = isOddDivision ? 2 : 1;
+} else {
+  maxDoubleheadersPerTeam = isOddDivision ? 1 : 0;
+}
+
+for (let i = 1; i <= count; i += 1) {
+  teams.push({
+    id: `${division}::${i}`,
+    name: `${division} Team ${i}`,
+    division,
+    gamesScheduled: 0,
+    targetGames,
+    earlyGames: 0,
+    home: 0,
+    away: 0,
+    doubleHeaders: 0,
+    maxSameTimeSlot: 0,
+    maxDoubleheadersPerTeam,
+    gamesByDate: {},
+    gamesByTime: {},
+    opponents: {},
+    scheduledGames: [],
+    morningGames: 0,
+    afternoonGames: 0,
+  });
+}
+
   }
   return teams;
 }
@@ -418,17 +448,18 @@ function getScheduledGamesOnDate(team, date) { return (team.scheduledGames || []
 function canPairInSlot(teamA, teamB, slot, config) {
   if (teamA.id === teamB.id || teamA.division !== teamB.division || slot.used) return false;
   const aOnDate = teamA.gamesByDate[slot.date] || 0; const bOnDate = teamB.gamesByDate[slot.date] || 0;
-  if (aOnDate >= 2 || bOnDate >= 2) return false;
-  if (aOnDate >= 1 && !teamA.allowDoubleheaders) return false;
-  if (bOnDate >= 1 && !teamB.allowDoubleheaders) return false;
+ if (aOnDate >= 2 || bOnDate >= 2) return false;
+
+if (aOnDate >= 1 && (teamA.doubleHeaders || 0) >= (teamA.maxDoubleheadersPerTeam || 0)) return false;
+if (bOnDate >= 1 && (teamB.doubleHeaders || 0) >= (teamB.maxDoubleheadersPerTeam || 0)) return false;
   if (aOnDate === 1) { const existingA = getScheduledGamesOnDate(teamA, slot.date)[0]; if (!existingA || !areBackToBackTimes(existingA.time, slot.time) || existingA.court !== slot.court) return false; }
   if (bOnDate === 1) { const existingB = getScheduledGamesOnDate(teamB, slot.date)[0]; if (!existingB || !areBackToBackTimes(existingB.time, slot.time) || existingB.court !== slot.court) return false; }
   if (config.fifthBoysDoubleheaderDate) {
-    if (teamA.division === "5th Boys" && slot.date !== config.fifthBoysDoubleheaderDate) {
-      const aDhCount = teamA.gamesByDate[config.fifthBoysDoubleheaderDate] || 0; const bDhCount = teamB.gamesByDate[config.fifthBoysDoubleheaderDate] || 0; if (aDhCount < 2 || bDhCount < 2) return false;
-    }
-    if (teamA.division !== "5th Boys" && slot.date === config.fifthBoysDoubleheaderDate) return false;
+  if (teamA.division === "5th Boys" && slot.date !== config.fifthBoysDoubleheaderDate) {
+    const aDhCount = teamA.gamesByDate[config.fifthBoysDoubleheaderDate] || 0; const bDhCount = teamB.gamesByDate[config.fifthBoysDoubleheaderDate] || 0; if (aDhCount < 2 || bDhCount < 2) return false;
   }
+  if (teamA.division !== "5th Boys" && slot.date === config.fifthBoysDoubleheaderDate) return false;
+}
   if (isEarlyTime(slot.time)) { if ((teamA.earlyGames || 0) >= Number(config.maxEarlyGames)) return false; if ((teamB.earlyGames || 0) >= Number(config.maxEarlyGames)) return false; }
   return true;
 }
@@ -484,7 +515,12 @@ function generateScheduleEngine(config) {
   }
   const parseDate = (d) => { const [m, day, y] = String(d).split("/"); return new Date(`20${y}`, Number(m) - 1, Number(day)).getTime(); };
   schedule.sort((a, b) => { const dateDiff = parseDate(a.date) - parseDate(b.date); if (dateDiff !== 0) return dateDiff; const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time); if (timeDiff !== 0) return timeDiff; return a.court.localeCompare(b.court); });
-  const auditRows = teams.map((team) => ({ team: team.name, division: team.division, games: team.gamesScheduled, target: team.targetGames, early: team.earlyGames, home: team.home, away: team.away, dh: team.doubleHeaders, maxSameTime: team.maxSameTimeSlot, morning: team.morningGames || 0, afternoon: team.afternoonGames || 0, issues: [team.gamesScheduled !== team.targetGames ? "Missing games" : null, team.earlyGames > Number(config.maxEarlyGames) ? "Too many early games" : null, Math.abs(team.home - team.away) > 2 ? "Home/away imbalance" : null].filter(Boolean) }));
+  const auditRows = teams.map((team) => ({ team: team.name, division: team.division, games: team.gamesScheduled, target: team.targetGames, early: team.earlyGames, home: team.home, away: team.away, dh: team.doubleHeaders, maxSameTime: team.maxSameTimeSlot, morning: team.morningGames || 0, afternoon: team.afternoonGames || 0, issues: [
+  team.gamesScheduled !== team.targetGames ? "Missing games" : null,
+  team.earlyGames > Number(config.maxEarlyGames) ? "Too many early games" : null,
+  Math.abs(team.home - team.away) > 2 ? "Home/away imbalance" : null,
+  team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? "Too many doubleheaders" : null,
+].filter(Boolean) }));
   const fifthBoysDhTeamsMet = teams.filter((t) => t.division === "5th Boys").every((t) => { if (!config.fifthBoysDoubleheaderDate) return true; return (t.gamesByDate[config.fifthBoysDoubleheaderDate] || 0) === 2; });
   const auditSummary = { totalGames: schedule.length, totalTeams: teams.length, allTeamsScheduled: auditRows.every((r) => r.games === r.target), earlyViolations: auditRows.filter((r) => r.early > Number(config.maxEarlyGames)).length, homeAwayIssues: auditRows.filter((r) => Math.abs(r.home - r.away) > 2).length, missingTeams: auditRows.filter((r) => r.games !== r.target).length, enabledDates: config.saturdays.filter((d) => d.enabled).length, enabledCourts: Object.values(config.dateCourtSettings).reduce((sum, courts) => sum + courts.filter((c) => c.enabled && String(c.name || "").trim() !== "").length, 0), fifthBoysDhTeamsMet };
   return { schedule, auditRows, auditSummary, unscheduled };
