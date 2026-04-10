@@ -305,6 +305,21 @@ function getSeasonSaturdays(startYear) {
   }
   return dates;
 }
+function getScheduleGridForDate(config, result, date) {
+  const enabledTimes = config.timeSlots.filter((t) => t.enabled).map((t) => t.time);
+  const courts = getEnabledCourtsForDate(config, date);
+
+  return enabledTimes.map((time) => {
+    const row = { time };
+    for (const court of courts) {
+      const game = result?.schedule?.find(
+        (g) => g.date === date && g.time === time && g.court === court.name
+      );
+      row[court.name] = game ? `${game.away} @ ${game.home}` : "";
+    }
+    return row;
+  });
+}
 
 function buildDateCourtSettings(dates, previous = {}, baseCourts = DEFAULT_COURTS) {
   const next = {};
@@ -447,7 +462,10 @@ function areBackToBackTimes(timeA, timeB) { const a = getTimeIndex(timeA); const
 function getScheduledGamesOnDate(team, date) { return (team.scheduledGames || []).filter((game) => game.date === date); }
 function canPairInSlot(teamA, teamB, slot, config) {
   if (teamA.id === teamB.id || teamA.division !== teamB.division || slot.used) return false;
-  const aOnDate = teamA.gamesByDate[slot.date] || 0; const bOnDate = teamB.gamesByDate[slot.date] || 0;
+if ((teamA.opponents[teamB.name] || 0) > 0) return false;
+if ((teamB.opponents[teamA.name] || 0) > 0) return false;
+  const aOnDate = teamA.gamesByDate[slot.date] || 0; 
+  const bOnDate = teamB.gamesByDate[slot.date] || 0;
  if (aOnDate >= 2 || bOnDate >= 2) return false;
 
 if (aOnDate >= 1 && (teamA.doubleHeaders || 0) >= (teamA.maxDoubleheadersPerTeam || 0)) return false;
@@ -498,7 +516,37 @@ function generateScheduleEngine(config) {
     const divisionTeams = teams.filter((t) => t.division === division); let safety = 0;
     while (divisionTeams.some((t) => t.gamesScheduled < t.targetGames) && safety < 8000) {
       safety += 1; const needyTeams = divisionTeams.filter((t) => t.gamesScheduled < t.targetGames).sort((a, b) => (b.targetGames - b.gamesScheduled) - (a.targetGames - a.gamesScheduled)); let scheduledOne = false;
-      for (const team of needyTeams) { const freeSlots = openSlots.filter((slot) => !slot.used); const best = chooseBestCandidate(team, teams, freeSlots, config); if (!best) continue; scheduleGame(schedule, best.slot, best.teamA, best.teamB); scheduledOne = true; break; }
+      for (const team of needyTeams) {
+  const freeSlots = openSlots.filter((slot) => !slot.used);
+
+  const sortedFreeSlots = [...freeSlots].sort((a, b) => {
+    const parseDate = (d) => {
+      const [m, day, y] = String(d).split("/");
+      return new Date(`20${y}`, Number(m) - 1, Number(day)).getTime();
+    };
+    const dateDiff = parseDate(a.date) - parseDate(b.date);
+    if (dateDiff !== 0) return dateDiff;
+    const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
+    if (timeDiff !== 0) return timeDiff;
+    return a.court.localeCompare(b.court);
+  });
+
+  if (sortedFreeSlots.length === 0) continue;
+
+  const earliestDate = sortedFreeSlots[0].date;
+  const earliestTime = sortedFreeSlots[0].time;
+
+  const candidateSlots = sortedFreeSlots.filter(
+    (slot) => slot.date === earliestDate && slot.time === earliestTime
+  );
+
+  const best = chooseBestCandidate(team, teams, candidateSlots, config);
+  if (!best) continue;
+
+  scheduleGame(schedule, best.slot, best.teamA, best.teamB);
+  scheduledOne = true;
+  break;
+}
       if (!scheduledOne) { unscheduled.push({ matchup: needyTeams.map((t) => t.name).join(", "), reason: "No valid matchup or slot found during main pass", suggestion: "Add Saturdays, add courts on specific dates, or relax constraints" }); break; }
     }
   }
@@ -603,7 +651,7 @@ export default function App() {
   const isPublicMode = (params.get("view") || "").toLowerCase() === "public";
   const initialDivisionParam = params.get("division") || "all";
   const initialTeamParam = params.get("team") || "all";
-
+  const [adminScheduleDate, setAdminScheduleDate] = useState("");
   const [config, setConfig] = useState(createInitialState());
   const [result, setResult] = useState(null);
   const [activeTab, setActiveTab] = useState(isPublicMode ? "schedule" : "setup");
@@ -611,8 +659,22 @@ export default function App() {
   const [scheduleTeamFilter, setScheduleTeamFilter] = useState(initialTeamParam);
   const [publishedMeta, setPublishedMeta] = useState(loadPublishedPayload()?.meta || null);
   const [publishNotice, setPublishNotice] = useState("");
+  const adminScheduleGrid = useMemo(() => {
+  if (!adminScheduleDate) return [];
+  return getScheduleGridForDate(config, result, adminScheduleDate);
+}, [config, result, adminScheduleDate]);
+
+const adminScheduleCourts = useMemo(() => {
+  return getEnabledCourtsForDate(config, adminScheduleDate);
+}, [config, adminScheduleDate]);
 
  useEffect(() => {
+  if (!adminScheduleDate && config.saturdays.length > 0) {
+    setAdminScheduleDate(config.saturdays[0].date);
+  }
+}, [adminScheduleDate, config.saturdays]);
+
+useEffect(() => {
   async function loadPublicSchedule() {
     if (!isPublicMode) return;
 
@@ -852,18 +914,155 @@ async function clearPublishedSchedule() {
               <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>{isPublicMode ? "No published schedule found yet. Admin needs to generate and publish one first on this same browser/device." : "Generate a schedule to see schedule views here."}</div>
             ) : (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "220px 280px 1fr", gap: 16, marginBottom: 16 }}>
-                  <div><label style={styles.smallLabel}>Filter by division</label><select style={styles.select} value={scheduleDivisionFilter} onChange={(e) => { setScheduleDivisionFilter(e.target.value); setScheduleTeamFilter("all"); }}><option value="all">All divisions</option>{DIVISIONS.map((division) => <option key={division} value={division}>{division}</option>)}</select></div>
-                  <div><label style={styles.smallLabel}>Filter by team</label><select style={styles.select} value={scheduleTeamFilter} onChange={(e) => setScheduleTeamFilter(e.target.value)}><option value="all">All teams</option>{availableScheduleTeams.map((team) => <option key={team} value={team}>{team}</option>)}</select></div>
-                  <div style={{ display: "flex", alignItems: "end", gap: 12, flexWrap: "wrap" }}><div style={{ border: "1px solid #e2e8f0", borderRadius: 12, background: "#f8fafc", padding: "12px 16px", fontSize: 14, color: "#475569" }}>Showing <strong style={{ color: "#0f172a" }}>{filteredSchedule.length}</strong> games</div>{scheduleTeamFilter !== "all" ? <div style={{ border: "1px solid #dbeafe", borderRadius: 12, background: "#eff6ff", padding: "12px 16px", fontSize: 13, color: "#1d4ed8" }}>Direct team view active for <strong>{scheduleTeamFilter}</strong></div> : null}</div>
-                </div>
-                <div style={styles.tableWrap}>
-                  <table style={styles.table}>
-                    <thead><tr><th style={styles.th}>Division</th><th style={styles.th}>Date</th><th style={styles.th}>Time</th><th style={styles.th}>Court</th><th style={styles.th}>Home</th><th style={styles.th}>Away</th></tr></thead>
-                    <tbody>{filteredSchedule.map((game, idx) => <tr key={`${game.date}-${game.time}-${game.court}-${idx}`}><td style={styles.td}>{game.division}</td><td style={styles.td}>{game.date}</td><td style={styles.td}>{game.time}</td><td style={styles.td}>{game.court}</td><td style={styles.td}>{game.home}</td><td style={styles.td}>{game.away}</td></tr>)}</tbody>
-                  </table>
-                </div>
-              </>
+  {!isPublicMode ? (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16, alignItems: "end", marginBottom: 16 }}>
+        <div>
+          <label style={styles.smallLabel}>View one date in grid form</label>
+          <select
+            style={styles.select}
+            value={adminScheduleDate}
+            onChange={(e) => setAdminScheduleDate(e.target.value)}
+          >
+            {config.saturdays
+              .filter((d) => d.enabled)
+              .map((entry) => (
+                <option key={entry.date} value={entry.date}>
+                  {entry.date}
+                </option>
+              ))}
+          </select>
+        </div>
+        <div style={{ fontSize: 14, color: "#475569" }}>
+          Review every enabled time slot and court for the selected date so you can quickly spot gaps or open slots.
+        </div>
+      </div>
+
+      <div style={{ ...styles.tableWrap, marginBottom: 20, maxHeight: 500 }}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Time</th>
+              {adminScheduleCourts.map((court) => (
+                <th key={court.name} style={styles.th}>
+                  {court.name}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {adminScheduleGrid.map((row) => (
+              <tr key={row.time}>
+                <td style={styles.td}>
+                  <strong>{row.time}</strong>
+                </td>
+                {adminScheduleCourts.map((court) => (
+                  <td key={`${row.time}-${court.name}`} style={styles.td}>
+                    {row[court.name] || <span style={{ color: "#94a3b8" }}>Open</span>}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  ) : null}
+
+  <div style={{ display: "grid", gridTemplateColumns: "220px 280px 1fr", gap: 16, marginBottom: 16 }}>
+    <div>
+      <label style={styles.smallLabel}>Filter by division</label>
+      <select
+        style={styles.select}
+        value={scheduleDivisionFilter}
+        onChange={(e) => {
+          setScheduleDivisionFilter(e.target.value);
+          setScheduleTeamFilter("all");
+        }}
+      >
+        <option value="all">All divisions</option>
+        {DIVISIONS.map((division) => (
+          <option key={division} value={division}>
+            {division}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    <div>
+      <label style={styles.smallLabel}>Filter by team</label>
+      <select
+        style={styles.select}
+        value={scheduleTeamFilter}
+        onChange={(e) => setScheduleTeamFilter(e.target.value)}
+      >
+        <option value="all">All teams</option>
+        {availableScheduleTeams.map((team) => (
+          <option key={team} value={team}>
+            {team}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    <div style={{ display: "flex", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
+      <div
+        style={{
+          border: "1px solid #e2e8f0",
+          borderRadius: 12,
+          background: "#f8fafc",
+          padding: "12px 16px",
+          fontSize: 14,
+          color: "#475569",
+        }}
+      >
+        Showing <strong style={{ color: "#0f172a" }}>{filteredSchedule.length}</strong> games
+      </div>
+
+      {scheduleTeamFilter !== "all" ? (
+        <div
+          style={{
+            border: "1px solid #dbeafe",
+            borderRadius: 12,
+            background: "#eff6ff",
+            padding: "12px 16px",
+            fontSize: 13,
+            color: "#1d4ed8",
+          }}
+        >
+          Direct team view active for <strong>{scheduleTeamFilter}</strong>
+        </div>
+      ) : null}
+    </div>
+  </div>
+
+  <div style={styles.tableWrap}>
+    <table style={styles.table}>
+      <thead>
+        <tr>
+          <th style={styles.th}>Division</th>
+          <th style={styles.th}>Date</th>
+          <th style={styles.th}>Time</th>
+          <th style={styles.th}>Court</th>
+          <th style={styles.th}>Home</th>
+          <th style={styles.th}>Away</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filteredSchedule.map((game, idx) => (
+          <tr key={`${game.date}-${game.time}-${game.court}-${idx}`}>
+            <td style={styles.td}>{game.division}</td>
+            <td style={styles.td}>{game.date}</td>
+            <td style={styles.td}>{game.time}</td>
+            <td style={styles.td}>{game.court}</td>
+            <td style={styles.td}>{game.home}</td>
+            <td style={styles.td}>{game.away}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+</>
             )}
           </Card>
         ) : null}
