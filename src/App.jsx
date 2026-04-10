@@ -517,30 +517,43 @@ function generateScheduleEngine(config) {
     while (divisionTeams.some((t) => t.gamesScheduled < t.targetGames) && safety < 8000) {
       safety += 1; const needyTeams = divisionTeams.filter((t) => t.gamesScheduled < t.targetGames).sort((a, b) => (b.targetGames - b.gamesScheduled) - (a.targetGames - a.gamesScheduled)); let scheduledOne = false;
       for (const team of needyTeams) {
-  const freeSlots = openSlots.filter((slot) => !slot.used);
+  const freeSlots = openSlots
+    .filter((slot) => !slot.used)
+    .sort((a, b) => {
+      const parseDate = (d) => {
+        const [m, day, y] = String(d).split("/");
+        return new Date(`20${y}`, Number(m) - 1, Number(day)).getTime();
+      };
+      const dateDiff = parseDate(a.date) - parseDate(b.date);
+      if (dateDiff !== 0) return dateDiff;
+      const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
+      if (timeDiff !== 0) return timeDiff;
+      return a.court.localeCompare(b.court);
+    });
 
-  const sortedFreeSlots = [...freeSlots].sort((a, b) => {
-    const parseDate = (d) => {
-      const [m, day, y] = String(d).split("/");
-      return new Date(`20${y}`, Number(m) - 1, Number(day)).getTime();
-    };
-    const dateDiff = parseDate(a.date) - parseDate(b.date);
-    if (dateDiff !== 0) return dateDiff;
-    const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
-    if (timeDiff !== 0) return timeDiff;
-    return a.court.localeCompare(b.court);
-  });
+  if (freeSlots.length === 0) continue;
 
-  if (sortedFreeSlots.length === 0) continue;
+  const groupedSlots = [];
+  for (const slot of freeSlots) {
+    const lastGroup = groupedSlots[groupedSlots.length - 1];
+    if (!lastGroup || lastGroup.date !== slot.date || lastGroup.time !== slot.time) {
+      groupedSlots.push({
+        date: slot.date,
+        time: slot.time,
+        slots: [slot],
+      });
+    } else {
+      lastGroup.slots.push(slot);
+    }
+  }
 
-  const earliestDate = sortedFreeSlots[0].date;
-  const earliestTime = sortedFreeSlots[0].time;
+  let best = null;
 
-  const candidateSlots = sortedFreeSlots.filter(
-    (slot) => slot.date === earliestDate && slot.time === earliestTime
-  );
+  for (const group of groupedSlots) {
+    best = chooseBestCandidate(team, teams, group.slots, config);
+    if (best) break;
+  }
 
-  const best = chooseBestCandidate(team, teams, candidateSlots, config);
   if (!best) continue;
 
   scheduleGame(schedule, best.slot, best.teamA, best.teamB);
