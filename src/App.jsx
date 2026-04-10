@@ -562,7 +562,19 @@ function getAllowedRepeatLimit(config, division) {
   return Math.ceil(targetGames / opponentsPerTeam);
 }
 
-function violatesTimeVariety() {
+function violatesTimeVariety(team, slotTime) {
+  const targetGames = team.targetGames || 0;
+  const projectedCountAtTime = (team.gamesByTime?.[slotTime] || 0) + 1;
+  const maxPerExactTime = targetGames <= 8 ? 2 : targetGames <= 10 ? 3 : 3;
+  if (projectedCountAtTime > maxPerExactTime) return true;
+
+  const projectedMorning = (team.morningGames || 0) + (isMorningTime(slotTime) ? 1 : 0);
+  const projectedAfternoon = (team.afternoonGames || 0) + (isAfternoonTime(slotTime) ? 1 : 0);
+  const maxMorning = Math.ceil(targetGames * 0.65);
+  const maxAfternoon = Math.ceil(targetGames * 0.65);
+
+  if (projectedMorning > maxMorning) return true;
+  if (projectedAfternoon > maxAfternoon) return true;
   return false;
 }
 
@@ -619,30 +631,25 @@ function canPairInSlot(teamA, teamB, slot, config) {
 
 function slotPenalty(teamA, teamB, slot) {
   let penalty = 0;
-
-  const projectedA = getProjectedTimeCount(teamA, slot.time);
-  const projectedB = getProjectedTimeCount(teamB, slot.time);
-
-  penalty += projectedA * projectedA * 140;
-  penalty += projectedB * projectedB * 140;
-
-  penalty += getProjectedTimeSpreadPenalty(teamA, slot.time) * 1.8;
-  penalty += getProjectedTimeSpreadPenalty(teamB, slot.time) * 1.8;
-
-  penalty += getProjectedDayPartPenalty(teamA, slot.time) * 1.4;
-  penalty += getProjectedDayPartPenalty(teamB, slot.time) * 1.4;
-
-  penalty += (teamA.gamesByDate[slot.date] || 0) * 6;
-  penalty += (teamB.gamesByDate[slot.date] || 0) * 6;
+  penalty += getProjectedTimeCount(teamA, slot.time) * 45;
+  penalty += getProjectedTimeCount(teamB, slot.time) * 45;
+  penalty += getProjectedTimeSpreadPenalty(teamA, slot.time);
+  penalty += getProjectedTimeSpreadPenalty(teamB, slot.time);
+  penalty += getProjectedDayPartPenalty(teamA, slot.time);
+  penalty += getProjectedDayPartPenalty(teamB, slot.time);
+  penalty += (teamA.gamesByDate[slot.date] || 0) * 12;
+  penalty += (teamB.gamesByDate[slot.date] || 0) * 12;
 
   const existingA = getScheduledGamesOnDate(teamA, slot.date)[0];
   const existingB = getScheduledGamesOnDate(teamB, slot.date)[0];
-
-  if (existingA && areBackToBackTimes(existingA.time, slot.time) && existingA.court === slot.court) penalty -= 12;
-  if (existingB && areBackToBackTimes(existingB.time, slot.time) && existingB.court === slot.court) penalty -= 12;
+  if (existingA && areBackToBackTimes(existingA.time, slot.time) && existingA.court === slot.court) penalty -= 25;
+  if (existingB && areBackToBackTimes(existingB.time, slot.time) && existingB.court === slot.court) penalty -= 25;
+  if ((teamA.gamesByDate[slot.date] || 0) >= 1) penalty += 10;
+  if ((teamB.gamesByDate[slot.date] || 0) >= 1) penalty += 10;
 
   return penalty;
 }
+
 function scheduleGame(schedule, slot, teamA, teamB) {
   const homeTeam = chooseHomeTeam(teamA, teamB);
   const awayTeam = homeTeam.id === teamA.id ? teamB : teamA;
@@ -735,44 +742,30 @@ function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unschedule
 
 function chooseBestCandidate(team, allTeams, slotGroups, config) {
   const divisionTeams = allTeams.filter(
-    (candidate) =>
-      candidate.division === team.division &&
-      candidate.id !== team.id &&
-      candidate.gamesScheduled < candidate.targetGames
+    (candidate) => candidate.division === team.division && candidate.id !== team.id && candidate.gamesScheduled < candidate.targetGames
   );
 
   let best = null;
   let bestScore = Infinity;
 
-  const groupsToConsider = slotGroups.slice(0, 14);
-
-  for (const group of groupsToConsider) {
+  for (const group of slotGroups) {
     for (const opponent of divisionTeams) {
       const remainingOptionsA = divisionTeams.filter(
-        (other) =>
-          other.id !== opponent.id &&
-          (team.opponents[other.name] || 0) < getAllowedRepeatLimit(config, team.division)
+        (other) => other.id !== opponent.id && (team.opponents[other.name] || 0) < getAllowedRepeatLimit(config, team.division)
       ).length;
-
       const remainingOptionsB = divisionTeams.filter(
-        (other) =>
-          other.id !== team.id &&
-          (opponent.opponents[other.name] || 0) < getAllowedRepeatLimit(config, opponent.division)
+        (other) => other.id !== team.id && (opponent.opponents[other.name] || 0) < getAllowedRepeatLimit(config, opponent.division)
       ).length;
-
-      const constraintPenalty =
-        (10 - Math.min(10, remainingOptionsA)) * 6 +
-        (10 - Math.min(10, remainingOptionsB)) * 6;
+      const constraintPenalty = (10 - Math.min(10, remainingOptionsA)) * 6 + (10 - Math.min(10, remainingOptionsB)) * 6;
 
       for (const slot of group.slots) {
         if (!canPairInSlot(team, opponent, slot, config)) continue;
-
         const score =
           fairnessScore(team) +
           fairnessScore(opponent) +
           slotPenalty(team, opponent, slot) +
           constraintPenalty +
-          group.groupIndex * 1;
+          group.groupIndex * 4;
 
         if (score < bestScore) {
           bestScore = score;
@@ -780,10 +773,12 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
         }
       }
     }
+    if (best) return best;
   }
 
   return best;
 }
+
 function buildOrderedSlotGroups(openSlots) {
   const freeSlots = openSlots
     .filter((slot) => !slot.used)
@@ -812,6 +807,206 @@ function buildOrderedSlotGroups(openSlots) {
   return groups;
 }
 
+function cloneTeamState(team) {
+  return {
+    ...team,
+    gamesByDate: { ...(team.gamesByDate || {}) },
+    gamesByTime: { ...(team.gamesByTime || {}) },
+    opponents: { ...(team.opponents || {}) },
+    scheduledGames: (team.scheduledGames || []).map((game) => ({ ...game })),
+  };
+}
+
+function removeGameFromTeam(team, game, opponentName, wasHome) {
+  team.gamesScheduled -= 1;
+  team.gamesByDate[game.date] = Math.max(0, (team.gamesByDate[game.date] || 0) - 1);
+  if (team.gamesByDate[game.date] === 0) delete team.gamesByDate[game.date];
+  team.gamesByTime[game.time] = Math.max(0, (team.gamesByTime[game.time] || 0) - 1);
+  if (team.gamesByTime[game.time] === 0) delete team.gamesByTime[game.time];
+  team.opponents[opponentName] = Math.max(0, (team.opponents[opponentName] || 0) - 1);
+  if (team.opponents[opponentName] === 0) delete team.opponents[opponentName];
+  team.scheduledGames = (team.scheduledGames || []).filter(
+    (entry) => !(entry.date === game.date && entry.time === game.time && entry.court === game.court && entry.opponentName === opponentName)
+  );
+  if (wasHome) team.home -= 1;
+  else team.away -= 1;
+  if (isEarlyTime(game.time)) team.earlyGames -= 1;
+  if (isMorningTime(game.time)) team.morningGames -= 1;
+  if (isAfternoonTime(game.time)) team.afternoonGames -= 1;
+  team.doubleHeaders = Object.values(team.gamesByDate).filter((count) => count > 1).length;
+  team.maxSameTimeSlot = maxSameTimeSlot(team.gamesByTime);
+}
+
+function addGameToTeam(team, game, opponentName, wasHome) {
+  team.gamesScheduled += 1;
+  team.gamesByDate[game.date] = (team.gamesByDate[game.date] || 0) + 1;
+  team.gamesByTime[game.time] = (team.gamesByTime[game.time] || 0) + 1;
+  team.opponents[opponentName] = (team.opponents[opponentName] || 0) + 1;
+  team.scheduledGames.push({
+    date: game.date,
+    time: game.time,
+    court: game.court,
+    opponentName,
+    isHome: wasHome,
+  });
+  if (wasHome) team.home += 1;
+  else team.away += 1;
+  if (isEarlyTime(game.time)) team.earlyGames += 1;
+  if (isMorningTime(game.time)) team.morningGames += 1;
+  if (isAfternoonTime(game.time)) team.afternoonGames += 1;
+  team.doubleHeaders = Object.values(team.gamesByDate).filter((count) => count > 1).length;
+  team.maxSameTimeSlot = maxSameTimeSlot(team.gamesByTime);
+}
+
+function makeTeamMapFromSchedule(schedule, config) {
+  const teams = buildTeams(config).map(cloneTeamState);
+  const teamMap = Object.fromEntries(teams.map((team) => [team.name, team]));
+
+  for (const game of schedule) {
+    const home = teamMap[game.home];
+    const away = teamMap[game.away];
+    if (!home || !away) continue;
+    addGameToTeam(home, game, away.name, true);
+    addGameToTeam(away, game, home.name, false);
+  }
+
+  return teamMap;
+}
+
+function hardViolationsForTeam(team, config) {
+  let violations = 0;
+  if ((team.earlyGames || 0) > Number(config.maxEarlyGames)) violations += 10;
+  if ((team.doubleHeaders || 0) > (team.maxDoubleheadersPerTeam || 0)) violations += 10;
+  if ((team.maxSameTimeSlot || 0) > Math.ceil((team.targetGames || 0) / 2)) violations += 5;
+  return violations;
+}
+
+function timeVarietyScore(team) {
+  const counts = Object.values(team.gamesByTime || {});
+  if (counts.length === 0) return 0;
+  const maxCount = Math.max(...counts);
+  const minCount = Math.min(...counts);
+  const morningImbalance = Math.abs((team.morningGames || 0) - getIdealMorningGames(team));
+  const afternoonImbalance = Math.abs((team.afternoonGames || 0) - getIdealAfternoonGames(team));
+  return maxCount * 30 + (maxCount - minCount) * 20 + morningImbalance * 8 + afternoonImbalance * 8;
+}
+
+function trySwapGameTimes(gameA, gameB, teamMap, config) {
+  if (gameA.date === gameB.date && gameA.time === gameB.time && gameA.court === gameB.court) return false;
+  if (gameA.division !== gameB.division) return false;
+
+  const involvedNames = [gameA.home, gameA.away, gameB.home, gameB.away];
+  const uniqueNames = Array.from(new Set(involvedNames));
+  if (uniqueNames.length < 4) return false;
+
+  const originalGames = {
+    a: { ...gameA },
+    b: { ...gameB },
+  };
+
+  const originalTeams = Object.fromEntries(uniqueNames.map((name) => [name, cloneTeamState(teamMap[name])]));
+
+  const beforeScore = uniqueNames.reduce((sum, name) => sum + timeVarietyScore(teamMap[name]) + hardViolationsForTeam(teamMap[name], config) * 1000, 0);
+
+  const aHome = teamMap[gameA.home];
+  const aAway = teamMap[gameA.away];
+  const bHome = teamMap[gameB.home];
+  const bAway = teamMap[gameB.away];
+
+  removeGameFromTeam(aHome, originalGames.a, gameA.away, true);
+  removeGameFromTeam(aAway, originalGames.a, gameA.home, false);
+  removeGameFromTeam(bHome, originalGames.b, gameB.away, true);
+  removeGameFromTeam(bAway, originalGames.b, gameB.home, false);
+
+  gameA.time = originalGames.b.time;
+  gameA.court = originalGames.b.court;
+  gameB.time = originalGames.a.time;
+  gameB.court = originalGames.a.court;
+
+  addGameToTeam(aHome, gameA, gameA.away, true);
+  addGameToTeam(aAway, gameA, gameA.home, false);
+  addGameToTeam(bHome, gameB, gameB.away, true);
+  addGameToTeam(bAway, gameB, gameB.home, false);
+
+  const invalid = uniqueNames.some((name) => hardViolationsForTeam(teamMap[name], config) > 0);
+  if (invalid) {
+    for (const name of uniqueNames) teamMap[name] = cloneTeamState(originalTeams[name]);
+    gameA.time = originalGames.a.time;
+    gameA.court = originalGames.a.court;
+    gameB.time = originalGames.b.time;
+    gameB.court = originalGames.b.court;
+    for (const name of uniqueNames) Object.assign(teamMap[name], originalTeams[name]);
+    return false;
+  }
+
+  const afterScore = uniqueNames.reduce((sum, name) => sum + timeVarietyScore(teamMap[name]), 0);
+  if (afterScore >= beforeScore) {
+    gameA.time = originalGames.a.time;
+    gameA.court = originalGames.a.court;
+    gameB.time = originalGames.b.time;
+    gameB.court = originalGames.b.court;
+    for (const name of uniqueNames) Object.assign(teamMap[name], cloneTeamState(originalTeams[name]));
+    return false;
+  }
+
+  return true;
+}
+
+function rebalanceScheduleTimes(schedule, config) {
+  const nextSchedule = schedule.map((game) => ({ ...game }));
+  const teamMap = makeTeamMapFromSchedule(nextSchedule, config);
+  const maxIterations = 600;
+
+  for (let iter = 0; iter < maxIterations; iter += 1) {
+    const teams = Object.values(teamMap).sort((a, b) => timeVarietyScore(b) - timeVarietyScore(a));
+    const worstTeam = teams[0];
+    if (!worstTeam || (worstTeam.maxSameTimeSlot || 0) <= Math.ceil((worstTeam.targetGames || 0) / 3)) break;
+
+    const worstTime = Object.entries(worstTeam.gamesByTime || {}).sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (!worstTime) break;
+
+    const candidateGames = nextSchedule.filter(
+      (game) => (game.home === worstTeam.name || game.away === worstTeam.name) && game.time === worstTime
+    );
+
+    let improved = false;
+
+    for (const gameA of candidateGames) {
+      const swapPool = nextSchedule.filter(
+        (gameB) =>
+          gameB.division === gameA.division &&
+          gameB.date !== gameA.date &&
+          gameB.time !== gameA.time &&
+          gameB.home !== gameA.home &&
+          gameB.home !== gameA.away &&
+          gameB.away !== gameA.home &&
+          gameB.away !== gameA.away
+      );
+
+      for (const gameB of swapPool) {
+        if (trySwapGameTimes(gameA, gameB, teamMap, config)) {
+          improved = true;
+          break;
+        }
+      }
+
+      if (improved) break;
+    }
+
+    if (!improved) break;
+  }
+
+  nextSchedule.sort((a, b) => {
+    const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
+    if (dateDiff !== 0) return dateDiff;
+    const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
+    if (timeDiff !== 0) return timeDiff;
+    return a.court.localeCompare(b.court);
+  });
+
+  return nextSchedule;
+}
+
 function generateScheduleEngine(config) {
   const teams = buildTeams(config);
   const openSlots = buildOpenSlots(config);
@@ -828,31 +1023,13 @@ function generateScheduleEngine(config) {
       safety += 1;
 
       const needyTeams = divisionTeams
-  .filter((team) => team.gamesScheduled < team.targetGames)
-  .map((team) => {
-    const possibleOpponents = divisionTeams.filter(
-      (candidate) =>
-        candidate.id !== team.id &&
-        candidate.gamesScheduled < candidate.targetGames &&
-        (team.opponents[candidate.name] || 0) < getAllowedRepeatLimit(config, team.division)
-    ).length;
-
-    return {
-      team,
-      remainingGames: team.targetGames - team.gamesScheduled,
-      possibleOpponents,
-    };
-  })
-  .sort((a, b) => {
-    if (a.possibleOpponents !== b.possibleOpponents) {
-      return a.possibleOpponents - b.possibleOpponents;
-    }
-    if (b.remainingGames !== a.remainingGames) {
-      return b.remainingGames - a.remainingGames;
-    }
-    return fairnessScore(b.team) - fairnessScore(a.team);
-  })
-  .map((entry) => entry.team);
+        .filter((team) => team.gamesScheduled < team.targetGames)
+        .sort((a, b) => {
+          const aNeed = a.targetGames - a.gamesScheduled;
+          const bNeed = b.targetGames - b.gamesScheduled;
+          if (bNeed !== aNeed) return bNeed - aNeed;
+          return fairnessScore(b) - fairnessScore(a);
+        });
 
       let scheduledOne = false;
       const slotGroups = buildOrderedSlotGroups(openSlots);
@@ -914,16 +1091,19 @@ function generateScheduleEngine(config) {
       }
     }
   }
+  const improvedSchedule = rebalanceScheduleTimes(schedule, config);
 
-  schedule.sort((a, b) => {
+  improvedSchedule.sort((a, b) => {
     const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
     if (dateDiff !== 0) return dateDiff;
     const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
     if (timeDiff !== 0) return timeDiff;
     return a.court.localeCompare(b.court);
   });
+  const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
+  const finalTeams = Object.values(finalTeamMap);
 
-  const auditRows = teams.map((team) => ({
+  const auditRows = finalTeams.map((team) => ({
     team: team.name,
     division: team.division,
     games: team.gamesScheduled,
@@ -940,13 +1120,13 @@ function generateScheduleEngine(config) {
       team.earlyGames > Number(config.maxEarlyGames) ? "Too many early games" : null,
       Math.abs(team.home - team.away) > 2 ? "Home/away imbalance" : null,
       team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? "Too many doubleheaders" : null,
-      team.maxSameTimeSlot > Math.ceil(team.targetGames / 3) ? "Time slot concentration" : null,
-      Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.75) ? "Poor AM/PM balance" : null,
+      team.maxSameTimeSlot > (team.targetGames <= 8 ? 2 : 3) ? "Time slot concentration" : null,
+      Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.65) ? "Poor AM/PM balance" : null,
     ].filter(Boolean),
   }));
 
   const auditSummary = {
-    totalGames: schedule.length,
+    totalGames: improvedSchedule.length,
     totalTeams: teams.length,
     allTeamsScheduled: auditRows.every((row) => row.games === row.target),
     earlyViolations: auditRows.filter((row) => row.early > Number(config.maxEarlyGames)).length,
@@ -960,7 +1140,7 @@ function generateScheduleEngine(config) {
     ),
   };
 
-  return { schedule, auditRows, auditSummary, unscheduled };
+  return { schedule: improvedSchedule, auditRows, auditSummary, unscheduled };
 }
 
 function exportCsv(filename, rows) {
