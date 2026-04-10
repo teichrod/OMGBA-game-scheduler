@@ -379,7 +379,7 @@ function getProjectedTimeCount(team, time) { return (team.gamesByTime?.[time] ||
 function getTimeSpreadPenalty(team, slotTime) {
   const counts = DEFAULT_TIMES.filter((time) => team.gamesByTime?.[time] != null || time === slotTime).map((time) => (team.gamesByTime?.[time] || 0) + (time === slotTime ? 1 : 0));
   if (counts.length === 0) return 0;
-  return (Math.max(...counts) - Math.min(...counts)) * 10;
+  return (Math.max(...counts) - Math.min(...counts)) * 20;
 }
 function fairnessScore(team) {
   const morningGames = team.morningGames || 0;
@@ -485,11 +485,36 @@ function getProjectedDayPartPenalty(team, slotTime) {
   const projectedMorning = (team.morningGames || 0) + (isMorningTime(slotTime) ? 1 : 0);
   const projectedAfternoon = (team.afternoonGames || 0) + (isAfternoonTime(slotTime) ? 1 : 0);
   const idealMorning = getIdealMorningGames(team); const idealAfternoon = getIdealAfternoonGames(team);
-  return Math.abs(projectedMorning - projectedAfternoon) * 14 + Math.abs(projectedMorning - idealMorning) * 12 + Math.abs(projectedAfternoon - idealAfternoon) * 12;
+  return Math.abs(projectedMorning - projectedAfternoon) * 22 + Math.abs(projectedMorning - idealMorning) * 18 + Math.abs(projectedAfternoon - idealAfternoon) * 18;
 }
+
 function slotPenalty(teamA, teamB, slot) {
-  let penalty = 0; const timeIndex = getTimeIndex(slot.time); penalty += Math.max(0, timeIndex) * 10; penalty += getProjectedTimeCount(teamA, slot.time) * 18; penalty += getProjectedTimeCount(teamB, slot.time) * 18; penalty += getTimeSpreadPenalty(teamA, slot.time); penalty += getTimeSpreadPenalty(teamB, slot.time); penalty += getProjectedDayPartPenalty(teamA, slot.time); penalty += getProjectedDayPartPenalty(teamB, slot.time); penalty += (teamA.gamesByDate[slot.date] || 0) * 10; penalty += (teamB.gamesByDate[slot.date] || 0) * 10; const existingA = getScheduledGamesOnDate(teamA, slot.date)[0]; const existingB = getScheduledGamesOnDate(teamB, slot.date)[0]; if (existingA && areBackToBackTimes(existingA.time, slot.time) && existingA.court === slot.court) penalty -= 30; if (existingB && areBackToBackTimes(existingB.time, slot.time) && existingB.court === slot.court) penalty -= 30; if ((teamA.gamesByDate[slot.date] || 0) >= 1) penalty += 8; if ((teamB.gamesByDate[slot.date] || 0) >= 1) penalty += 8; return penalty;
+  let penalty = 0;
+
+  penalty += getProjectedTimeCount(teamA, slot.time) * 35;
+  penalty += getProjectedTimeCount(teamB, slot.time) * 35;
+
+  penalty += getTimeSpreadPenalty(teamA, slot.time);
+  penalty += getTimeSpreadPenalty(teamB, slot.time);
+
+  penalty += getProjectedDayPartPenalty(teamA, slot.time);
+  penalty += getProjectedDayPartPenalty(teamB, slot.time);
+
+  penalty += (teamA.gamesByDate[slot.date] || 0) * 10;
+  penalty += (teamB.gamesByDate[slot.date] || 0) * 10;
+
+  const existingA = getScheduledGamesOnDate(teamA, slot.date)[0];
+  const existingB = getScheduledGamesOnDate(teamB, slot.date)[0];
+
+  if (existingA && areBackToBackTimes(existingA.time, slot.time) && existingA.court === slot.court) penalty -= 30;
+  if (existingB && areBackToBackTimes(existingB.time, slot.time) && existingB.court === slot.court) penalty -= 30;
+
+  if ((teamA.gamesByDate[slot.date] || 0) >= 1) penalty += 8;
+  if ((teamB.gamesByDate[slot.date] || 0) >= 1) penalty += 8;
+
+  return penalty;
 }
+
 function scheduleGame(schedule, slot, teamA, teamB) { const homeTeam = chooseHomeTeam(teamA, teamB); const awayTeam = homeTeam.id === teamA.id ? teamB : teamA; slot.used = true; applyGame(homeTeam, slot, awayTeam.name, true); applyGame(awayTeam, slot, homeTeam.name, false); schedule.push({ division: homeTeam.division, date: slot.date, time: slot.time, court: slot.court, home: homeTeam.name, away: awayTeam.name }); }
 function buildRoundRobinRounds(teamList) {
   const teams = [...teamList]; if (teams.length % 2 === 1) teams.push(null); const rounds = []; let arr = [...teams]; const totalRounds = arr.length - 1;
