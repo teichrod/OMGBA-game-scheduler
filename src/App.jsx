@@ -565,16 +565,14 @@ function getAllowedRepeatLimit(config, division) {
 function violatesTimeVariety(team, slotTime) {
   const targetGames = team.targetGames || 0;
   const projectedCountAtTime = (team.gamesByTime?.[slotTime] || 0) + 1;
-  const maxPerExactTime = targetGames <= 8 ? 2 : targetGames <= 10 ? 3 : 3;
+
+  const maxPerExactTime =
+    targetGames <= 8 ? 3 :
+    targetGames <= 10 ? 3 :
+    4;
+
   if (projectedCountAtTime > maxPerExactTime) return true;
 
-  const projectedMorning = (team.morningGames || 0) + (isMorningTime(slotTime) ? 1 : 0);
-  const projectedAfternoon = (team.afternoonGames || 0) + (isAfternoonTime(slotTime) ? 1 : 0);
-  const maxMorning = Math.ceil(targetGames * 0.65);
-  const maxAfternoon = Math.ceil(targetGames * 0.65);
-
-  if (projectedMorning > maxMorning) return true;
-  if (projectedAfternoon > maxAfternoon) return true;
   return false;
 }
 
@@ -631,21 +629,27 @@ function canPairInSlot(teamA, teamB, slot, config) {
 
 function slotPenalty(teamA, teamB, slot) {
   let penalty = 0;
-  penalty += getProjectedTimeCount(teamA, slot.time) * 45;
-  penalty += getProjectedTimeCount(teamB, slot.time) * 45;
+
+  const projectedA = getProjectedTimeCount(teamA, slot.time);
+  const projectedB = getProjectedTimeCount(teamB, slot.time);
+
+  penalty += projectedA * projectedA * 60;
+  penalty += projectedB * projectedB * 60;
+
   penalty += getProjectedTimeSpreadPenalty(teamA, slot.time);
   penalty += getProjectedTimeSpreadPenalty(teamB, slot.time);
+
   penalty += getProjectedDayPartPenalty(teamA, slot.time);
   penalty += getProjectedDayPartPenalty(teamB, slot.time);
-  penalty += (teamA.gamesByDate[slot.date] || 0) * 12;
-  penalty += (teamB.gamesByDate[slot.date] || 0) * 12;
+
+  penalty += (teamA.gamesByDate[slot.date] || 0) * 10;
+  penalty += (teamB.gamesByDate[slot.date] || 0) * 10;
 
   const existingA = getScheduledGamesOnDate(teamA, slot.date)[0];
   const existingB = getScheduledGamesOnDate(teamB, slot.date)[0];
-  if (existingA && areBackToBackTimes(existingA.time, slot.time) && existingA.court === slot.court) penalty -= 25;
-  if (existingB && areBackToBackTimes(existingB.time, slot.time) && existingB.court === slot.court) penalty -= 25;
-  if ((teamA.gamesByDate[slot.date] || 0) >= 1) penalty += 10;
-  if ((teamB.gamesByDate[slot.date] || 0) >= 1) penalty += 10;
+
+  if (existingA && areBackToBackTimes(existingA.time, slot.time) && existingA.court === slot.court) penalty -= 18;
+  if (existingB && areBackToBackTimes(existingB.time, slot.time) && existingB.court === slot.court) penalty -= 18;
 
   return penalty;
 }
@@ -742,30 +746,44 @@ function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unschedule
 
 function chooseBestCandidate(team, allTeams, slotGroups, config) {
   const divisionTeams = allTeams.filter(
-    (candidate) => candidate.division === team.division && candidate.id !== team.id && candidate.gamesScheduled < candidate.targetGames
+    (candidate) =>
+      candidate.division === team.division &&
+      candidate.id !== team.id &&
+      candidate.gamesScheduled < candidate.targetGames
   );
 
   let best = null;
   let bestScore = Infinity;
 
-  for (const group of slotGroups) {
+  const groupsToConsider = slotGroups.slice(0, 4);
+
+  for (const group of groupsToConsider) {
     for (const opponent of divisionTeams) {
       const remainingOptionsA = divisionTeams.filter(
-        (other) => other.id !== opponent.id && (team.opponents[other.name] || 0) < getAllowedRepeatLimit(config, team.division)
+        (other) =>
+          other.id !== opponent.id &&
+          (team.opponents[other.name] || 0) < getAllowedRepeatLimit(config, team.division)
       ).length;
+
       const remainingOptionsB = divisionTeams.filter(
-        (other) => other.id !== team.id && (opponent.opponents[other.name] || 0) < getAllowedRepeatLimit(config, opponent.division)
+        (other) =>
+          other.id !== team.id &&
+          (opponent.opponents[other.name] || 0) < getAllowedRepeatLimit(config, opponent.division)
       ).length;
-      const constraintPenalty = (10 - Math.min(10, remainingOptionsA)) * 6 + (10 - Math.min(10, remainingOptionsB)) * 6;
+
+      const constraintPenalty =
+        (10 - Math.min(10, remainingOptionsA)) * 6 +
+        (10 - Math.min(10, remainingOptionsB)) * 6;
 
       for (const slot of group.slots) {
         if (!canPairInSlot(team, opponent, slot, config)) continue;
+
         const score =
           fairnessScore(team) +
           fairnessScore(opponent) +
           slotPenalty(team, opponent, slot) +
           constraintPenalty +
-          group.groupIndex * 4;
+          group.groupIndex * 8;
 
         if (score < bestScore) {
           bestScore = score;
@@ -773,12 +791,10 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
         }
       }
     }
-    if (best) return best;
   }
 
   return best;
 }
-
 function buildOrderedSlotGroups(openSlots) {
   const freeSlots = openSlots
     .filter((slot) => !slot.used)
