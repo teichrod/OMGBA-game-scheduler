@@ -670,6 +670,7 @@ function scheduleGame(schedule, slot, teamA, teamB) {
   });
 }
 
+
 function buildRoundRobinRounds(teamList) {
   const teams = [...teamList];
   if (teams.length % 2 === 1) teams.push(null);
@@ -689,6 +690,117 @@ function buildRoundRobinRounds(teamList) {
   }
 
   return rounds;
+}
+
+function buildDivisionMatchPlan(divisionTeams, targetGames, config, division) {
+  const rounds = buildRoundRobinRounds(divisionTeams);
+  if (!rounds.length) return [];
+
+  const plan = [];
+  const neededPerTeam = Object.fromEntries(divisionTeams.map((team) => [team.id, targetGames]));
+  const pairCounts = {};
+  const pushPair = (a, b, roundIndex) => {
+    if (!a || !b) return;
+    if ((neededPerTeam[a.id] || 0) <= 0) return;
+    if ((neededPerTeam[b.id] || 0) <= 0) return;
+    const key = [a.id, b.id].sort().join('|');
+    pairCounts[key] = (pairCounts[key] || 0) + 1;
+    plan.push({ teamAId: a.id, teamBId: b.id, division, roundIndex, repeatIndex: pairCounts[key] });
+    neededPerTeam[a.id] -= 1;
+    neededPerTeam[b.id] -= 1;
+  };
+
+  if (division === '5th Boys' && config.fifthBoysDoubleheaderDate) {
+    const dhRounds = Math.min(2, rounds.length);
+    for (let r = 0; r < dhRounds; r += 1) {
+      for (const [a, b] of rounds[r]) pushPair(a, b, r);
+    }
+  }
+
+  let cycle = 0;
+  let safety = 0;
+  while (Object.values(neededPerTeam).some((v) => v > 0) && safety < 200) {
+    safety += 1;
+    for (let r = 0; r < rounds.length; r += 1) {
+      if (division === '5th Boys' && config.fifthBoysDoubleheaderDate && cycle === 0 && r < 2) continue;
+      for (const [a, b] of rounds[r]) {
+        pushPair(a, b, r + cycle * rounds.length);
+      }
+    }
+    cycle += 1;
+  }
+
+  return plan;
+}
+
+function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allowIgnoreTimeVariety = false) {
+  const slotGroups = buildOrderedSlotGroups(openSlots);
+  let best = null;
+  let bestScore = Infinity;
+
+  for (const group of slotGroups) {
+    for (const slot of group.slots) {
+      if (!canPairInSlot(teamA, teamB, slot, config, { ignoreTimeVariety: allowIgnoreTimeVariety })) continue;
+
+      let penalty = 0;
+      penalty += slotPenalty(teamA, teamB, slot) * (allowIgnoreTimeVariety ? 0.15 : 0.35);
+      penalty += (teamA.gamesByDate[slot.date] || 0) * 20;
+      penalty += (teamB.gamesByDate[slot.date] || 0) * 20;
+      penalty += group.groupIndex * 3;
+      if (isEarlyTime(slot.time)) {
+        penalty += (teamA.earlyGames || 0) * 40;
+        penalty += (teamB.earlyGames || 0) * 40;
+      }
+      if (teamA.division === '5th Boys' && config.fifthBoysDoubleheaderDate) {
+        const aOnDhDate = teamA.gamesByDate[config.fifthBoysDoubleheaderDate] || 0;
+        const bOnDhDate = teamB.gamesByDate[config.fifthBoysDoubleheaderDate] || 0;
+        if (slot.date === config.fifthBoysDoubleheaderDate) {
+          if (aOnDhDate === 0) penalty -= 35;
+          if (bOnDhDate === 0) penalty -= 35;
+        }
+      }
+
+      if (penalty < bestScore) {
+        bestScore = penalty;
+        best = slot;
+      }
+    }
+    if (best) return best;
+  }
+
+  return null;
+}
+
+function placePlannedDivisionGames(divisionTeams, plan, openSlots, schedule, unscheduled, config) {
+  const byId = Object.fromEntries(divisionTeams.map((team) => [team.id, team]));
+
+  const orderedPlan = [...plan].sort((a, b) => {
+    const needA = getNeed(byId[a.teamAId]) + getNeed(byId[a.teamBId]);
+    const needB = getNeed(byId[b.teamAId]) + getNeed(byId[b.teamBId]);
+    if (needB !== needA) return needB - needA;
+    return a.roundIndex - b.roundIndex;
+  });
+
+  for (const item of orderedPlan) {
+    const teamA = byId[item.teamAId];
+    const teamB = byId[item.teamBId];
+    if (!teamA || !teamB) continue;
+    if (teamA.gamesScheduled >= teamA.targetGames || teamB.gamesScheduled >= teamB.targetGames) continue;
+
+    let slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, false);
+    if (!slot) slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, true);
+
+    if (!slot) {
+      unscheduled.push({
+        matchup: `${teamA.name} vs ${teamB.name}`,
+        reason: 'No legal slot found for planned matchup',
+        suggestion: `Division ${teamA.division} still needs completion-first placement.`,
+      });
+      continue;
+    }
+
+    scheduleGame(schedule, slot, teamA, teamB);
+  }
 }
 
 function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config) {
@@ -1159,39 +1271,13 @@ function generateScheduleEngine(config) {
   const schedule = [];
   const unscheduled = [];
 
-  scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config);
+  const teamMap = Object.fromEntries(teams.map((team) => [team.id, team]));
 
   for (const division of DIVISIONS) {
     const divisionTeams = teams.filter((team) => team.division === division);
-    let safety = 0;
-
-    while (divisionTeams.some((team) => team.gamesScheduled < team.targetGames) && safety < 15000) {
-      safety += 1;
-
-      const needyTeams = divisionTeams
-        .filter((team) => team.gamesScheduled < team.targetGames)
-        .sort((a, b) => {
-          const aNeed = a.targetGames - a.gamesScheduled;
-          const bNeed = b.targetGames - b.gamesScheduled;
-          if (bNeed !== aNeed) return bNeed - aNeed;
-          return fairnessScore(b) - fairnessScore(a);
-        });
-
-      let scheduledOne = false;
-      const slotGroups = buildOrderedSlotGroups(openSlots);
-
-      for (const team of needyTeams) {
-        const best = chooseBestCandidate(team, teams, slotGroups, config);
-        if (!best) continue;
-        scheduleGame(schedule, best.slot, best.teamA, best.teamB);
-        scheduledOne = true;
-        break;
-      }
-
-      if (!scheduledOne) {
-        break;
-      }
-    }
+    const targetGames = Number(config.divisionGames[division] || 0);
+    const plan = buildDivisionMatchPlan(divisionTeams, targetGames, config, division);
+    placePlannedDivisionGames(divisionTeams, plan, openSlots, schedule, unscheduled, config);
   }
 
   forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, config);
@@ -1230,13 +1316,13 @@ function generateScheduleEngine(config) {
     afternoon: team.afternoonGames || 0,
     maxSameTime: team.maxSameTimeSlot,
     issues: [
-      team.gamesScheduled !== team.targetGames ? "Missing games" : null,
-      team.earlyGames > Number(config.maxEarlyGames) ? "Too many early games" : null,
-      Math.abs(team.home - team.away) > 2 ? "Home/away imbalance" : null,
-      team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? "Too many doubleheaders" : null,
-      team.maxSameTimeSlot > (team.targetGames <= 8 ? 2 : 3) ? "Time slot concentration" : null,
+      team.gamesScheduled !== team.targetGames ? 'Missing games' : null,
+      team.earlyGames > Number(config.maxEarlyGames) ? 'Too many early games' : null,
+      Math.abs(team.home - team.away) > 2 ? 'Home/away imbalance' : null,
+      team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? 'Too many doubleheaders' : null,
+      team.maxSameTimeSlot > (team.targetGames <= 8 ? 2 : 3) ? 'Time slot concentration' : null,
       Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.65)
-        ? "Poor AM/PM balance"
+        ? 'Poor AM/PM balance'
         : null,
     ].filter(Boolean),
   }));
@@ -1251,7 +1337,7 @@ function generateScheduleEngine(config) {
     timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
     enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
     enabledCourts: Object.values(config.dateCourtSettings).reduce(
-      (sum, courts) => sum + courts.filter((court) => court.enabled && String(court.name || "").trim() !== "").length,
+      (sum, courts) => sum + courts.filter((court) => court.enabled && String(court.name || '').trim() !== '').length,
       0
     ),
   };
@@ -1263,9 +1349,9 @@ function generateScheduleEngine(config) {
 
     if (missing.length) {
       unscheduled.push({
-        matchup: "Final completion check",
-        reason: "Some teams are still short after forced completion",
-        suggestion: missing.join("; "),
+        matchup: 'Final completion check',
+        reason: 'Some teams are still short after forced completion',
+        suggestion: missing.join('; '),
       });
     }
   }
