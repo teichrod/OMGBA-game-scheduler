@@ -50,7 +50,7 @@ const SEASON_YEAR_OPTIONS = Array.from({ length: 8 }, (_, i) => 2026 + i);
 const TEAM_COUNT_OPTIONS = Array.from({ length: 21 }, (_, i) => String(i + 4));
 const GAME_COUNT_OPTIONS = ["6", "7", "8", "9", "10", "11", "12"];
 const MAX_EARLY_OPTIONS = ["0", "1", "2", "3", "4"];
-const PUBLISHED_STORAGE_KEY = "omgba_published_schedule_v1";
+
 
 const styles = {
   page: {
@@ -511,14 +511,41 @@ function exportCsv(filename, rows) {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = filename; document.body.appendChild(link); link.click(); document.body.removeChild(link);
 }
 
-function savePublishedPayload(payload) {
-  try { localStorage.setItem(PUBLISHED_STORAGE_KEY, JSON.stringify(payload)); return true; } catch { return false; }
+async function savePublishedPayload(payload) {
+  try {
+    const res = await fetch("/api/published-schedule", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
-function loadPublishedPayload() {
-  try { const raw = localStorage.getItem(PUBLISHED_STORAGE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+
+async function loadPublishedPayload() {
+  try {
+    const res = await fetch("/api/published-schedule");
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.payload || null;
+  } catch {
+    return null;
+  }
 }
-function clearPublishedPayload() {
-  try { localStorage.removeItem(PUBLISHED_STORAGE_KEY); return true; } catch { return false; }
+
+async function clearPublishedPayload() {
+  try {
+    const res = await fetch("/api/published-schedule", {
+      method: "DELETE",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 function runSelfChecks() {
@@ -549,15 +576,23 @@ export default function App() {
   const [publishedMeta, setPublishedMeta] = useState(loadPublishedPayload()?.meta || null);
   const [publishNotice, setPublishNotice] = useState("");
 
-  useEffect(() => {
-    if (isPublicMode) {
-      const published = loadPublishedPayload();
-      if (published?.result) {
-        setResult(published.result);
-        setPublishedMeta(published.meta || null);
-      }
+ useEffect(() => {
+  async function loadPublicSchedule() {
+    if (!isPublicMode) return;
+
+    const published = await loadPublishedPayload();
+
+    if (published?.result) {
+      setResult(published.result);
+      setPublishedMeta(published.meta || null);
+    } else {
+      setResult(null);
+      setPublishedMeta(null);
     }
-  }, [isPublicMode]);
+  }
+
+  loadPublicSchedule();
+}, [isPublicMode]);
 
   const selectedCourtDate = config.selectedDateForCourts || config.saturdays[0]?.date || "";
 
@@ -626,21 +661,49 @@ export default function App() {
     setConfig(createInitialState()); setResult(isPublicMode ? loadPublishedPayload()?.result || null : null); setScheduleDivisionFilter("all"); setScheduleTeamFilter("all"); setActiveTab(isPublicMode ? "schedule" : "setup"); setPublishNotice("");
   }
   function runScheduler() { setResult(generateScheduleEngine(config)); setScheduleDivisionFilter("all"); setScheduleTeamFilter("all"); setActiveTab("schedule"); setPublishNotice(""); }
-  function publishSchedule() {
-    if (!result) return;
-    const meta = { publishedAt: new Date().toLocaleString(), totalGames: result.schedule.length };
-    const ok = savePublishedPayload({ result, meta });
-    if (ok) { setPublishedMeta(meta); setPublishNotice("Schedule published for public view on this browser/device."); }
-    else setPublishNotice("Publish failed. Browser storage may be blocked.");
+  
+async function publishSchedule() {
+  if (!result) return;
+
+  const meta = {
+    publishedAt: new Date().toLocaleString(),
+    totalGames: result.schedule.length,
+  };
+
+  const ok = await savePublishedPayload({ result, meta });
+
+  if (ok) {
+    setPublishedMeta(meta);
+    setPublishNotice("Schedule published for public view.");
+  } else {
+    setPublishNotice("Publish failed.");
   }
-  function loadPublishedSchedule() {
-    const published = loadPublishedPayload();
-    if (published?.result) { setResult(published.result); setPublishedMeta(published.meta || null); setActiveTab("schedule"); setPublishNotice("Published schedule loaded."); }
-    else setPublishNotice("No published schedule found yet.");
+}
+  
+async function loadPublishedSchedule() {
+  const published = await loadPublishedPayload();
+
+  if (published?.result) {
+    setResult(published.result);
+    setPublishedMeta(published.meta || null);
+    setActiveTab("schedule");
+    setPublishNotice("Published schedule loaded.");
+  } else {
+    setPublishNotice("No published schedule found yet.");
   }
-  function clearPublishedSchedule() {
-    clearPublishedPayload(); setPublishedMeta(null); if (isPublicMode) setResult(null); setPublishNotice("Published schedule cleared.");
+}
+  
+async function clearPublishedSchedule() {
+  const ok = await clearPublishedPayload();
+
+  if (ok) {
+    setPublishedMeta(null);
+    if (isPublicMode) setResult(null);
+    setPublishNotice("Published schedule cleared.");
+  } else {
+    setPublishNotice("Could not clear published schedule.");
   }
+}
 
   return (
     <div style={styles.page}>
