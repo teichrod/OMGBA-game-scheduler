@@ -491,9 +491,23 @@ function generateScheduleEngine(config) {
 }
 
 function exportCsv(filename, rows) {
-  const csv = rows.map((row) => row.map((cell) => { const value = cell == null ? "" : String(cell); if (value.includes(",") || value.includes('"') || value.includes("
-")) return `"${value.replace(/"/g, '""')}"`; return value; }).join(",")).join("
-");
+ const csv = rows
+  .map((row) =>
+    row
+      .map((cell) => {
+        const value = cell == null ? "" : String(cell);
+        if (
+          value.includes(",") ||
+          value.includes('"') ||
+          value.includes("\n")
+        ) {
+          return `"${value.replace(/"/g, '""')}"`;
+        }
+        return value;
+      })
+      .join(",")
+  )
+  .join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = filename; document.body.appendChild(link); link.click(); document.body.removeChild(link);
 }
 
