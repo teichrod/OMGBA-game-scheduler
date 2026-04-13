@@ -1297,123 +1297,166 @@ function timeVarietyScore(team) {
   const minCount = Math.min(...counts);
   const morningImbalance = Math.abs((team.morningGames || 0) - getIdealMorningGames(team));
   const afternoonImbalance = Math.abs((team.afternoonGames || 0) - getIdealAfternoonGames(team));
-  return maxCount * 30 + (maxCount - minCount) * 20 + morningImbalance * 8 + afternoonImbalance * 8;
+  const exactTimePenalty = counts.reduce((sum, count) => sum + Math.max(0, count - 1) * Math.max(0, count - 1) * 14, 0);
+  return maxCount * 44 + (maxCount - minCount) * 28 + morningImbalance * 14 + afternoonImbalance * 14 + exactTimePenalty;
 }
 
-function trySwapGameTimes(gameA, gameB, teamMap, config) {
-  if (gameA.date === gameB.date && gameA.time === gameB.time && gameA.court === gameB.court) return false;
-  if (gameA.division !== gameB.division) return false;
+function teamIssueSeverity(team, config) {
+  const maxAllowedAtTime = team.targetGames <= 8 ? 2 : 3;
+  const counts = Object.entries(team.gamesByTime || {}).sort((a, b) => b[1] - a[1]);
+  const worstCount = counts[0]?.[1] || 0;
+  const morningTarget = getIdealMorningGames(team);
+  const afternoonTarget = getIdealAfternoonGames(team);
+  const morningImbalance = Math.abs((team.morningGames || 0) - morningTarget);
+  const afternoonImbalance = Math.abs((team.afternoonGames || 0) - afternoonTarget);
+  return (
+    Math.max(0, worstCount - maxAllowedAtTime) * 120 +
+    Math.max(0, (team.maxSameTimeSlot || 0) - maxAllowedAtTime) * 120 +
+    morningImbalance * 20 +
+    afternoonImbalance * 20 +
+    hardViolationsForTeam(team, config) * 2000
+  );
+}
 
-  const involvedNames = [gameA.home, gameA.away, gameB.home, gameB.away];
-  const uniqueNames = Array.from(new Set(involvedNames));
-  if (uniqueNames.length < 4) return false;
+function schedulePenaltyScore(result, config) {
+  const teams = result.auditRows || [];
+  const teamMap = makeTeamMapFromSchedule(result.schedule || [], config);
+  const severity = Object.values(teamMap).reduce((sum, team) => sum + teamIssueSeverity(team, config), 0);
+  return (
+    (result.auditSummary?.missingTeams || 0) * 1000000 +
+    (result.auditSummary?.earlyViolations || 0) * 150000 +
+    (result.auditSummary?.homeAwayIssues || 0) * 30000 +
+    (result.auditSummary?.timeVarietyIssues || 0) * 12000 +
+    severity +
+    teams.reduce((sum, row) => sum + (row.issues?.length || 0) * 400, 0)
+  );
+}
 
-  const originalGames = {
-    a: { ...gameA },
-    b: { ...gameB },
-  };
+function validateManualSwap(schedule, gameA, gameB, config) {
+  if (!gameA || !gameB) return 'Missing game.';
+  if (gameA === gameB) return 'Same game.';
+  if (gameA.date === gameB.date && gameA.time === gameB.time && gameA.court === gameB.court) return 'Same slot.';
 
-  const originalTeams = Object.fromEntries(uniqueNames.map((name) => [name, cloneTeamState(teamMap[name])]));
+  const remainder = schedule.filter((game) => game !== gameA && game !== gameB).map((game) => ({ ...game }));
+  const movedA = { ...gameA, date: gameB.date, time: gameB.time, court: gameB.court };
+  const movedB = { ...gameB, date: gameA.date, time: gameA.time, court: gameA.court };
 
-  const beforeScore = uniqueNames.reduce((sum, name) => sum + timeVarietyScore(teamMap[name]) + hardViolationsForTeam(teamMap[name], config) * 1000, 0);
+  const messageA = validateManualMove(remainder, movedA, { date: movedA.date, time: movedA.time, court: movedA.court }, config);
+  if (messageA) return messageA;
+  const withA = [...remainder, movedA];
+  const messageB = validateManualMove(withA, movedB, { date: movedB.date, time: movedB.time, court: movedB.court }, config);
+  if (messageB) return messageB;
 
-  const aHome = teamMap[gameA.home];
-  const aAway = teamMap[gameA.away];
-  const bHome = teamMap[gameB.home];
-  const bAway = teamMap[gameB.away];
+  return '';
+}
 
-  removeGameFromTeam(aHome, originalGames.a, gameA.away, true);
-  removeGameFromTeam(aAway, originalGames.a, gameA.home, false);
-  removeGameFromTeam(bHome, originalGames.b, gameB.away, true);
-  removeGameFromTeam(bAway, originalGames.b, gameB.home, false);
+function shouldPrioritizeMorning(team) {
+  return (team.afternoonGames || 0) > getIdealAfternoonGames(team);
+}
 
-  gameA.time = originalGames.b.time;
-  gameA.court = originalGames.b.court;
-  gameB.time = originalGames.a.time;
-  gameB.court = originalGames.a.court;
-
-  addGameToTeam(aHome, gameA, gameA.away, true);
-  addGameToTeam(aAway, gameA, gameA.home, false);
-  addGameToTeam(bHome, gameB, gameB.away, true);
-  addGameToTeam(bAway, gameB, gameB.home, false);
-
-  const invalid = uniqueNames.some((name) => hardViolationsForTeam(teamMap[name], config) > 0);
-  if (invalid) {
-    for (const name of uniqueNames) teamMap[name] = cloneTeamState(originalTeams[name]);
-    gameA.time = originalGames.a.time;
-    gameA.court = originalGames.a.court;
-    gameB.time = originalGames.b.time;
-    gameB.court = originalGames.b.court;
-    for (const name of uniqueNames) Object.assign(teamMap[name], originalTeams[name]);
-    return false;
-  }
-
-  const afterScore = uniqueNames.reduce((sum, name) => sum + timeVarietyScore(teamMap[name]), 0);
-  if (afterScore >= beforeScore) {
-    gameA.time = originalGames.a.time;
-    gameA.court = originalGames.a.court;
-    gameB.time = originalGames.b.time;
-    gameB.court = originalGames.b.court;
-    for (const name of uniqueNames) Object.assign(teamMap[name], cloneTeamState(originalTeams[name]));
-    return false;
-  }
-
-  return true;
+function getTargetedGamesForRebalance(schedule, team) {
+  const timeCounts = Object.entries(team.gamesByTime || {}).sort((a, b) => b[1] - a[1]);
+  const mostUsedTime = timeCounts[0]?.[0] || '';
+  const prioritizeMorning = shouldPrioritizeMorning(team);
+  return schedule
+    .filter((game) => game.home === team.name || game.away === team.name)
+    .sort((a, b) => {
+      const aScore = (a.time === mostUsedTime ? 50 : 0) + (prioritizeMorning && isAfternoonTime(a.time) ? 25 : 0);
+      const bScore = (b.time === mostUsedTime ? 50 : 0) + (prioritizeMorning && isAfternoonTime(b.time) ? 25 : 0);
+      if (bScore !== aScore) return bScore - aScore;
+      return parseShortDate(a.date) - parseShortDate(b.date);
+    });
 }
 
 function rebalanceScheduleTimes(schedule, config) {
-  const nextSchedule = schedule.map((game) => ({ ...game }));
-  const teamMap = makeTeamMapFromSchedule(nextSchedule, config);
-  const maxIterations = 600;
+  let nextSchedule = schedule.map((game) => ({ ...game }));
+  let currentResult = buildResultFromSchedule(nextSchedule, config, []);
+  let currentScore = schedulePenaltyScore(currentResult, config);
+  const maxIterations = 900;
 
   for (let iter = 0; iter < maxIterations; iter += 1) {
-    const teams = Object.values(teamMap).sort((a, b) => timeVarietyScore(b) - timeVarietyScore(a));
-    const worstTeam = teams[0];
-    if (!worstTeam || (worstTeam.maxSameTimeSlot || 0) <= Math.ceil((worstTeam.targetGames || 0) / 3)) break;
+    const teamMap = makeTeamMapFromSchedule(nextSchedule, config);
+    const problemTeams = Object.values(teamMap)
+      .filter((team) => teamIssueSeverity(team, config) > 0)
+      .sort((a, b) => teamIssueSeverity(b, config) - teamIssueSeverity(a, config));
 
-    const worstTime = Object.entries(worstTeam.gamesByTime || {}).sort((a, b) => b[1] - a[1])[0]?.[0];
-    if (!worstTime) break;
+    if (!problemTeams.length) break;
 
-    const candidateGames = nextSchedule.filter(
-      (game) => (game.home === worstTeam.name || game.away === worstTeam.name) && game.time === worstTime
-    );
+    let bestCandidateSchedule = null;
+    let bestCandidateScore = currentScore;
 
-    let improved = false;
+    for (const team of problemTeams.slice(0, 8)) {
+      const targetedGames = getTargetedGamesForRebalance(nextSchedule, team).slice(0, 8);
+      for (const gameA of targetedGames) {
+        const emptyTargets = buildOpenSlots(config)
+          .filter((slot) => !nextSchedule.some((game) => game.date === slot.date && game.time === slot.time && game.court === slot.court))
+          .sort((a, b) => {
+            const aBias = (shouldPrioritizeMorning(team) && isMorningTime(a.time) ? -30 : 0) + (a.time === gameA.time ? 20 : 0);
+            const bBias = (shouldPrioritizeMorning(team) && isMorningTime(b.time) ? -30 : 0) + (b.time === gameA.time ? 20 : 0);
+            if (aBias !== bBias) return aBias - bBias;
+            const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
+            if (dateDiff !== 0) return dateDiff;
+            const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
+            if (timeDiff !== 0) return timeDiff;
+            return a.court.localeCompare(b.court);
+          })
+          .slice(0, 30);
 
-    for (const gameA of candidateGames) {
-      const swapPool = nextSchedule.filter(
-        (gameB) =>
-          gameB.division === gameA.division &&
-          gameB.date !== gameA.date &&
-          gameB.time !== gameA.time &&
-          gameB.home !== gameA.home &&
-          gameB.home !== gameA.away &&
-          gameB.away !== gameA.home &&
-          gameB.away !== gameA.away
-      );
+        for (const target of emptyTargets) {
+          const message = validateManualMove(nextSchedule.filter((g) => g !== gameA), { ...gameA }, target, config);
+          if (message) continue;
+          const candidateSchedule = nextSchedule.map((game) =>
+            game === gameA ? { ...game, date: target.date, time: target.time, court: target.court } : { ...game }
+          );
+          const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
+          const candidateScore = schedulePenaltyScore(candidateResult, config);
+          if (candidateResult.auditSummary.missingTeams === 0 && candidateScore < bestCandidateScore) {
+            bestCandidateScore = candidateScore;
+            bestCandidateSchedule = candidateSchedule;
+          }
+        }
 
-      for (const gameB of swapPool) {
-        if (trySwapGameTimes(gameA, gameB, teamMap, config)) {
-          improved = true;
-          break;
+        const swapPool = nextSchedule
+          .filter((gameB) => gameB !== gameA)
+          .sort((a, b) => {
+            const aMorning = shouldPrioritizeMorning(team) && isMorningTime(a.time) ? -20 : 0;
+            const bMorning = shouldPrioritizeMorning(team) && isMorningTime(b.time) ? -20 : 0;
+            if (aMorning !== bMorning) return aMorning - bMorning;
+            return 0;
+          })
+          .slice(0, 140);
+
+        for (const gameB of swapPool) {
+          const swapMessage = validateManualSwap(nextSchedule, gameA, gameB, config);
+          if (swapMessage) continue;
+          const candidateSchedule = nextSchedule.map((game) => {
+            if (game === gameA) return { ...game, date: gameB.date, time: gameB.time, court: gameB.court };
+            if (game === gameB) return { ...game, date: gameA.date, time: gameA.time, court: gameA.court };
+            return { ...game };
+          });
+          const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
+          const candidateScore = schedulePenaltyScore(candidateResult, config);
+          if (candidateResult.auditSummary.missingTeams === 0 && candidateScore < bestCandidateScore) {
+            bestCandidateScore = candidateScore;
+            bestCandidateSchedule = candidateSchedule;
+          }
         }
       }
-
-      if (improved) break;
     }
 
-    if (!improved) break;
+    if (!bestCandidateSchedule) break;
+    nextSchedule = bestCandidateSchedule;
+    currentResult = buildResultFromSchedule(nextSchedule, config, []);
+    currentScore = bestCandidateScore;
   }
 
-  nextSchedule.sort((a, b) => {
+  return nextSchedule.sort((a, b) => {
     const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
     if (dateDiff !== 0) return dateDiff;
     const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
     if (timeDiff !== 0) return timeDiff;
     return a.court.localeCompare(b.court);
   });
-
-  return nextSchedule;
 }
 
 function generateScheduleEngine(config) {
