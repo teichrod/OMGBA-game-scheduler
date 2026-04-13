@@ -97,7 +97,7 @@ function buildFormattedTeamName(division, entry, fallbackIndex) {
 function buildDivisionTeamDetails(count) {
   return Array.from({ length: Number(count) || 0 }, (_, i) => ({
     association: "",
-    associationTeamNumber: String(i + 1),
+    associationTeamNumber: "1",
     coachLastName: "",
   }));
 }
@@ -109,7 +109,7 @@ function syncDivisionTeamDetails(existingDetails, count) {
   while (next.length < target) {
     next.push({
       association: "",
-      associationTeamNumber: String(next.length + 1),
+      associationTeamNumber: "1",
       coachLastName: "",
     });
   }
@@ -2918,7 +2918,7 @@ export default function App() {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "50px 90px 80px 120px 1fr",
+                              gridTemplateColumns: "40px 80px 70px 110px 1fr",
                               gap: 6,
                               padding: "0 4px",
                               fontSize: 12,
@@ -2950,7 +2950,7 @@ export default function App() {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "50px 90px 80px 120px 1fr",
+                                  gridTemplateColumns: "40px 80px 70px 110px 1fr",
                                   gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
@@ -2958,7 +2958,7 @@ export default function App() {
                                   padding: "6px 8px",
                                 }}
                               >
-                                <div style={{ fontWeight: 700 }}>#{idx + 1}</div>
+                                <div style={{ fontWeight: 700, textAlign: "center" }}>{idx + 1}</div>
 
                                 <select
                                   style={styles.select}
@@ -2978,8 +2978,8 @@ export default function App() {
                                 </select>
 
                                 <select
-                                  style={styles.select}
-                                  value={String(entry.associationTeamNumber || idx + 1)}
+                                  style={{ ...styles.select, textAlign: "center" }}
+                                  value={String(entry.associationTeamNumber || "1")}
                                   onChange={(e) =>
                                     updateDivisionTeamDetail(division, idx, {
                                       associationTeamNumber: e.target.value,
