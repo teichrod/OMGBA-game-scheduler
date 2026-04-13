@@ -1653,12 +1653,13 @@ function compactScheduleEarlier(schedule, config) {
   let nextSchedule = schedule.map((game) => ({ ...game }));
   const allSlots = buildOpenSlots(config);
   const enabledDates = config.saturdays.filter((entry) => entry.enabled).map((entry) => entry.date);
+  let currentScore = schedulePenaltyScore(buildResultFromSchedule(nextSchedule, config, []), config);
 
   for (const date of enabledDates) {
     let changed = true;
     let safety = 0;
 
-    while (changed && safety < 200) {
+    while (changed && safety < 120) {
       changed = false;
       safety += 1;
 
@@ -1674,7 +1675,9 @@ function compactScheduleEarlier(schedule, config) {
 
       if (!freeSlots.length) break;
 
-      for (const target of freeSlots) {
+      let bestCandidate = null;
+
+      for (const target of freeSlots.slice(0, 4)) {
         const laterGames = nextSchedule
           .filter(
             (game) =>
@@ -1684,19 +1687,38 @@ function compactScheduleEarlier(schedule, config) {
           )
           .sort(compareSlotLike);
 
-        let moved = false;
-        for (const game of laterGames) {
+        for (const game of laterGames.slice(0, 12)) {
           const message = validateManualMove(nextSchedule.filter((g) => g !== game), { ...game }, target, config);
           if (message) continue;
-          nextSchedule = nextSchedule.map((g) =>
+
+          const candidateSchedule = nextSchedule.map((g) =>
             g === game ? { ...g, date: target.date, time: target.time, court: target.court } : g
           );
-          changed = true;
-          moved = true;
-          break;
-        }
+          const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
+          if (candidateResult.auditSummary.missingTeams !== 0) continue;
+          if (candidateResult.auditSummary.earlyViolations > 0) continue;
 
-        if (moved) break;
+          const candidateScore = schedulePenaltyScore(candidateResult, config);
+          const compactnessBonus =
+            (getTimeIndex(game.time) - getTimeIndex(target.time)) * 220 +
+            (game.court !== target.court ? 8 : 0);
+
+          const netScore = candidateScore - compactnessBonus;
+
+          if (!bestCandidate || netScore < bestCandidate.netScore) {
+            bestCandidate = {
+              schedule: candidateSchedule.map((g) => ({ ...g })),
+              score: candidateScore,
+              netScore,
+            };
+          }
+        }
+      }
+
+      if (bestCandidate && bestCandidate.score <= currentScore + 2500) {
+        nextSchedule = bestCandidate.schedule;
+        currentScore = bestCandidate.score;
+        changed = true;
       }
     }
   }
