@@ -2075,14 +2075,21 @@ async function savePublishedPayload(payload) {
 
 async function loadPublishedPayload() {
   try {
-    const res = await fetch('/api/published-schedule', {
+    const res = await fetch(`/api/published-schedule?t=${Date.now()}`, {
       method: 'GET',
       cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
     });
+
     if (!res.ok) return null;
+
     const data = await res.json();
     return data.payload || null;
-  } catch {
+  } catch (err) {
+    console.error('loadPublishedPayload failed:', err);
     return null;
   }
 }
@@ -2160,35 +2167,16 @@ export default function App() {
   const [savedSetups, setSavedSetups] = useState([]);
   const [selectedSavedSetup, setSelectedSavedSetup] = useState("");
 
-  useEffect(() => {
-    async function loadPublicSchedule() {
-      if (!isPublicMode) return;
-      const published = await loadPublishedPayload();
-      if (published?.result) {
-        setResult(published.result);
-        setPublishedMeta(published.meta || null);
-      } else {
-        setResult(null);
-        setPublishedMeta(null);
-      }
-    }
-    loadPublicSchedule();
-  }, [isPublicMode]);
+useEffect(() => {
+  let cancelled = false;
 
-  useEffect(() => {
-    if (!isPublicMode) {
-      const setups = loadSavedSetupsFromStorage();
-      setSavedSetups(setups);
-      if (!selectedSavedSetup && setups.length > 0) {
-        setSelectedSavedSetup(setups[0].name);
-      }
-    }
-  }, [isPublicMode]);
-
-  useEffect(() => {
   async function loadPublicSchedule() {
     if (!isPublicMode) return;
+
     const published = await loadPublishedPayload();
+
+    if (cancelled) return;
+
     if (published?.result) {
       setResult(published.result);
       setPublishedMeta(published.meta || null);
@@ -2199,7 +2187,17 @@ export default function App() {
   }
 
   loadPublicSchedule();
+
+  const timer = setTimeout(loadPublicSchedule, 1200);
+
+  return () => {
+    cancelled = true;
+    clearTimeout(timer);
+  };
 }, [isPublicMode]);
+
+ 
+
 
   const selectedCourtDate = config.selectedDateForCourts || config.saturdays[0]?.date || "";
 

@@ -3,14 +3,23 @@ import { list, put } from '@vercel/blob';
 const PATHNAME = 'scheduler/published-schedule.json';
 
 async function readPublishedPayload() {
-  const { blobs } = await list({ prefix: PATHNAME, limit: 1 });
+  const { blobs } = await list({
+    prefix: PATHNAME,
+    limit: 1,
+  });
 
   if (!blobs.length) {
     return { payload: null };
   }
 
   const blob = blobs[0];
-  const response = await fetch(blob.url, { cache: 'no-store' });
+  const response = await fetch(blob.url, {
+    cache: 'no-store',
+    headers: {
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+    },
+  });
 
   if (!response.ok) {
     throw new Error(`Failed to fetch blob contents: ${response.status}`);
@@ -20,6 +29,11 @@ async function readPublishedPayload() {
 }
 
 export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+
   try {
     if (req.method === 'GET') {
       const data = await readPublishedPayload();
@@ -34,6 +48,7 @@ export default async function handler(req, res) {
         access: 'public',
         addRandomSuffix: false,
         allowOverwrite: true,
+        contentType: 'application/json',
       });
 
       return res.status(200).json({ success: true });
@@ -44,6 +59,7 @@ export default async function handler(req, res) {
         access: 'public',
         addRandomSuffix: false,
         allowOverwrite: true,
+        contentType: 'application/json',
       });
 
       return res.status(200).json({ success: true });
