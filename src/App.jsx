@@ -1169,7 +1169,7 @@ function forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, co
 
     while (
       teams.some((team) => team.division === division && team.gamesScheduled < team.targetGames) &&
-      divisionSafety < 3000
+      divisionSafety < 6000
     ) {
       divisionSafety += 1;
 
@@ -1420,6 +1420,15 @@ function generateScheduleEngine(config) {
   }
 
   placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unscheduled, config);
+
+  for (const division of DIVISIONS) {
+    const leftovers = divisionPlans[division] || [];
+    if (!leftovers.length) continue;
+    const divisionTeams = teams.filter((team) => team.division === division);
+    placePlannedDivisionGames(divisionTeams, leftovers, openSlots, schedule, unscheduled, config);
+    divisionPlans[division] = [];
+  }
+
   forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, config);
 
   let improvedSchedule = schedule.map((game) => ({ ...game }));
