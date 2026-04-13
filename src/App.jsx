@@ -283,10 +283,9 @@ function getRotatedDivisionOrder(dateIndex) {
     "7th/8th Girls",
   ];
 
-  const shift = dateIndex % base.length;
+  const shift = (dateIndex * 2) % base.length;
   return [...base.slice(shift), ...base.slice(0, shift)];
 }
-
 function SectionTitle({ icon: Icon, children }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 20, fontWeight: 700, marginBottom: 14 }}>
