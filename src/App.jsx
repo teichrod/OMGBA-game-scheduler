@@ -273,7 +273,21 @@ function StatCard({ label, value, subvalue }) {
     </Card>
   );
 }
+function getRotatedDivisionOrder(dateIndex) {
+  const base = [
+    "5th Boys",
+    "6th Boys",
+    "7th Boys",
+    "8th Boys",
+    "5th/6th Girls",
+    "7th/8th Girls",
+  ];
 
+  const shift = dateIndex % base.length;
+  return [...base.slice(shift), ...base.slice(0, shift)];
+}
+
+Then when placing game
 function SectionTitle({ icon: Icon, children }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 20, fontWeight: 700, marginBottom: 14 }}>
