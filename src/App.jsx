@@ -2062,10 +2062,15 @@ function saveSavedSetupsToStorage(setups) {
 
 async function savePublishedPayload(payload) {
   try {
-    const res = await fetch("/api/published-schedule", {
+    const res = await fetch(`/api/published-schedule?t=${Date.now()}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+      },
+      body: JSON.stringify({ payload }),
+      cache: "no-store",
     });
     return res.ok;
   } catch {
@@ -2076,28 +2081,30 @@ async function savePublishedPayload(payload) {
 async function loadPublishedPayload() {
   try {
     const res = await fetch(`/api/published-schedule?t=${Date.now()}`, {
-      method: 'GET',
-      cache: 'no-store',
+      method: "GET",
+      cache: "no-store",
       headers: {
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache',
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
       },
     });
-
     if (!res.ok) return null;
-
     const data = await res.json();
-    return data.payload || null;
-  } catch (err) {
-    console.error('loadPublishedPayload failed:', err);
+    return data?.payload || null;
+  } catch {
     return null;
   }
 }
 
 async function clearPublishedPayload() {
   try {
-    const res = await fetch('/api/published-schedule', {
-      method: 'DELETE',
+    const res = await fetch(`/api/published-schedule?t=${Date.now()}`, {
+      method: "DELETE",
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+      },
     });
     return res.ok;
   } catch {
@@ -2167,37 +2174,47 @@ export default function App() {
   const [savedSetups, setSavedSetups] = useState([]);
   const [selectedSavedSetup, setSelectedSavedSetup] = useState("");
 
-useEffect(() => {
-  let cancelled = false;
+  useEffect(() => {
+    let cancelled = false;
 
-  async function loadPublicSchedule() {
-    if (!isPublicMode) return;
-
-    const published = await loadPublishedPayload();
-
-    if (cancelled) return;
-
-    if (published?.result) {
-      setResult(published.result);
-      setPublishedMeta(published.meta || null);
-    } else {
-      setResult(null);
-      setPublishedMeta(null);
+    async function loadPublicSchedule() {
+      if (!isPublicMode) return;
+      const published = await loadPublishedPayload();
+      if (cancelled) return;
+      if (published?.result) {
+        setResult(published.result);
+        setPublishedMeta(published.meta || null);
+      } else {
+        setResult(null);
+        setPublishedMeta(null);
+      }
     }
-  }
 
-  loadPublicSchedule();
+    loadPublicSchedule();
+    const retryTimer = window.setTimeout(loadPublicSchedule, 1200);
 
-  const timer = setTimeout(loadPublicSchedule, 1200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retryTimer);
+    };
+  }, [isPublicMode]);
 
-  return () => {
-    cancelled = true;
-    clearTimeout(timer);
-  };
-}, [isPublicMode]);
+  useEffect(() => {
+    if (!isPublicMode) {
+      const setups = loadSavedSetupsFromStorage();
+      setSavedSetups(setups);
+      if (!selectedSavedSetup && setups.length > 0) {
+        setSelectedSavedSetup(setups[0].name);
+      }
+    }
+  }, [isPublicMode]);
 
- 
-
+  useEffect(() => {
+    if (!adminScheduleDate && config.saturdays.length > 0) {
+      const firstEnabled = config.saturdays.find((entry) => entry.enabled);
+      setAdminScheduleDate(firstEnabled?.date || config.saturdays[0]?.date || "");
+    }
+  }, [adminScheduleDate, config.saturdays]);
 
   const selectedCourtDate = config.selectedDateForCourts || config.saturdays[0]?.date || "";
 
