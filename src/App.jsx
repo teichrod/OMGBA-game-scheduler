@@ -129,6 +129,15 @@ function getUsedAssociationTeamNumbers(teamDetails, division, association, skipI
     .filter(Boolean);
 }
 
+function getNextAvailableAssociationTeamNumber(teamDetails, division, association, maxCount, skipIndex = -1) {
+  const used = new Set(getUsedAssociationTeamNumbers(teamDetails, division, association, skipIndex));
+  for (let i = 1; i <= Number(maxCount || 0); i += 1) {
+    const value = String(i);
+    if (!used.has(value)) return value;
+  }
+  return "1";
+}
+
 
 const styles = {
   page: {
@@ -2404,7 +2413,7 @@ export default function App() {
       ...prev,
       divisionTeamDetails: {
         ...(prev.divisionTeamDetails || {}),
-        [division]: (prev.divisionTeamDetails?.[division] || []).map((entry, idx) =>
+        [division]: syncDivisionTeamDetails(prev.divisionTeamDetails?.[division], prev.divisions?.[division]).map((entry, idx) =>
           idx === teamIndex ? { ...entry, ...patch } : entry
         ),
       },
@@ -2918,7 +2927,7 @@ export default function App() {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "40px 80px 70px 110px 1fr",
+                              gridTemplateColumns: "36px 76px 56px 110px 1fr",
                               gap: 6,
                               padding: "0 4px",
                               fontSize: 12,
@@ -2950,7 +2959,7 @@ export default function App() {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "40px 80px 70px 110px 1fr",
+                                  gridTemplateColumns: "36px 76px 56px 110px 1fr",
                                   gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
@@ -2963,11 +2972,23 @@ export default function App() {
                                 <select
                                   style={styles.select}
                                   value={entry.association || ""}
-                                  onChange={(e) =>
+                                  onChange={(e) => {
+                                    const association = e.target.value;
+                                    const nextNumber = association
+                                      ? getNextAvailableAssociationTeamNumber(
+                                          { ...(config.divisionTeamDetails || {}), [division]: teamDetails },
+                                          division,
+                                          association,
+                                          count,
+                                          idx
+                                        )
+                                      : "1";
+
                                     updateDivisionTeamDetail(division, idx, {
-                                      association: e.target.value,
-                                    })
-                                  }
+                                      association,
+                                      associationTeamNumber: nextNumber,
+                                    });
+                                  }}
                                 >
                                   <option value="">Select</option>
                                   {ASSOCIATION_OPTIONS.map((option) => (
