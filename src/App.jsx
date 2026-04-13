@@ -635,7 +635,36 @@ function canPairInSlot(teamA, teamB, slot, config, options = {}) {
   return true;
 }
 
-function slotPenalty(teamA, teamB, slot) {
+function getSeasonSpreadPenalty(team, date, config) {
+  const enabledDates = (config?.saturdays || []).filter((entry) => entry.enabled).map((entry) => entry.date);
+  if (!enabledDates.length) return 0;
+
+  const dateIndex = enabledDates.indexOf(date);
+  if (dateIndex < 0) return 0;
+
+  const totalDates = enabledDates.length;
+  const targetGames = team.targetGames || 0;
+  const projectedScheduled = (team.gamesScheduled || 0) + 1;
+  const idealThroughDate = ((dateIndex + 1) / totalDates) * targetGames;
+
+  let penalty = 0;
+
+  const overIdeal = Math.max(0, projectedScheduled - Math.ceil(idealThroughDate + 0.75));
+  penalty += overIdeal * 140;
+
+  if (dateIndex < totalDates - 1 && projectedScheduled >= targetGames) penalty += 320;
+  if (dateIndex < totalDates - 2 && projectedScheduled >= targetGames - 1) penalty += 110;
+  if (dateIndex < totalDates - 3 && projectedScheduled >= targetGames - 2) penalty += 50;
+
+  const remainingDatesAfter = totalDates - (dateIndex + 1);
+  const gamesRemainingAfter = Math.max(0, targetGames - projectedScheduled);
+  const forcedByesAfter = Math.max(0, remainingDatesAfter - gamesRemainingAfter);
+  penalty += forcedByesAfter * 24;
+
+  return penalty;
+}
+
+function slotPenalty(teamA, teamB, slot, config = null) {
   let penalty = 0;
   penalty += getProjectedTimeCount(teamA, slot.time) * 45;
   penalty += getProjectedTimeCount(teamB, slot.time) * 45;
@@ -645,6 +674,11 @@ function slotPenalty(teamA, teamB, slot) {
   penalty += getProjectedDayPartPenalty(teamB, slot.time);
   penalty += (teamA.gamesByDate[slot.date] || 0) * 12;
   penalty += (teamB.gamesByDate[slot.date] || 0) * 12;
+
+  if (config) {
+    penalty += getSeasonSpreadPenalty(teamA, slot.date, config);
+    penalty += getSeasonSpreadPenalty(teamB, slot.date, config);
+  }
 
   const existingA = getScheduledGamesOnDate(teamA, slot.date)[0];
   const existingB = getScheduledGamesOnDate(teamB, slot.date)[0];
@@ -794,7 +828,7 @@ function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, o
     const needScore = (getNeed(teamA) * 1200) + (getNeed(teamB) * 1200);
     const repeatPenalty = ((teamA.opponents[teamB.name] || 0) + (teamB.opponents[teamA.name] || 0)) * 180;
     const dayPenalty = ((teamA.gamesByDate[slot.date] || 0) + (teamB.gamesByDate[slot.date] || 0)) * 80;
-    const slotCost = slotPenalty(teamA, teamB, slot) * (ignoreTimeVariety ? 0.1 : 0.2);
+    const slotCost = slotPenalty(teamA, teamB, slot, config) * (ignoreTimeVariety ? 0.1 : 0.2);
     const ampmScore = getAmPmCorrectionScore(teamA, teamB, slot);
     const roundPenalty = item.roundIndex * 3 + (item.repeatIndex || 1) * 5;
 
@@ -884,7 +918,7 @@ function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allowI
       if (!canPairInSlot(teamA, teamB, slot, config, { ignoreTimeVariety: allowIgnoreTimeVariety })) continue;
 
       let penalty = 0;
-      penalty += slotPenalty(teamA, teamB, slot) * (allowIgnoreTimeVariety ? 0.15 : 0.35);
+      penalty += slotPenalty(teamA, teamB, slot, config) * (allowIgnoreTimeVariety ? 0.15 : 0.35);
       penalty += (teamA.gamesByDate[slot.date] || 0) * 20;
       penalty += (teamB.gamesByDate[slot.date] || 0) * 20;
       penalty += group.groupIndex * 3;
@@ -1036,7 +1070,7 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
         score += oppNeed * 900;
         score += constraintScore;
         score -= repeatCount * 160;
-        score -= slotPenalty(team, opponent, slot) * 0.35;
+        score -= slotPenalty(team, opponent, slot, config) * 0.35;
         score -= group.groupIndex * 4;
 
         if (score > bestScore) {
