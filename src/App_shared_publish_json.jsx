@@ -2050,13 +2050,14 @@ function saveSavedSetupsToStorage(setups) {
   window.localStorage.setItem(SETUP_STORAGE_KEY, JSON.stringify(setups));
 }
 
-const PUBLISHED_SCHEDULE_STORAGE_KEY = "youth_scheduler_published_schedule_v1";
-
 async function savePublishedPayload(payload) {
   try {
-    if (typeof window === "undefined") return false;
-    window.localStorage.setItem(PUBLISHED_SCHEDULE_STORAGE_KEY, JSON.stringify(payload));
-    return true;
+    const res = await fetch("/api/published-schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
   } catch {
     return false;
   }
@@ -2064,11 +2065,10 @@ async function savePublishedPayload(payload) {
 
 async function loadPublishedPayload() {
   try {
-    if (typeof window === "undefined") return null;
-    const raw = window.localStorage.getItem(PUBLISHED_SCHEDULE_STORAGE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    return data || null;
+    const res = await fetch("/api/published-schedule", { method: "GET" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.payload || null;
   } catch {
     return null;
   }
@@ -2076,9 +2076,8 @@ async function loadPublishedPayload() {
 
 async function clearPublishedPayload() {
   try {
-    if (typeof window === "undefined") return false;
-    window.localStorage.removeItem(PUBLISHED_SCHEDULE_STORAGE_KEY);
-    return true;
+    const res = await fetch("/api/published-schedule", { method: "DELETE" });
+    return res.ok;
   } catch {
     return false;
   }
