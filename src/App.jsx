@@ -645,6 +645,8 @@ function canPairInSlot(teamA, teamB, slot, config, options = {}) {
   const { ignoreTimeVariety = false, ignoreRepeatLimit = false, allTeams = [] } = options;
 
   if (teamA.id === teamB.id || teamA.division !== teamB.division || slot.used) return false;
+  if ((teamA.gamesScheduled || 0) >= (teamA.targetGames || 0)) return false;
+  if ((teamB.gamesScheduled || 0) >= (teamB.targetGames || 0)) return false;
 
   if (hasSimultaneousConflict(teamA.name, slot, allTeams, config, [teamB.name])) return false;
   if (hasSimultaneousConflict(teamB.name, slot, allTeams, config, [teamA.name])) return false;
@@ -877,7 +879,7 @@ function getAmPmCorrectionScore(teamA, teamB, slot) {
   return score;
 }
 
-function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, allTeams, options = {}) {
+function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, options = {}) {
   const { ignoreTimeVariety = false } = options;
   const byId = Object.fromEntries(divisionTeams.map((team) => [team.id, team]));
   let bestIndex = -1;
@@ -941,14 +943,7 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
         const pendingPlan = divisionPlans[division] || [];
         if (!pendingPlan.length) continue;
 
-        let chosen = choosePlannedMatchupForSlot(
-  divisionTeamMap[division],
-  pendingPlan,
-  slot,
-  config,
-  teams,
-  { ignoreTimeVariety: false }
-);
+        let chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, { ignoreTimeVariety: false });
         if (!chosen) {
           chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, { ignoreTimeVariety: true });
         }
@@ -981,7 +976,7 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
   }
 }
 
-function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, allowIgnoreTimeVariety = false) {
+function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allowIgnoreTimeVariety = false) {
   const slotGroups = buildOrderedSlotGroups(openSlots);
   let best = null;
   let bestScore = Infinity;
@@ -1639,7 +1634,11 @@ function generateScheduleEngine(config) {
     afternoon: team.afternoonGames || 0,
     maxSameTime: team.maxSameTimeSlot,
     issues: [
-      team.gamesScheduled !== team.targetGames ? 'Missing games' : null,
+      team.gamesScheduled < team.targetGames
+        ? 'Missing games'
+        : team.gamesScheduled > team.targetGames
+          ? 'Too many games'
+          : null,
       team.earlyGames > Number(config.maxEarlyGames) ? 'Too many early games' : null,
       Math.abs(team.home - team.away) > 2 ? 'Home/away imbalance' : null,
       team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? 'Too many doubleheaders' : null,
@@ -1711,7 +1710,11 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
     afternoon: team.afternoonGames || 0,
     maxSameTime: team.maxSameTimeSlot,
     issues: [
-      team.gamesScheduled !== team.targetGames ? 'Missing games' : null,
+      team.gamesScheduled < team.targetGames
+        ? 'Missing games'
+        : team.gamesScheduled > team.targetGames
+          ? 'Too many games'
+          : null,
       team.earlyGames > Number(config.maxEarlyGames) ? 'Too many early games' : null,
       Math.abs(team.home - team.away) > 2 ? 'Home/away imbalance' : null,
       team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? 'Too many doubleheaders' : null,
@@ -2057,13 +2060,14 @@ function saveSavedSetupsToStorage(setups) {
   window.localStorage.setItem(SETUP_STORAGE_KEY, JSON.stringify(setups));
 }
 
-const PUBLISHED_SCHEDULE_STORAGE_KEY = "youth_scheduler_published_schedule_v1";
-
 async function savePublishedPayload(payload) {
   try {
-    if (typeof window === "undefined") return false;
-    window.localStorage.setItem(PUBLISHED_SCHEDULE_STORAGE_KEY, JSON.stringify(payload));
-    return true;
+    const res = await fetch("/api/published-schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
   } catch {
     return false;
   }
@@ -2071,11 +2075,10 @@ async function savePublishedPayload(payload) {
 
 async function loadPublishedPayload() {
   try {
-    if (typeof window === "undefined") return null;
-    const raw = window.localStorage.getItem(PUBLISHED_SCHEDULE_STORAGE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    return data || null;
+    const res = await fetch("/api/published-schedule", { method: "GET" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.payload || null;
   } catch {
     return null;
   }
@@ -2083,9 +2086,8 @@ async function loadPublishedPayload() {
 
 async function clearPublishedPayload() {
   try {
-    if (typeof window === "undefined") return false;
-    window.localStorage.removeItem(PUBLISHED_SCHEDULE_STORAGE_KEY);
-    return true;
+    const res = await fetch("/api/published-schedule", { method: "DELETE" });
+    return res.ok;
   } catch {
     return false;
   }
@@ -2377,6 +2379,26 @@ export default function App() {
     const nextResult = buildResultFromSchedule(nextSchedule, config, result.unscheduled);
     setResult(nextResult);
     setGridNotice(`Moved ${sourceGame.away} @ ${sourceGame.home} to ${date} ${time} ${court}.`);
+    setDragState(null);
+  }
+
+  function deleteScheduledGame(gameToDelete) {
+    if (!result || !gameToDelete) return;
+
+    const nextSchedule = result.schedule.filter(
+      (game) =>
+        !(
+          game.date === gameToDelete.date &&
+          game.time === gameToDelete.time &&
+          game.court === gameToDelete.court &&
+          game.home === gameToDelete.home &&
+          game.away === gameToDelete.away
+        )
+    );
+
+    const nextResult = buildResultFromSchedule(nextSchedule, config, result.unscheduled);
+    setResult(nextResult);
+    setGridNotice(`Deleted ${gameToDelete.away} @ ${gameToDelete.home}.`);
     setDragState(null);
   }
 
@@ -2847,7 +2869,7 @@ export default function App() {
                         </select>
                       </div>
                       <div style={{ fontSize: 14, color: "#475569" }}>
-                        Drag a scheduled game to another open slot on this date to manually adjust the grid. The drop is blocked if it would break daily limits, 8:00 caps, or same-court back-to-back doubleheader rules.
+                        Drag a scheduled game to another open slot on this date to manually adjust the grid, or click Delete on a game card to remove it. The drop is blocked if it would break daily limits, 8:00 caps, or same-court back-to-back doubleheader rules.
                       </div>
                     </div>
                     {gridNotice ? (
@@ -2900,7 +2922,36 @@ export default function App() {
                                         }}
                                         title="Drag to another open slot"
                                       >
-                                        {cellGame.away} @ {cellGame.home}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                                          <div>{cellGame.away} @ {cellGame.home}</div>
+                                          {!isPublicMode ? (
+                                            <button
+                                              type="button"
+                                              style={{
+                                                border: '1px solid #fca5a5',
+                                                background: 'white',
+                                                color: '#b91c1c',
+                                                borderRadius: 8,
+                                                padding: '2px 6px',
+                                                fontSize: 12,
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                              }}
+                                              onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                deleteScheduledGame(cellGame);
+                                              }}
+                                              onMouseDown={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                              }}
+                                              title="Delete this game"
+                                            >
+                                              Delete
+                                            </button>
+                                          ) : null}
+                                        </div>
                                       </div>
                                     ) : (
                                       <span style={{ color: '#94a3b8' }}>Open</span>
