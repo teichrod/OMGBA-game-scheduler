@@ -273,19 +273,7 @@ function StatCard({ label, value, subvalue }) {
     </Card>
   );
 }
-function getRotatedDivisionOrder(dateIndex) {
-  const base = [
-    "5th Boys",
-    "6th Boys",
-    "7th Boys",
-    "8th Boys",
-    "5th/6th Girls",
-    "7th/8th Girls",
-  ];
 
-  const shift = (dateIndex * 2) % base.length;
-  return [...base.slice(shift), ...base.slice(0, shift)];
-}
 function SectionTitle({ icon: Icon, children }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 20, fontWeight: 700, marginBottom: 14 }}>
@@ -743,6 +731,145 @@ function buildDivisionMatchPlan(divisionTeams, targetGames, config, division) {
   }
 
   return plan;
+}
+
+function getRotatedDivisionOrder(dateIndex, step = 2) {
+  const shift = (dateIndex * step) % DIVISIONS.length;
+  return [...DIVISIONS.slice(shift), ...DIVISIONS.slice(0, shift)];
+}
+
+function getFreeSlotsForDate(openSlots, date) {
+  return openSlots
+    .filter((slot) => !slot.used && slot.date === date)
+    .sort((a, b) => {
+      const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
+      if (timeDiff !== 0) return timeDiff;
+      return a.court.localeCompare(b.court);
+    });
+}
+
+function getAmPmCorrectionScore(teamA, teamB, slot) {
+  let score = 0;
+  const aMorning = teamA.morningGames || 0;
+  const aAfternoon = teamA.afternoonGames || 0;
+  const bMorning = teamB.morningGames || 0;
+  const bAfternoon = teamB.afternoonGames || 0;
+
+  if (isMorningTime(slot.time)) {
+    score += Math.max(0, aAfternoon - aMorning) * 140;
+    score += Math.max(0, bAfternoon - bMorning) * 140;
+  }
+
+  if (isAfternoonTime(slot.time)) {
+    score -= Math.max(0, aAfternoon - aMorning - 1) * 100;
+    score -= Math.max(0, bAfternoon - bMorning - 1) * 100;
+  }
+
+  if (teamA.division.includes('Girls')) {
+    score += isMorningTime(slot.time) ? 40 : -30;
+  }
+  if (teamB.division.includes('Girls')) {
+    score += isMorningTime(slot.time) ? 40 : -30;
+  }
+
+  return score;
+}
+
+function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, options = {}) {
+  const { ignoreTimeVariety = false } = options;
+  const byId = Object.fromEntries(divisionTeams.map((team) => [team.id, team]));
+  let bestIndex = -1;
+  let bestScore = -Infinity;
+
+  for (let i = 0; i < pendingPlan.length; i += 1) {
+    const item = pendingPlan[i];
+    const teamA = byId[item.teamAId];
+    const teamB = byId[item.teamBId];
+    if (!teamA || !teamB) continue;
+    if (teamA.gamesScheduled >= teamA.targetGames || teamB.gamesScheduled >= teamB.targetGames) continue;
+    if (!canPairInSlot(teamA, teamB, slot, config, { ignoreTimeVariety })) continue;
+
+    const needScore = (getNeed(teamA) * 1200) + (getNeed(teamB) * 1200);
+    const repeatPenalty = ((teamA.opponents[teamB.name] || 0) + (teamB.opponents[teamA.name] || 0)) * 180;
+    const dayPenalty = ((teamA.gamesByDate[slot.date] || 0) + (teamB.gamesByDate[slot.date] || 0)) * 80;
+    const slotCost = slotPenalty(teamA, teamB, slot) * (ignoreTimeVariety ? 0.1 : 0.2);
+    const ampmScore = getAmPmCorrectionScore(teamA, teamB, slot);
+    const roundPenalty = item.roundIndex * 3 + (item.repeatIndex || 1) * 5;
+
+    let score = needScore + ampmScore - repeatPenalty - dayPenalty - slotCost - roundPenalty;
+
+    if (teamA.division === '5th Boys' && config.fifthBoysDoubleheaderDate && slot.date === config.fifthBoysDoubleheaderDate) {
+      const aOnDhDate = teamA.gamesByDate[config.fifthBoysDoubleheaderDate] || 0;
+      const bOnDhDate = teamB.gamesByDate[config.fifthBoysDoubleheaderDate] || 0;
+      if (aOnDhDate === 0) score += 150;
+      if (bOnDhDate === 0) score += 150;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+
+  if (bestIndex < 0) return null;
+  const item = pendingPlan[bestIndex];
+  return { item, teamA: byId[item.teamAId], teamB: byId[item.teamBId], index: bestIndex };
+}
+
+function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unscheduled, config) {
+  const enabledDates = config.saturdays.filter((entry) => entry.enabled).map((entry) => entry.date);
+  const divisionTeamMap = Object.fromEntries(
+    DIVISIONS.map((division) => [division, teams.filter((team) => team.division === division)])
+  );
+
+  for (let dateIndex = 0; dateIndex < enabledDates.length; dateIndex += 1) {
+    const date = enabledDates[dateIndex];
+    const freeSlots = getFreeSlotsForDate(openSlots, date);
+    if (!freeSlots.length) continue;
+
+    const rotatedOrder = getRotatedDivisionOrder(dateIndex, 2);
+
+    for (const slot of freeSlots) {
+      if (slot.used) continue;
+
+      let placed = false;
+      const divisionOrder = [...rotatedOrder, ...DIVISIONS.filter((d) => !rotatedOrder.includes(d))];
+
+      for (const division of divisionOrder) {
+        const pendingPlan = divisionPlans[division] || [];
+        if (!pendingPlan.length) continue;
+
+        let chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, { ignoreTimeVariety: false });
+        if (!chosen) {
+          chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, { ignoreTimeVariety: true });
+        }
+        if (!chosen) continue;
+
+        scheduleGame(schedule, slot, chosen.teamA, chosen.teamB);
+        pendingPlan.splice(chosen.index, 1);
+        placed = true;
+        break;
+      }
+
+      if (placed) continue;
+    }
+  }
+
+  for (const division of DIVISIONS) {
+    const leftovers = divisionPlans[division] || [];
+    const byId = Object.fromEntries((divisionTeamMap[division] || []).map((team) => [team.id, team]));
+    for (const item of leftovers) {
+      const teamA = byId[item.teamAId];
+      const teamB = byId[item.teamBId];
+      if (!teamA || !teamB) continue;
+      if (teamA.gamesScheduled >= teamA.targetGames || teamB.gamesScheduled >= teamB.targetGames) continue;
+      unscheduled.push({
+        matchup: `${teamA.name} vs ${teamB.name}`,
+        reason: 'Planned matchup not placed during per-day rotation pass',
+        suggestion: `Division ${teamA.division} will be handled by completion fallback.`,
+      });
+    }
+  }
 }
 
 function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allowIgnoreTimeVariety = false) {
@@ -1285,15 +1412,14 @@ function generateScheduleEngine(config) {
 
   scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config);
 
-  const teamMap = Object.fromEntries(teams.map((team) => [team.id, team]));
-
+  const divisionPlans = {};
   for (const division of DIVISIONS) {
     const divisionTeams = teams.filter((team) => team.division === division);
     const targetGames = Number(config.divisionGames[division] || 0);
-    const plan = buildDivisionMatchPlan(divisionTeams, targetGames, config, division);
-    placePlannedDivisionGames(divisionTeams, plan, openSlots, schedule, unscheduled, config);
+    divisionPlans[division] = buildDivisionMatchPlan(divisionTeams, targetGames, config, division);
   }
 
+  placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unscheduled, config);
   forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, config);
 
   let improvedSchedule = schedule.map((game) => ({ ...game }));
@@ -1364,7 +1490,7 @@ function generateScheduleEngine(config) {
     if (missing.length) {
       unscheduled.push({
         matchup: 'Final completion check',
-        reason: 'Some teams are still short after forced completion',
+        reason: 'Some teams are still short after per-day rotation and completion fallback',
         suggestion: missing.join('; '),
       });
     }
