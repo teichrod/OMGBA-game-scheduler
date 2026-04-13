@@ -1538,6 +1538,7 @@ function generateScheduleEngine(config) {
   if (allTeamsScheduled) {
     improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
     improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+    improvedSchedule = rebalanceTowardFinalSaturday(improvedSchedule, config);
   }
 
   improvedSchedule.sort((a, b) => {
@@ -1681,6 +1682,115 @@ function compareSlotLike(a, b) {
   const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
   if (timeDiff !== 0) return timeDiff;
   return a.court.localeCompare(b.court);
+}
+
+
+function getEnabledGameDates(config) {
+  return config.saturdays
+    .filter((entry) => entry.enabled)
+    .map((entry) => entry.date)
+    .sort((a, b) => parseShortDate(a) - parseShortDate(b));
+}
+
+function getFinalEnabledDate(config) {
+  const dates = getEnabledGameDates(config);
+  return dates[dates.length - 1] || '';
+}
+
+function countGamesOnDate(schedule, date) {
+  return schedule.filter((game) => game.date === date).length;
+}
+
+function countTeamGamesOnDate(schedule, teamName, date) {
+  return schedule.filter((game) => game.date === date && (game.home === teamName || game.away === teamName)).length;
+}
+
+function rebalanceTowardFinalSaturday(schedule, config) {
+  const finalDate = getFinalEnabledDate(config);
+  if (!finalDate) return schedule.map((game) => ({ ...game }));
+
+  const enabledDates = getEnabledGameDates(config);
+  if (enabledDates.length < 2) return schedule.map((game) => ({ ...game }));
+
+  const allSlots = buildOpenSlots(config);
+  const finalSlots = allSlots
+    .filter((slot) => slot.date === finalDate)
+    .sort(compareSlotLike);
+  if (!finalSlots.length) return schedule.map((game) => ({ ...game }));
+
+  let nextSchedule = schedule.map((game) => ({ ...game }));
+  let currentPenalty = schedulePenaltyScore(buildResultFromSchedule(nextSchedule, config, []), config);
+
+  const dateCounts = enabledDates.map((date) => countGamesOnDate(nextSchedule, date));
+  const averageGames = Math.round((nextSchedule.length || 0) / enabledDates.length);
+  const sortedCounts = [...dateCounts].sort((a, b) => a - b);
+  const medianGames = sortedCounts[Math.floor(sortedCounts.length / 2)] || 0;
+  const finalCapacity = finalSlots.length;
+  const desiredFinalGames = Math.min(
+    finalCapacity,
+    Math.max(countGamesOnDate(nextSchedule, finalDate), averageGames, medianGames)
+  );
+
+  let safety = 0;
+  while (countGamesOnDate(nextSchedule, finalDate) < desiredFinalGames && safety < 50) {
+    safety += 1;
+    const occupied = new Set(nextSchedule.map((game) => `${game.date}|${game.time}|${game.court}`));
+    const emptyFinalSlots = finalSlots.filter((slot) => !occupied.has(`${slot.date}|${slot.time}|${slot.court}`));
+    if (!emptyFinalSlots.length) break;
+
+    let bestCandidate = null;
+
+    for (const target of emptyFinalSlots.slice(0, 6)) {
+      const donorGames = nextSchedule
+        .filter((game) => game.date !== finalDate)
+        .sort((a, b) => {
+          const aTeamsOnFinal = countTeamGamesOnDate(nextSchedule, a.home, finalDate) + countTeamGamesOnDate(nextSchedule, a.away, finalDate);
+          const bTeamsOnFinal = countTeamGamesOnDate(nextSchedule, b.home, finalDate) + countTeamGamesOnDate(nextSchedule, b.away, finalDate);
+          if (aTeamsOnFinal !== bTeamsOnFinal) return aTeamsOnFinal - bTeamsOnFinal;
+          const dateLoadDiff = countGamesOnDate(nextSchedule, b.date) - countGamesOnDate(nextSchedule, a.date);
+          if (dateLoadDiff !== 0) return dateLoadDiff;
+          return parseShortDate(a.date) - parseShortDate(b.date);
+        });
+
+      for (const game of donorGames.slice(0, 40)) {
+        const message = validateManualMove(nextSchedule.filter((g) => g !== game), { ...game }, target, config);
+        if (message) continue;
+
+        const candidateSchedule = nextSchedule.map((g) =>
+          g === game ? { ...g, date: target.date, time: target.time, court: target.court } : g
+        );
+        const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
+        if (candidateResult.auditSummary.missingTeams !== 0) continue;
+        if (candidateResult.auditSummary.earlyViolations > 0) continue;
+
+        const candidatePenalty = schedulePenaltyScore(candidateResult, config);
+        const donorDateCount = countGamesOnDate(nextSchedule, game.date);
+        const finalDateCount = countGamesOnDate(nextSchedule, finalDate);
+        const finalLoadBonus =
+          (countTeamGamesOnDate(nextSchedule, game.home, finalDate) === 0 ? 1600 : 0) +
+          (countTeamGamesOnDate(nextSchedule, game.away, finalDate) === 0 ? 1600 : 0) +
+          Math.max(0, donorDateCount - averageGames) * 220 +
+          Math.max(0, averageGames - finalDateCount) * 320;
+        const netScore = candidatePenalty - finalLoadBonus;
+
+        if (!bestCandidate || netScore < bestCandidate.netScore) {
+          bestCandidate = {
+            schedule: candidateSchedule.map((g) => ({ ...g })),
+            penalty: candidatePenalty,
+            netScore,
+          };
+        }
+      }
+    }
+
+    if (!bestCandidate) break;
+    if (bestCandidate.penalty > currentPenalty + 2500) break;
+
+    nextSchedule = bestCandidate.schedule;
+    currentPenalty = bestCandidate.penalty;
+  }
+
+  return nextSchedule.sort(compareSlotLike);
 }
 
 function compactScheduleEarlier(schedule, config) {
