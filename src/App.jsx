@@ -51,7 +51,7 @@ const TEAM_COUNT_OPTIONS = Array.from({ length: 21 }, (_, i) => String(i + 4));
 const GAME_COUNT_OPTIONS = ["6", "7", "8", "9", "10", "11", "12"];
 const MAX_EARLY_OPTIONS = ["0", "1", "2", "3", "4"];
 
-const ASSOCIATION_OPTIONS = ["OM", "BP", "CD", "RA", "CUSTOM"];
+const ASSOCIATION_OPTIONS = ["OM", "BP", "CD", "RA"];
 
 function getDivisionGenderCode(division) {
   return division.includes("Girls") ? "G" : "B";
@@ -76,12 +76,6 @@ function sanitizeCoachLastName(value) {
 
 function getAssociationCode(entry) {
   if (!entry) return "";
-  if (entry.association === "CUSTOM") {
-    return String(entry.customAssociation || "")
-      .trim()
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, "");
-  }
   return String(entry.association || "").trim().toUpperCase();
 }
 
@@ -103,7 +97,6 @@ function buildFormattedTeamName(division, entry, fallbackIndex) {
 function buildDivisionTeamDetails(count) {
   return Array.from({ length: Number(count) || 0 }, (_, i) => ({
     association: "",
-    customAssociation: "",
     associationTeamNumber: String(i + 1),
     coachLastName: "",
   }));
@@ -116,7 +109,6 @@ function syncDivisionTeamDetails(existingDetails, count) {
   while (next.length < target) {
     next.push({
       association: "",
-      customAssociation: "",
       associationTeamNumber: String(next.length + 1),
       coachLastName: "",
     });
@@ -307,7 +299,7 @@ const styles = {
   },
   grid2: {
     display: "grid",
-    gridTemplateColumns: "420px minmax(0,1fr)",
+    gridTemplateColumns: "minmax(320px, 360px) minmax(0, 1fr)",
     gap: 24,
   },
   statsGrid: {
@@ -2896,7 +2888,7 @@ export default function App() {
                         <div
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "1fr 110px 120px auto",
+                            gridTemplateColumns: "minmax(0, 1fr) 90px 110px auto",
                             gap: 12,
                             alignItems: "center",
                           }}
@@ -2926,7 +2918,7 @@ export default function App() {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "70px 120px 140px 100px 140px 1fr",
+                              gridTemplateColumns: "56px 100px 80px 120px minmax(180px, 1fr)",
                               gap: 10,
                               padding: "0 4px",
                               fontSize: 12,
@@ -2937,7 +2929,6 @@ export default function App() {
                           >
                             <div>Team</div>
                             <div>Assoc.</div>
-                            <div>Custom</div>
                             <div>No.</div>
                             <div>Coach</div>
                             <div>Preview</div>
@@ -2959,7 +2950,7 @@ export default function App() {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "70px 120px 140px 100px 140px 1fr",
+                                  gridTemplateColumns: "56px 100px 80px 120px minmax(180px, 1fr)",
                                   gap: 10,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
@@ -2975,29 +2966,16 @@ export default function App() {
                                   onChange={(e) =>
                                     updateDivisionTeamDetail(division, idx, {
                                       association: e.target.value,
-                                      customAssociation: e.target.value === "CUSTOM" ? entry.customAssociation || "" : "",
                                     })
                                   }
                                 >
                                   <option value="">Select</option>
                                   {ASSOCIATION_OPTIONS.map((option) => (
                                     <option key={option} value={option}>
-                                      {option === "CUSTOM" ? "Custom" : option}
+                                      {option}
                                     </option>
                                   ))}
                                 </select>
-
-                                <input
-                                  style={styles.input}
-                                  value={entry.customAssociation || ""}
-                                  disabled={entry.association !== "CUSTOM"}
-                                  placeholder="Custom code"
-                                  onChange={(e) =>
-                                    updateDivisionTeamDetail(division, idx, {
-                                      customAssociation: e.target.value.toUpperCase(),
-                                    })
-                                  }
-                                />
 
                                 <select
                                   style={styles.select}
@@ -3030,7 +3008,7 @@ export default function App() {
                                   }
                                 />
 
-                                <div style={{ fontWeight: 700, color: "#0f172a" }}>{previewName}</div>
+                                <div style={{ fontWeight: 700, color: "#0f172a", wordBreak: "break-word" }}>{previewName}</div>
                               </div>
                             );
                           })}
