@@ -1503,6 +1503,7 @@ function generateScheduleEngine(config) {
 
   if (allTeamsScheduled) {
     improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
+    improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
   }
 
   improvedSchedule.sort((a, b) => {
@@ -1704,6 +1705,10 @@ function compactScheduleEarlier(schedule, config) {
 }
 
 function validateManualMove(schedule, gameToMove, target, config) {
+  if (config.fifthBoysDoubleheaderDate && target.date === config.fifthBoysDoubleheaderDate && gameToMove.division !== '5th Boys') {
+    return 'Only 5th Boys can be scheduled on the selected 5th Boys doubleheader date.';
+  }
+
   const targetOccupied = schedule.some(
     (game) => game !== gameToMove && game.date === target.date && game.time === target.time && game.court === target.court
   );
