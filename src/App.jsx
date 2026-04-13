@@ -2075,10 +2075,13 @@ async function savePublishedPayload(payload) {
 
 async function loadPublishedPayload() {
   try {
-    const res = await fetch("/api/published-schedule", { method: "GET" });
+    const res = await fetch('/api/published-schedule', {
+      method: 'GET',
+      cache: 'no-store',
+    });
     if (!res.ok) return null;
     const data = await res.json();
-    return data?.payload || null;
+    return data.payload || null;
   } catch {
     return null;
   }
@@ -2086,7 +2089,9 @@ async function loadPublishedPayload() {
 
 async function clearPublishedPayload() {
   try {
-    const res = await fetch("/api/published-schedule", { method: "DELETE" });
+    const res = await fetch('/api/published-schedule', {
+      method: 'DELETE',
+    });
     return res.ok;
   } catch {
     return false;
@@ -2181,11 +2186,20 @@ export default function App() {
   }, [isPublicMode]);
 
   useEffect(() => {
-    if (!adminScheduleDate && config.saturdays.length > 0) {
-      const firstEnabled = config.saturdays.find((entry) => entry.enabled);
-      setAdminScheduleDate(firstEnabled?.date || config.saturdays[0]?.date || "");
+  async function loadPublicSchedule() {
+    if (!isPublicMode) return;
+    const published = await loadPublishedPayload();
+    if (published?.result) {
+      setResult(published.result);
+      setPublishedMeta(published.meta || null);
+    } else {
+      setResult(null);
+      setPublishedMeta(null);
     }
-  }, [adminScheduleDate, config.saturdays]);
+  }
+
+  loadPublicSchedule();
+}, [isPublicMode]);
 
   const selectedCourtDate = config.selectedDateForCourts || config.saturdays[0]?.date || "";
 

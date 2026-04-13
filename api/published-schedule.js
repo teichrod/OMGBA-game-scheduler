@@ -1,55 +1,60 @@
-import fs from 'fs';
-import path from 'path';
+import { list, put } from '@vercel/blob';
 
-const dataFilePath = path.join(process.cwd(), 'data', 'published-schedule.json');
+const PATHNAME = 'scheduler/published-schedule.json';
 
-export default function handler(req, res) {
-  if (req.method === 'GET') {
-    try {
-      if (!fs.existsSync(dataFilePath)) {
-        return res.status(200).json({ schedule: null });
-      }
+async function readPublishedPayload() {
+  const { blobs } = await list({ prefix: PATHNAME, limit: 1 });
 
-      const fileData = fs.readFileSync(dataFilePath, 'utf-8');
-      const json = JSON.parse(fileData || '{}');
-
-      return res.status(200).json(json);
-    } catch (err) {
-      console.error('GET error:', err);
-      return res.status(500).json({ error: 'Failed to read published schedule' });
-    }
+  if (!blobs.length) {
+    return { payload: null };
   }
 
-  if (req.method === 'POST') {
-    try {
-      const body = req.body || {};
+  const blob = blobs[0];
+  const response = await fetch(blob.url, { cache: 'no-store' });
 
-      const dir = path.dirname(dataFilePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
+  if (!response.ok) {
+    throw new Error(`Failed to fetch blob contents: ${response.status}`);
+  }
 
-      fs.writeFileSync(dataFilePath, JSON.stringify(body, null, 2));
+  return await response.json();
+}
+
+export default async function handler(req, res) {
+  try {
+    if (req.method === 'GET') {
+      const data = await readPublishedPayload();
+      return res.status(200).json(data);
+    }
+
+    if (req.method === 'POST') {
+      const body = req.body ?? {};
+      const json = JSON.stringify(body, null, 2);
+
+      await put(PATHNAME, json, {
+        access: 'public',
+        addRandomSuffix: false,
+        allowOverwrite: true,
+      });
 
       return res.status(200).json({ success: true });
-    } catch (err) {
-      console.error('POST error:', err);
-      return res.status(500).json({ error: 'Failed to save published schedule' });
     }
-  }
 
-  if (req.method === 'DELETE') {
-    try {
-      if (fs.existsSync(dataFilePath)) {
-        fs.writeFileSync(dataFilePath, JSON.stringify({ schedule: null }, null, 2));
-      }
+    if (req.method === 'DELETE') {
+      await put(PATHNAME, JSON.stringify({ payload: null }, null, 2), {
+        access: 'public',
+        addRandomSuffix: false,
+        allowOverwrite: true,
+      });
 
       return res.status(200).json({ success: true });
-    } catch (err) {
-      console.error('DELETE error:', err);
-      return res.status(500).json({ error: 'Failed to clear published schedule' });
     }
-  }
 
-  return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ error: 'Method not allowed' });
+  } catch (error) {
+    console.error('published-schedule error:', error);
+    return res.status(500).json({
+      error: 'Published schedule request failed',
+      message: error?.message || String(error),
+    });
+  }
 }
