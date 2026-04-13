@@ -51,6 +51,93 @@ const TEAM_COUNT_OPTIONS = Array.from({ length: 21 }, (_, i) => String(i + 4));
 const GAME_COUNT_OPTIONS = ["6", "7", "8", "9", "10", "11", "12"];
 const MAX_EARLY_OPTIONS = ["0", "1", "2", "3", "4"];
 
+const ASSOCIATION_OPTIONS = ["OM", "BP", "CD", "RA", "CUSTOM"];
+
+function getDivisionGenderCode(division) {
+  return division.includes("Girls") ? "G" : "B";
+}
+
+function getDivisionGradeCode(division) {
+  if (division.startsWith("5th/6th")) return "56";
+  if (division.startsWith("7th/8th")) return "78";
+  if (division.startsWith("5th")) return "5";
+  if (division.startsWith("6th")) return "6";
+  if (division.startsWith("7th")) return "7";
+  if (division.startsWith("8th")) return "8";
+  return "";
+}
+
+function sanitizeCoachLastName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Za-z'\-]/g, "");
+}
+
+function getAssociationCode(entry) {
+  if (!entry) return "";
+  if (entry.association === "CUSTOM") {
+    return String(entry.customAssociation || "")
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+  }
+  return String(entry.association || "").trim().toUpperCase();
+}
+
+function buildFormattedTeamName(division, entry, fallbackIndex) {
+  const assoc = getAssociationCode(entry) || "TM";
+  const gender = getDivisionGenderCode(division);
+  const grade = getDivisionGradeCode(division);
+  const teamNumber =
+    entry?.associationTeamNumber && String(entry.associationTeamNumber).trim()
+      ? String(entry.associationTeamNumber).padStart(2, "0")
+      : String(fallbackIndex).padStart(2, "0");
+  const coach = sanitizeCoachLastName(entry?.coachLastName);
+
+  return coach
+    ? `${assoc}${gender}${grade}${teamNumber}-${coach}`
+    : `${assoc}${gender}${grade}${teamNumber}`;
+}
+
+function buildDivisionTeamDetails(count) {
+  return Array.from({ length: Number(count) || 0 }, (_, i) => ({
+    association: "",
+    customAssociation: "",
+    associationTeamNumber: String(i + 1),
+    coachLastName: "",
+  }));
+}
+
+function syncDivisionTeamDetails(existingDetails, count) {
+  const next = Array.isArray(existingDetails) ? [...existingDetails] : [];
+  const target = Number(count) || 0;
+
+  while (next.length < target) {
+    next.push({
+      association: "",
+      customAssociation: "",
+      associationTeamNumber: String(next.length + 1),
+      coachLastName: "",
+    });
+  }
+
+  return next.slice(0, target);
+}
+
+function getUsedAssociationTeamNumbers(teamDetails, division, association, skipIndex = -1) {
+  const details = teamDetails?.[division] || [];
+  return details
+    .map((entry, idx) => {
+      if (idx === skipIndex) return null;
+      const code = getAssociationCode(entry);
+      if (code !== association) return null;
+      return String(entry.associationTeamNumber || "");
+    })
+    .filter(Boolean);
+}
+
+
 const styles = {
   page: {
     minHeight: "100vh",
@@ -331,6 +418,15 @@ function buildDateCourtSettings(dates, previous = {}, baseCourts = DEFAULT_COURT
 function createInitialState() {
   const seasonYear = 2026;
   const saturdays = getSeasonSaturdays(seasonYear).map((date) => ({ date, enabled: false }));
+  const divisions = {
+    "5th Boys": 8,
+    "6th Boys": 8,
+    "7th Boys": 8,
+    "8th Boys": 8,
+    "5th/6th Girls": 8,
+    "7th/8th Girls": 8,
+  };
+
   return {
     seasonYear,
     maxEarlyGames: 2,
@@ -338,14 +434,7 @@ function createInitialState() {
     selectedDateForCourts: saturdays[0]?.date || "",
     fifthBoysDoubleheaderDate: "",
     timeSlots: DEFAULT_TIMES.map((time) => ({ time, enabled: true })),
-    divisions: {
-      "5th Boys": 8,
-      "6th Boys": 8,
-      "7th Boys": 8,
-      "8th Boys": 8,
-      "5th/6th Girls": 8,
-      "7th/8th Girls": 8,
-    },
+    divisions,
     divisionGames: {
       "5th Boys": 10,
       "6th Boys": 8,
@@ -354,6 +443,9 @@ function createInitialState() {
       "5th/6th Girls": 8,
       "7th/8th Girls": 8,
     },
+    divisionTeamDetails: Object.fromEntries(
+      DIVISIONS.map((division) => [division, buildDivisionTeamDetails(divisions[division])])
+    ),
     coachConflicts: [],
     saturdays,
     dateCourtSettings: buildDateCourtSettings(saturdays.map((entry) => entry.date)),
@@ -368,8 +460,9 @@ function buildTeamNamesFromConfig(config) {
   const names = [];
   for (const division of DIVISIONS) {
     const count = Number(config?.divisions?.[division] || 0);
-    for (let i = 1; i <= count; i += 1) {
-      names.push(`${division} Team ${i}`);
+    const details = syncDivisionTeamDetails(config?.divisionTeamDetails?.[division], count);
+    for (let i = 0; i < count; i += 1) {
+      names.push(buildFormattedTeamName(division, details[i], i + 1));
     }
   }
   return names;
@@ -385,6 +478,17 @@ function normalizeConfig(config) {
     timeSlots: Array.isArray(config?.timeSlots) && config.timeSlots.length ? config.timeSlots : initial.timeSlots,
     saturdays: Array.isArray(config?.saturdays) && config.saturdays.length ? config.saturdays : initial.saturdays,
   };
+
+  next.divisionTeamDetails = Object.fromEntries(
+    DIVISIONS.map((division) => [
+      division,
+      syncDivisionTeamDetails(
+        config?.divisionTeamDetails?.[division] || initial.divisionTeamDetails[division],
+        next.divisions[division]
+      ),
+    ])
+  );
+
   next.dateCourtSettings = buildDateCourtSettings(next.saturdays.map((entry) => entry.date), config?.dateCourtSettings || initial.dateCourtSettings);
   next.coachConflicts = Array.isArray(config?.coachConflicts)
     ? config.coachConflicts.map((entry) => ({ id: entry?.id || createRowId('conflict'), teamA: entry?.teamA || '', teamB: entry?.teamB || '' }))
@@ -505,6 +609,7 @@ function buildTeams(config) {
     const count = Number(config.divisions[division] || 0);
     const targetGames = Number(config.divisionGames[division] || 8);
     const isOddDivision = count % 2 === 1;
+    const details = syncDivisionTeamDetails(config.divisionTeamDetails?.[division], count);
 
     let maxDoubleheadersPerTeam = 0;
     if (config.globalAllowDoubleheaders) {
@@ -515,11 +620,16 @@ function buildTeams(config) {
       maxDoubleheadersPerTeam = isOddDivision ? 1 : 0;
     }
 
-    for (let i = 1; i <= count; i += 1) {
+    for (let i = 0; i < count; i += 1) {
+      const detail = details[i];
       teams.push({
-        id: `${division}::${i}`,
-        name: `${division} Team ${i}`,
+        id: `${division}::${i + 1}`,
+        name: buildFormattedTeamName(division, detail, i + 1),
         division,
+        teamIndex: i + 1,
+        association: getAssociationCode(detail),
+        associationTeamNumber: String(detail?.associationTeamNumber || i + 1),
+        coachLastName: sanitizeCoachLastName(detail?.coachLastName),
         gamesScheduled: 0,
         targetGames,
         earlyGames: 0,
@@ -2282,11 +2392,31 @@ export default function App() {
   }, [config, result, adminScheduleDate]);
 
   function setDivisionCount(division, value) {
-    setConfig((prev) => ({ ...prev, divisions: { ...prev.divisions, [division]: Number(value) } }));
+    const nextCount = Number(value);
+    setConfig((prev) => ({
+      ...prev,
+      divisions: { ...prev.divisions, [division]: nextCount },
+      divisionTeamDetails: {
+        ...(prev.divisionTeamDetails || {}),
+        [division]: syncDivisionTeamDetails(prev.divisionTeamDetails?.[division], nextCount),
+      },
+    }));
   }
 
   function setDivisionGames(division, value) {
     setConfig((prev) => ({ ...prev, divisionGames: { ...prev.divisionGames, [division]: Number(value) } }));
+  }
+
+  function updateDivisionTeamDetail(division, teamIndex, patch) {
+    setConfig((prev) => ({
+      ...prev,
+      divisionTeamDetails: {
+        ...(prev.divisionTeamDetails || {}),
+        [division]: (prev.divisionTeamDetails?.[division] || []).map((entry, idx) =>
+          idx === teamIndex ? { ...entry, ...patch } : entry
+        ),
+      },
+    }));
   }
 
   function addCoachConflict() {
@@ -2748,30 +2878,163 @@ export default function App() {
               </Card>
 
               <Card>
-                <SectionTitle>Divisions, Teams, and Game Targets</SectionTitle>
-                <div style={{ display: "grid", gap: 12 }}>
+                <SectionTitle>Divisions, Teams, and Team Naming</SectionTitle>
+                <div style={{ display: "grid", gap: 16 }}>
                   {DIVISIONS.map((division) => {
                     const count = Number(config.divisions[division]);
                     const targetGames = Number(config.divisionGames[division]);
                     const odd = count % 2 === 1;
+                    const teamDetails = syncDivisionTeamDetails(config.divisionTeamDetails?.[division], count);
+                    const genderCode = getDivisionGenderCode(division);
+                    const gradeCode = getDivisionGradeCode(division);
+
                     return (
                       <div
                         key={division}
-                        style={{ display: "grid", gridTemplateColumns: "1fr 110px 120px auto", gap: 12, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}
+                        style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, display: "grid", gap: 12 }}
                       >
-                        <div>
-                          <div style={{ fontWeight: 700 }}>{division}</div>
-                          <div style={{ fontSize: 12, color: "#64748b" }}>
-                            {odd ? "Odd team count: one DH per team allowed (except special 5th Boys rule)" : "Even team count"}
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 110px 120px auto",
+                            gap: 12,
+                            alignItems: "center",
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700 }}>{division}</div>
+                            <div style={{ fontSize: 12, color: "#64748b" }}>
+                              Code format: ASSOC + {genderCode} + {gradeCode} + team number + coach
+                            </div>
+                            <div style={{ fontSize: 12, color: "#64748b" }}>
+                              {odd ? "Odd team count: one DH per team allowed (except special 5th Boys rule)" : "Even team count"}
+                            </div>
                           </div>
+
+                          <select style={styles.select} value={String(count)} onChange={(e) => setDivisionCount(division, e.target.value)}>
+                            {TEAM_COUNT_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
+                          </select>
+
+                          <select style={styles.select} value={String(targetGames)} onChange={(e) => setDivisionGames(division, e.target.value)}>
+                            {GAME_COUNT_OPTIONS.map((value) => <option key={value} value={value}>{value} games</option>)}
+                          </select>
+
+                          <Badge>{odd ? "Odd" : "Even"}</Badge>
                         </div>
-                        <select style={styles.select} value={String(count)} onChange={(e) => setDivisionCount(division, e.target.value)}>
-                          {TEAM_COUNT_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
-                        </select>
-                        <select style={styles.select} value={String(targetGames)} onChange={(e) => setDivisionGames(division, e.target.value)}>
-                          {GAME_COUNT_OPTIONS.map((value) => <option key={value} value={value}>{value} games</option>)}
-                        </select>
-                        <Badge>{odd ? "Odd" : "Even"}</Badge>
+
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "70px 120px 140px 100px 140px 1fr",
+                              gap: 10,
+                              padding: "0 4px",
+                              fontSize: 12,
+                              fontWeight: 700,
+                              textTransform: "uppercase",
+                              color: "#64748b",
+                            }}
+                          >
+                            <div>Team</div>
+                            <div>Assoc.</div>
+                            <div>Custom</div>
+                            <div>No.</div>
+                            <div>Coach</div>
+                            <div>Preview</div>
+                          </div>
+
+                          {teamDetails.map((entry, idx) => {
+                            const associationCode = getAssociationCode(entry);
+                            const usedNumbers = getUsedAssociationTeamNumbers(
+                              { ...(config.divisionTeamDetails || {}), [division]: teamDetails },
+                              division,
+                              associationCode,
+                              idx
+                            );
+
+                            const previewName = buildFormattedTeamName(division, entry, idx + 1);
+
+                            return (
+                              <div
+                                key={`${division}-${idx}`}
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns: "70px 120px 140px 100px 140px 1fr",
+                                  gap: 10,
+                                  alignItems: "center",
+                                  border: "1px solid #e2e8f0",
+                                  borderRadius: 10,
+                                  padding: 10,
+                                }}
+                              >
+                                <div style={{ fontWeight: 700 }}>#{idx + 1}</div>
+
+                                <select
+                                  style={styles.select}
+                                  value={entry.association || ""}
+                                  onChange={(e) =>
+                                    updateDivisionTeamDetail(division, idx, {
+                                      association: e.target.value,
+                                      customAssociation: e.target.value === "CUSTOM" ? entry.customAssociation || "" : "",
+                                    })
+                                  }
+                                >
+                                  <option value="">Select</option>
+                                  {ASSOCIATION_OPTIONS.map((option) => (
+                                    <option key={option} value={option}>
+                                      {option === "CUSTOM" ? "Custom" : option}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <input
+                                  style={styles.input}
+                                  value={entry.customAssociation || ""}
+                                  disabled={entry.association !== "CUSTOM"}
+                                  placeholder="Custom code"
+                                  onChange={(e) =>
+                                    updateDivisionTeamDetail(division, idx, {
+                                      customAssociation: e.target.value.toUpperCase(),
+                                    })
+                                  }
+                                />
+
+                                <select
+                                  style={styles.select}
+                                  value={String(entry.associationTeamNumber || idx + 1)}
+                                  onChange={(e) =>
+                                    updateDivisionTeamDetail(division, idx, {
+                                      associationTeamNumber: e.target.value,
+                                    })
+                                  }
+                                >
+                                  {Array.from({ length: count }, (_, n) => String(n + 1)).map((num) => (
+                                    <option
+                                      key={num}
+                                      value={num}
+                                      disabled={associationCode && usedNumbers.includes(num)}
+                                    >
+                                      {num}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <input
+                                  style={styles.input}
+                                  value={entry.coachLastName || ""}
+                                  placeholder="Alvarez"
+                                  onChange={(e) =>
+                                    updateDivisionTeamDetail(division, idx, {
+                                      coachLastName: e.target.value,
+                                    })
+                                  }
+                                />
+
+                                <div style={{ fontWeight: 700, color: "#0f172a" }}>{previewName}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     );
                   })}
