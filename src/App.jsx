@@ -1014,7 +1014,7 @@ function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTea
   return null;
 }
 
-function placePlannedDivisionGames(divisionTeams, plan, openSlots, schedule, unscheduled, config) {
+function placePlannedDivisionGames(allTeams, divisionTeams, plan, openSlots, schedule, unscheduled, config) {
   const byId = Object.fromEntries(divisionTeams.map((team) => [team.id, team]));
 
   const orderedPlan = [...plan].sort((a, b) => {
@@ -1030,8 +1030,8 @@ function placePlannedDivisionGames(divisionTeams, plan, openSlots, schedule, uns
     if (!teamA || !teamB) continue;
     if (teamA.gamesScheduled >= teamA.targetGames || teamB.gamesScheduled >= teamB.targetGames) continue;
 
-    let slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, teams, false);
-    if (!slot) slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, teams, true);
+    let slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, false);
+    if (!slot) slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, true);
 
     if (!slot) {
       unscheduled.push({
@@ -1591,7 +1591,7 @@ function generateScheduleEngine(config) {
     const leftovers = divisionPlans[division] || [];
     if (!leftovers.length) continue;
     const divisionTeams = teams.filter((team) => team.division === division);
-    placePlannedDivisionGames(divisionTeams, leftovers, openSlots, schedule, unscheduled, config);
+    placePlannedDivisionGames(teams, divisionTeams, leftovers, openSlots, schedule, unscheduled, config);
     divisionPlans[division] = [];
   }
 
