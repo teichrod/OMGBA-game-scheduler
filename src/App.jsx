@@ -579,13 +579,15 @@ function violatesTimeVariety(team, slotTime) {
 }
 
 function canPairInSlot(teamA, teamB, slot, config, options = {}) {
-  const { ignoreTimeVariety = false } = options;
+  const { ignoreTimeVariety = false, ignoreRepeatLimit = false } = options;
 
   if (teamA.id === teamB.id || teamA.division !== teamB.division || slot.used) return false;
 
   const repeatLimit = getAllowedRepeatLimit(config, teamA.division);
-  if ((teamA.opponents[teamB.name] || 0) >= repeatLimit) return false;
-  if ((teamB.opponents[teamA.name] || 0) >= repeatLimit) return false;
+  if (!ignoreRepeatLimit) {
+    if ((teamA.opponents[teamB.name] || 0) >= repeatLimit) return false;
+    if ((teamB.opponents[teamA.name] || 0) >= repeatLimit) return false;
+  }
 
   const aOnDate = teamA.gamesByDate[slot.date] || 0;
   const bOnDate = teamB.gamesByDate[slot.date] || 0;
@@ -1111,7 +1113,9 @@ function canStillUseTeamOnDate(team, slot, config) {
   return true;
 }
 
-function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config) {
+function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, options = {}) {
+  const { emergencyMode = false } = options;
+
   const divisionTeams = allTeams.filter(
     (candidate) => candidate.division === team.division && candidate.id !== team.id
   );
@@ -1126,26 +1130,31 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config) {
 
       for (const opponent of divisionTeams) {
         if (!canStillUseTeamOnDate(opponent, slot, config)) continue;
-        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true })) continue;
+        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: emergencyMode })) continue;
 
         const teamNeed = getNeed(team);
         const oppNeed = getNeed(opponent);
         const repeatCount = team.opponents?.[opponent.name] || 0;
 
         let score = 0;
-        score += teamNeed * 1000;
-        score += oppNeed * 600;
+        score += teamNeed * 1400;
+        score += oppNeed * (emergencyMode ? 250 : 700);
 
-        if (oppNeed > 0) score += 400;
-        else score -= 120;
+        if (oppNeed > 0) score += 450;
+        else score += emergencyMode ? 150 : -120;
 
-        score -= repeatCount * 140;
+        score -= repeatCount * (emergencyMode ? 25 : 140);
         score -= (team.gamesByDate?.[slot.date] || 0) * 60;
         score -= (opponent.gamesByDate?.[slot.date] || 0) * 60;
 
         if (isEarlyTime(slot.time)) {
           score -= (team.earlyGames || 0) * 80;
           score -= (opponent.earlyGames || 0) * 80;
+        }
+
+        if (emergencyMode && isMorningTime(slot.time)) {
+          score += Math.max(0, (team.afternoonGames || 0) - (team.morningGames || 0)) * 20;
+          score += Math.max(0, (opponent.afternoonGames || 0) - (opponent.morningGames || 0)) * 20;
         }
 
         score -= group.groupIndex * 3;
@@ -1169,7 +1178,7 @@ function forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, co
 
     while (
       teams.some((team) => team.division === division && team.gamesScheduled < team.targetGames) &&
-      divisionSafety < 6000
+      divisionSafety < 9000
     ) {
       divisionSafety += 1;
 
@@ -1180,7 +1189,10 @@ function forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, co
       let placed = false;
 
       for (const team of needyTeams) {
-        const candidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config);
+        let candidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config, { emergencyMode: false });
+        if (!candidate) {
+          candidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config, { emergencyMode: true });
+        }
         if (!candidate) continue;
 
         scheduleGame(schedule, candidate.slot, candidate.teamA, candidate.teamB);
@@ -1195,7 +1207,7 @@ function forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, co
 
         unscheduled.push({
           matchup: `${division} forced completion`,
-          reason: "No legal slot/opponent found even in completion-first mode",
+          reason: "No legal slot/opponent found even after emergency rematch mode",
           suggestion: stuckTeams.join("; "),
         });
         break;
