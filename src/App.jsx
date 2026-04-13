@@ -1372,9 +1372,14 @@ function rebalanceScheduleTimes(schedule, config) {
   let nextSchedule = schedule.map((game) => ({ ...game }));
   let currentResult = buildResultFromSchedule(nextSchedule, config, []);
   let currentScore = schedulePenaltyScore(currentResult, config);
-  const maxIterations = 900;
+  const allOpenSlots = buildOpenSlots(config);
+  const maxIterations = 80;
+  const startedAt = Date.now();
+  const maxMillis = 2500;
 
   for (let iter = 0; iter < maxIterations; iter += 1) {
+    if (Date.now() - startedAt > maxMillis) break;
+
     const teamMap = makeTeamMapFromSchedule(nextSchedule, config);
     const problemTeams = Object.values(teamMap)
       .filter((team) => teamIssueSeverity(team, config) > 0)
@@ -1385,11 +1390,15 @@ function rebalanceScheduleTimes(schedule, config) {
     let bestCandidateSchedule = null;
     let bestCandidateScore = currentScore;
 
-    for (const team of problemTeams.slice(0, 8)) {
-      const targetedGames = getTargetedGamesForRebalance(nextSchedule, team).slice(0, 8);
+    for (const team of problemTeams.slice(0, 4)) {
+      if (Date.now() - startedAt > maxMillis) break;
+      const targetedGames = getTargetedGamesForRebalance(nextSchedule, team).slice(0, 4);
       for (const gameA of targetedGames) {
-        const emptyTargets = buildOpenSlots(config)
-          .filter((slot) => !nextSchedule.some((game) => game.date === slot.date && game.time === slot.time && game.court === slot.court))
+        if (Date.now() - startedAt > maxMillis) break;
+
+        const occupiedKeys = new Set(nextSchedule.map((game) => `${game.date}|${game.time}|${game.court}`));
+        const emptyTargets = allOpenSlots
+          .filter((slot) => !occupiedKeys.has(`${slot.date}|${slot.time}|${slot.court}`))
           .sort((a, b) => {
             const aBias = (shouldPrioritizeMorning(team) && isMorningTime(a.time) ? -30 : 0) + (a.time === gameA.time ? 20 : 0);
             const bBias = (shouldPrioritizeMorning(team) && isMorningTime(b.time) ? -30 : 0) + (b.time === gameA.time ? 20 : 0);
@@ -1400,19 +1409,19 @@ function rebalanceScheduleTimes(schedule, config) {
             if (timeDiff !== 0) return timeDiff;
             return a.court.localeCompare(b.court);
           })
-          .slice(0, 30);
+          .slice(0, 10);
 
         for (const target of emptyTargets) {
           const message = validateManualMove(nextSchedule.filter((g) => g !== gameA), { ...gameA }, target, config);
           if (message) continue;
           const candidateSchedule = nextSchedule.map((game) =>
-            game === gameA ? { ...game, date: target.date, time: target.time, court: target.court } : { ...game }
+            game === gameA ? { ...game, date: target.date, time: target.time, court: target.court } : game
           );
           const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
           const candidateScore = schedulePenaltyScore(candidateResult, config);
           if (candidateResult.auditSummary.missingTeams === 0 && candidateScore < bestCandidateScore) {
             bestCandidateScore = candidateScore;
-            bestCandidateSchedule = candidateSchedule;
+            bestCandidateSchedule = candidateSchedule.map((game) => ({ ...game }));
           }
         }
 
@@ -1424,7 +1433,7 @@ function rebalanceScheduleTimes(schedule, config) {
             if (aMorning !== bMorning) return aMorning - bMorning;
             return 0;
           })
-          .slice(0, 140);
+          .slice(0, 30);
 
         for (const gameB of swapPool) {
           const swapMessage = validateManualSwap(nextSchedule, gameA, gameB, config);
@@ -1432,13 +1441,13 @@ function rebalanceScheduleTimes(schedule, config) {
           const candidateSchedule = nextSchedule.map((game) => {
             if (game === gameA) return { ...game, date: gameB.date, time: gameB.time, court: gameB.court };
             if (game === gameB) return { ...game, date: gameA.date, time: gameA.time, court: gameA.court };
-            return { ...game };
+            return game;
           });
           const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
           const candidateScore = schedulePenaltyScore(candidateResult, config);
           if (candidateResult.auditSummary.missingTeams === 0 && candidateScore < bestCandidateScore) {
             bestCandidateScore = candidateScore;
-            bestCandidateSchedule = candidateSchedule;
+            bestCandidateSchedule = candidateSchedule.map((game) => ({ ...game }));
           }
         }
       }
