@@ -1954,6 +1954,28 @@ function exportCsv(filename, rows) {
   document.body.removeChild(link);
 }
 
+const SETUP_STORAGE_KEY = "youth-sports-scheduler-setups-v1";
+
+function loadSavedSetupsFromStorage() {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(SETUP_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((entry) => entry && entry.name && entry.config)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  } catch {
+    return [];
+  }
+}
+
+function saveSavedSetupsToStorage(setups) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(SETUP_STORAGE_KEY, JSON.stringify(setups));
+}
+
 async function savePublishedPayload(payload) {
   try {
     const res = await fetch("/api/published-schedule", {
@@ -2045,6 +2067,9 @@ export default function App() {
   const [adminScheduleDate, setAdminScheduleDate] = useState("");
   const [dragState, setDragState] = useState(null);
   const [gridNotice, setGridNotice] = useState("");
+  const [savedSetupName, setSavedSetupName] = useState("");
+  const [savedSetups, setSavedSetups] = useState([]);
+  const [selectedSavedSetup, setSelectedSavedSetup] = useState("");
 
   useEffect(() => {
     async function loadPublicSchedule() {
@@ -2059,6 +2084,16 @@ export default function App() {
       }
     }
     loadPublicSchedule();
+  }, [isPublicMode]);
+
+  useEffect(() => {
+    if (!isPublicMode) {
+      const setups = loadSavedSetupsFromStorage();
+      setSavedSetups(setups);
+      if (!selectedSavedSetup && setups.length > 0) {
+        setSelectedSavedSetup(setups[0].name);
+      }
+    }
   }, [isPublicMode]);
 
   useEffect(() => {
@@ -2240,6 +2275,69 @@ export default function App() {
     setDragState(null);
   }
 
+  function saveCurrentSetup() {
+    if (isPublicMode) return;
+    const trimmed = String(savedSetupName || "").trim();
+    if (!trimmed) {
+      setPublishNotice("Enter a setup name first.");
+      return;
+    }
+
+    const nextEntry = {
+      name: trimmed,
+      config,
+      updatedAt: new Date().toLocaleString(),
+    };
+
+    const nextSetups = [
+      ...savedSetups.filter((entry) => entry.name !== trimmed),
+      nextEntry,
+    ].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+    saveSavedSetupsToStorage(nextSetups);
+    setSavedSetups(nextSetups);
+    setSelectedSavedSetup(trimmed);
+    setPublishNotice(`Setup saved: ${trimmed}`);
+  }
+
+  function loadSelectedSetup() {
+    if (isPublicMode) return;
+    const target = savedSetups.find((entry) => entry.name === selectedSavedSetup);
+    if (!target) {
+      setPublishNotice("Choose a saved setup first.");
+      return;
+    }
+
+    setConfig(target.config);
+    setResult(null);
+    setAdminScheduleDate(
+      target.config?.saturdays?.find((entry) => entry.enabled)?.date ||
+      target.config?.saturdays?.[0]?.date ||
+      ""
+    );
+    setDragState(null);
+    setGridNotice("");
+    setSavedSetupName(target.name);
+    setPublishNotice(`Setup loaded: ${target.name}`);
+    setActiveTab("setup");
+  }
+
+  function deleteSelectedSetup() {
+    if (isPublicMode) return;
+    if (!selectedSavedSetup) {
+      setPublishNotice("Choose a saved setup first.");
+      return;
+    }
+
+    const nextSetups = savedSetups.filter((entry) => entry.name !== selectedSavedSetup);
+    saveSavedSetupsToStorage(nextSetups);
+    setSavedSetups(nextSetups);
+    const nextName = nextSetups[0]?.name || "";
+    setSelectedSavedSetup(nextName);
+    if (savedSetupName === selectedSavedSetup) setSavedSetupName("");
+    setPublishNotice(`Setup deleted: ${selectedSavedSetup}`);
+  }
+
   function resetAll() {
     setConfig(createInitialState());
     setResult(null);
@@ -2251,6 +2349,7 @@ export default function App() {
     setAdminScheduleDate("");
     setDragState(null);
     setGridNotice("");
+    setSavedSetupName("");
   }
 
   function runScheduler() {
@@ -2415,6 +2514,49 @@ export default function App() {
                     />
                     <span style={{ fontWeight: 600, fontSize: 14 }}>Allow doubleheaders for all divisions</span>
                   </label>
+                </div>
+              </Card>
+
+              <Card>
+                <SectionTitle>Save / Load Setup</SectionTitle>
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div>
+                    <label style={styles.smallLabel}>Setup name</label>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 10 }}>
+                      <input
+                        style={styles.input}
+                        value={savedSetupName}
+                        onChange={(e) => setSavedSetupName(e.target.value)}
+                        placeholder="Example: 2026 default gyms"
+                      />
+                      <button style={styles.button} onClick={saveCurrentSetup}>Save Setup</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={styles.smallLabel}>Saved setups</label>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto auto", gap: 10 }}>
+                      <select
+                        style={styles.select}
+                        value={selectedSavedSetup || ""}
+                        onChange={(e) => {
+                          setSelectedSavedSetup(e.target.value);
+                          if (e.target.value) setSavedSetupName(e.target.value);
+                        }}
+                      >
+                        <option value="">Select a saved setup</option>
+                        {savedSetups.map((entry) => (
+                          <option key={entry.name} value={entry.name}>
+                            {entry.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button style={styles.button} onClick={loadSelectedSetup}>Load Setup</button>
+                      <button style={styles.dangerButton} onClick={deleteSelectedSetup}>Delete</button>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 13, color: "#64748b" }}>
+                    Saves your admin configuration in this browser: season year, Saturdays, courts, start times, division team counts, game counts, and rule settings.
+                  </div>
                 </div>
               </Card>
 
