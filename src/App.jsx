@@ -877,7 +877,7 @@ function getAmPmCorrectionScore(teamA, teamB, slot) {
   return score;
 }
 
-function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, options = {}) {
+function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, allTeams, options = {}) {
   const { ignoreTimeVariety = false } = options;
   const byId = Object.fromEntries(divisionTeams.map((team) => [team.id, team]));
   let bestIndex = -1;
@@ -941,7 +941,14 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
         const pendingPlan = divisionPlans[division] || [];
         if (!pendingPlan.length) continue;
 
-        let chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, { ignoreTimeVariety: false });
+        let chosen = choosePlannedMatchupForSlot(
+  divisionTeamMap[division],
+  pendingPlan,
+  slot,
+  config,
+  teams,
+  { ignoreTimeVariety: false }
+);
         if (!chosen) {
           chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, { ignoreTimeVariety: true });
         }
@@ -974,7 +981,7 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
   }
 }
 
-function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allowIgnoreTimeVariety = false) {
+function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, allowIgnoreTimeVariety = false) {
   const slotGroups = buildOrderedSlotGroups(openSlots);
   let best = null;
   let bestScore = Infinity;
