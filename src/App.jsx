@@ -1539,6 +1539,7 @@ function generateScheduleEngine(config) {
     improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
     improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
     improvedSchedule = rebalanceTowardFinalSaturday(improvedSchedule, config);
+    improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
   }
 
   improvedSchedule.sort((a, b) => {
