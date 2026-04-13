@@ -299,7 +299,7 @@ const styles = {
   },
   grid2: {
     display: "grid",
-    gridTemplateColumns: "minmax(320px, 360px) minmax(0, 1fr)",
+    gridTemplateColumns: "1fr 1fr",
     gap: 24,
   },
   statsGrid: {
@@ -2918,8 +2918,8 @@ export default function App() {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "56px 100px 80px 120px minmax(180px, 1fr)",
-                              gap: 10,
+                              gridTemplateColumns: "50px 90px 80px 120px 1fr",
+                              gap: 6,
                               padding: "0 4px",
                               fontSize: 12,
                               fontWeight: 700,
@@ -2950,12 +2950,12 @@ export default function App() {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "56px 100px 80px 120px minmax(180px, 1fr)",
-                                  gap: 10,
+                                  gridTemplateColumns: "50px 90px 80px 120px 1fr",
+                                  gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
                                   borderRadius: 10,
-                                  padding: 10,
+                                  padding: "6px 8px",
                                 }}
                               >
                                 <div style={{ fontWeight: 700 }}>#{idx + 1}</div>
@@ -3000,7 +3000,7 @@ export default function App() {
                                 <input
                                   style={styles.input}
                                   value={entry.coachLastName || ""}
-                                  placeholder="Alvarez"
+                                  placeholder=""
                                   onChange={(e) =>
                                     updateDivisionTeamDetail(division, idx, {
                                       coachLastName: e.target.value,
@@ -3008,7 +3008,7 @@ export default function App() {
                                   }
                                 />
 
-                                <div style={{ fontWeight: 700, color: "#0f172a", wordBreak: "break-word" }}>{previewName}</div>
+                                <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{previewName}</div>
                               </div>
                             );
                           })}
