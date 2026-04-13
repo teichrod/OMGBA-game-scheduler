@@ -1639,6 +1639,70 @@ function getGameAtCell(result, date, time, court) {
   return result?.schedule?.find((entry) => entry.date === date && entry.time === time && entry.court === court) || null;
 }
 
+
+function compareSlotLike(a, b) {
+  const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
+  if (dateDiff !== 0) return dateDiff;
+  const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
+  if (timeDiff !== 0) return timeDiff;
+  return a.court.localeCompare(b.court);
+}
+
+function compactScheduleEarlier(schedule, config) {
+  let nextSchedule = schedule.map((game) => ({ ...game }));
+  const allSlots = buildOpenSlots(config);
+  const enabledDates = config.saturdays.filter((entry) => entry.enabled).map((entry) => entry.date);
+
+  for (const date of enabledDates) {
+    let changed = true;
+    let safety = 0;
+
+    while (changed && safety < 200) {
+      changed = false;
+      safety += 1;
+
+      const occupiedKeys = new Set(
+        nextSchedule
+          .filter((game) => game.date === date)
+          .map((game) => `${game.date}|${game.time}|${game.court}`)
+      );
+
+      const freeSlots = allSlots
+        .filter((slot) => slot.date === date && !occupiedKeys.has(`${slot.date}|${slot.time}|${slot.court}`))
+        .sort(compareSlotLike);
+
+      if (!freeSlots.length) break;
+
+      for (const target of freeSlots) {
+        const laterGames = nextSchedule
+          .filter(
+            (game) =>
+              game.date === date &&
+              (getTimeIndex(game.time) > getTimeIndex(target.time) ||
+                (game.time === target.time && game.court.localeCompare(target.court) > 0))
+          )
+          .sort(compareSlotLike);
+
+        let moved = false;
+        for (const game of laterGames) {
+          const message = validateManualMove(nextSchedule.filter((g) => g !== game), { ...game }, target, config);
+          if (message) continue;
+          nextSchedule = nextSchedule.map((g) =>
+            g === game ? { ...g, date: target.date, time: target.time, court: target.court } : g
+          );
+          changed = true;
+          moved = true;
+          break;
+        }
+
+        if (moved) break;
+      }
+    }
+  }
+
+  return nextSchedule.sort(compareSlotLike);
+}
+
 function validateManualMove(schedule, gameToMove, target, config) {
   const targetOccupied = schedule.some(
     (game) => game !== gameToMove && game.date === target.date && game.time === target.time && game.court === target.court
