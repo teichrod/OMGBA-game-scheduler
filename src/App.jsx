@@ -287,7 +287,6 @@ function getRotatedDivisionOrder(dateIndex) {
   return [...base.slice(shift), ...base.slice(0, shift)];
 }
 
-Then when placing game
 function SectionTitle({ icon: Icon, children }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 20, fontWeight: 700, marginBottom: 14 }}>
