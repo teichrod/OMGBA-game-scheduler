@@ -879,7 +879,7 @@ function getAmPmCorrectionScore(teamA, teamB, slot) {
   return score;
 }
 
-function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, options = {}) {
+function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, allTeams, options = {}) {
   const { ignoreTimeVariety = false } = options;
   const byId = Object.fromEntries(divisionTeams.map((team) => [team.id, team]));
   let bestIndex = -1;
@@ -943,9 +943,9 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
         const pendingPlan = divisionPlans[division] || [];
         if (!pendingPlan.length) continue;
 
-        let chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, { ignoreTimeVariety: false });
+        let chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, teams, { ignoreTimeVariety: false });
         if (!chosen) {
-          chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, { ignoreTimeVariety: true });
+          chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, teams, { ignoreTimeVariety: true });
         }
         if (!chosen) continue;
 
@@ -976,7 +976,7 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
   }
 }
 
-function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allowIgnoreTimeVariety = false) {
+function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, allowIgnoreTimeVariety = false) {
   const slotGroups = buildOrderedSlotGroups(openSlots);
   let best = null;
   let bestScore = Infinity;
@@ -1030,8 +1030,8 @@ function placePlannedDivisionGames(divisionTeams, plan, openSlots, schedule, uns
     if (!teamA || !teamB) continue;
     if (teamA.gamesScheduled >= teamA.targetGames || teamB.gamesScheduled >= teamB.targetGames) continue;
 
-    let slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, false);
-    if (!slot) slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, true);
+    let slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, teams, false);
+    if (!slot) slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, teams, true);
 
     if (!slot) {
       unscheduled.push({
