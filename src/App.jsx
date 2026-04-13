@@ -354,9 +354,91 @@ function createInitialState() {
       "5th/6th Girls": 8,
       "7th/8th Girls": 8,
     },
+    coachConflicts: [],
+    teamAvoidRules: [],
     saturdays,
     dateCourtSettings: buildDateCourtSettings(saturdays.map((entry) => entry.date)),
   };
+}
+
+function createRowId(prefix = "row") {
+  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function buildTeamNamesFromConfig(config) {
+  const names = [];
+  for (const division of DIVISIONS) {
+    const count = Number(config?.divisions?.[division] || 0);
+    for (let i = 1; i <= count; i += 1) {
+      names.push(`${division} Team ${i}`);
+    }
+  }
+  return names;
+}
+
+function normalizeConfig(config) {
+  const initial = createInitialState();
+  const next = {
+    ...initial,
+    ...(config || {}),
+    divisions: { ...initial.divisions, ...(config?.divisions || {}) },
+    divisionGames: { ...initial.divisionGames, ...(config?.divisionGames || {}) },
+    timeSlots: Array.isArray(config?.timeSlots) && config.timeSlots.length ? config.timeSlots : initial.timeSlots,
+    saturdays: Array.isArray(config?.saturdays) && config.saturdays.length ? config.saturdays : initial.saturdays,
+  };
+  next.dateCourtSettings = buildDateCourtSettings(next.saturdays.map((entry) => entry.date), config?.dateCourtSettings || initial.dateCourtSettings);
+  next.coachConflicts = Array.isArray(config?.coachConflicts)
+    ? config.coachConflicts.map((entry) => ({ id: entry?.id || createRowId('conflict'), teamA: entry?.teamA || '', teamB: entry?.teamB || '' }))
+    : [];
+  next.teamAvoidRules = Array.isArray(config?.teamAvoidRules)
+    ? config.teamAvoidRules.map((entry) => ({
+        id: entry?.id || createRowId('avoid'),
+        team: entry?.team || '',
+        blockedDates: Array.isArray(entry?.blockedDates) ? entry.blockedDates : [],
+        blockedTimes: Array.isArray(entry?.blockedTimes) ? entry.blockedTimes : [],
+      }))
+    : [];
+  if (!next.saturdays.some((entry) => entry.date === next.selectedDateForCourts)) {
+    next.selectedDateForCourts = next.saturdays[0]?.date || '';
+  }
+  if (next.fifthBoysDoubleheaderDate && !next.saturdays.some((entry) => entry.date === next.fifthBoysDoubleheaderDate)) {
+    next.fifthBoysDoubleheaderDate = '';
+  }
+  return next;
+}
+
+function getConflictNamesForTeam(config, teamName) {
+  const pairs = Array.isArray(config?.coachConflicts) ? config.coachConflicts : [];
+  const conflicts = new Set();
+  for (const entry of pairs) {
+    const a = entry?.teamA || '';
+    const b = entry?.teamB || '';
+    if (!a || !b) continue;
+    if (a === teamName) conflicts.add(b);
+    if (b === teamName) conflicts.add(a);
+  }
+  return Array.from(conflicts);
+}
+
+function teamAvoidsSlot(config, teamName, slot) {
+  const rules = Array.isArray(config?.teamAvoidRules) ? config.teamAvoidRules : [];
+  return rules.some((rule) => {
+    if ((rule?.team || '') !== teamName) return false;
+    const blockedDates = Array.isArray(rule?.blockedDates) ? rule.blockedDates : [];
+    const blockedTimes = Array.isArray(rule?.blockedTimes) ? rule.blockedTimes : [];
+    return blockedDates.includes(slot.date) || blockedTimes.includes(slot.time);
+  });
+}
+
+function hasSimultaneousConflict(teamName, slot, allTeams, config, opponentNames = []) {
+  const conflictNames = getConflictNamesForTeam(config, teamName);
+  if (!conflictNames.length) return false;
+  const ignore = new Set(opponentNames.filter(Boolean));
+  return allTeams.some((team) => {
+    if (!conflictNames.includes(team.name)) return false;
+    if (ignore.has(team.name)) return false;
+    return (team.scheduledGames || []).some((game) => game.date === slot.date && game.time === slot.time);
+  });
 }
 
 function isEarlyTime(time) {
@@ -579,9 +661,14 @@ function violatesTimeVariety(team, slotTime) {
 }
 
 function canPairInSlot(teamA, teamB, slot, config, options = {}) {
-  const { ignoreTimeVariety = false, ignoreRepeatLimit = false } = options;
+  const { ignoreTimeVariety = false, ignoreRepeatLimit = false, allTeams = [] } = options;
 
   if (teamA.id === teamB.id || teamA.division !== teamB.division || slot.used) return false;
+
+  if (teamAvoidsSlot(config, teamA.name, slot)) return false;
+  if (teamAvoidsSlot(config, teamB.name, slot)) return false;
+  if (hasSimultaneousConflict(teamA.name, slot, allTeams, config, [teamB.name])) return false;
+  if (hasSimultaneousConflict(teamB.name, slot, allTeams, config, [teamA.name])) return false;
 
   const repeatLimit = getAllowedRepeatLimit(config, teamA.division);
   if (!ignoreRepeatLimit) {
@@ -823,7 +910,7 @@ function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, o
     const teamB = byId[item.teamBId];
     if (!teamA || !teamB) continue;
     if (teamA.gamesScheduled >= teamA.targetGames || teamB.gamesScheduled >= teamB.targetGames) continue;
-    if (!canPairInSlot(teamA, teamB, slot, config, { ignoreTimeVariety })) continue;
+    if (!canPairInSlot(teamA, teamB, slot, config, { ignoreTimeVariety, allTeams })) continue;
 
     const needScore = (getNeed(teamA) * 1200) + (getNeed(teamB) * 1200);
     const repeatPenalty = ((teamA.opponents[teamB.name] || 0) + (teamB.opponents[teamA.name] || 0)) * 180;
@@ -915,7 +1002,7 @@ function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allowI
 
   for (const group of slotGroups) {
     for (const slot of group.slots) {
-      if (!canPairInSlot(teamA, teamB, slot, config, { ignoreTimeVariety: allowIgnoreTimeVariety })) continue;
+      if (!canPairInSlot(teamA, teamB, slot, config, { ignoreTimeVariety: allowIgnoreTimeVariety, allTeams })) continue;
 
       let penalty = 0;
       penalty += slotPenalty(teamA, teamB, slot, config) * (allowIgnoreTimeVariety ? 0.15 : 0.35);
@@ -1059,7 +1146,7 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
       const constraintScore = (Math.min(10, remainingOptionsA) * 20) + (Math.min(10, remainingOptionsB) * 20);
 
       for (const slot of group.slots) {
-        if (!canPairInSlot(team, opponent, slot, config)) continue;
+        if (!canPairInSlot(team, opponent, slot, config, { allTeams })) continue;
 
         const teamNeed = getNeed(team);
         const oppNeed = getNeed(opponent);
@@ -1164,7 +1251,7 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
 
       for (const opponent of divisionTeams) {
         if (!canStillUseTeamOnDate(opponent, slot, config)) continue;
-        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: emergencyMode })) continue;
+        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: emergencyMode, allTeams })) continue;
 
         const teamNeed = getNeed(team);
         const oppNeed = getNeed(opponent);
@@ -1897,6 +1984,12 @@ function validateManualMove(schedule, gameToMove, target, config) {
   }
 
   const affectedTeams = [gameToMove.home, gameToMove.away];
+
+  for (const teamName of affectedTeams) {
+    if (teamAvoidsSlot(config, teamName, target)) {
+      return `${teamName} is set to avoid ${target.date}${teamAvoidsSlot(config, teamName, { date: target.date, time: '__none__' }) ? '' : ` at ${target.time}`}.`;
+    }
+  }
   for (const teamName of affectedTeams) {
     const teamGames = schedule.filter(
       (game) =>
@@ -1907,6 +2000,11 @@ function validateManualMove(schedule, gameToMove, target, config) {
     const targetDateGames = teamGames.filter((game) => game.date === target.date);
     if (targetDateGames.some((game) => game.time === target.time)) {
       return `${teamName} already has a game at ${target.time}.`;
+    }
+
+    const conflictNames = getConflictNamesForTeam(config, teamName);
+    if (conflictNames.some((conflictName) => schedule.some((game) => game !== gameToMove && (game.home === conflictName || game.away === conflictName) && game.date === target.date && game.time === target.time))) {
+      return `${teamName} has a coaching conflict at ${target.date} ${target.time}.`;
     }
 
     if (targetDateGames.length >= 2) {
@@ -2057,7 +2155,7 @@ export default function App() {
   const initialDivisionParam = params.get("division") || "all";
   const initialTeamParam = params.get("team") || "all";
 
-  const [config, setConfig] = useState(createInitialState());
+  const [config, setConfig] = useState(() => normalizeConfig(createInitialState()));
   const [result, setResult] = useState(null);
   const [activeTab, setActiveTab] = useState(isPublicMode ? "schedule" : "setup");
   const [scheduleDivisionFilter, setScheduleDivisionFilter] = useState(initialDivisionParam);
@@ -2123,6 +2221,7 @@ export default function App() {
   );
   const selfChecks = useMemo(() => runSelfChecks(), []);
   const highlightedIssues = result?.auditRows.filter((row) => row.issues.length > 0) ?? [];
+  const teamOptions = useMemo(() => buildTeamNamesFromConfig(config), [config]);
 
   const availableScheduleTeams = useMemo(() => {
     if (!result) return [];
@@ -2175,6 +2274,80 @@ export default function App() {
     setConfig((prev) => ({ ...prev, divisionGames: { ...prev.divisionGames, [division]: Number(value) } }));
   }
 
+  function addCoachConflict() {
+    setConfig((prev) => ({
+      ...prev,
+      coachConflicts: [...(prev.coachConflicts || []), { id: createRowId('conflict'), teamA: '', teamB: '' }],
+    }));
+  }
+
+  function updateCoachConflict(conflictId, patch) {
+    setConfig((prev) => ({
+      ...prev,
+      coachConflicts: (prev.coachConflicts || []).map((entry) => (entry.id === conflictId ? { ...entry, ...patch } : entry)),
+    }));
+  }
+
+  function removeCoachConflict(conflictId) {
+    setConfig((prev) => ({
+      ...prev,
+      coachConflicts: (prev.coachConflicts || []).filter((entry) => entry.id !== conflictId),
+    }));
+  }
+
+  function addTeamAvoidRule() {
+    setConfig((prev) => ({
+      ...prev,
+      teamAvoidRules: [...(prev.teamAvoidRules || []), { id: createRowId('avoid'), team: '', blockedDates: [], blockedTimes: [] }],
+    }));
+  }
+
+  function updateTeamAvoidRule(ruleId, patch) {
+    setConfig((prev) => ({
+      ...prev,
+      teamAvoidRules: (prev.teamAvoidRules || []).map((entry) => (entry.id === ruleId ? { ...entry, ...patch } : entry)),
+    }));
+  }
+
+  function toggleAvoidRuleDate(ruleId, date) {
+    setConfig((prev) => ({
+      ...prev,
+      teamAvoidRules: (prev.teamAvoidRules || []).map((entry) => {
+        if (entry.id !== ruleId) return entry;
+        const blockedDates = Array.isArray(entry.blockedDates) ? entry.blockedDates : [];
+        return {
+          ...entry,
+          blockedDates: blockedDates.includes(date)
+            ? blockedDates.filter((value) => value !== date)
+            : [...blockedDates, date],
+        };
+      }),
+    }));
+  }
+
+  function toggleAvoidRuleTime(ruleId, time) {
+    setConfig((prev) => ({
+      ...prev,
+      teamAvoidRules: (prev.teamAvoidRules || []).map((entry) => {
+        if (entry.id !== ruleId) return entry;
+        const blockedTimes = Array.isArray(entry.blockedTimes) ? entry.blockedTimes : [];
+        return {
+          ...entry,
+          blockedTimes: blockedTimes.includes(time)
+            ? blockedTimes.filter((value) => value !== time)
+            : [...blockedTimes, time],
+        };
+      }),
+    }));
+  }
+
+  function removeTeamAvoidRule(ruleId) {
+    setConfig((prev) => ({
+      ...prev,
+      teamAvoidRules: (prev.teamAvoidRules || []).filter((entry) => entry.id !== ruleId),
+    }));
+  }
+
   function toggleSaturday(index, enabled) {
     setConfig((prev) => ({
       ...prev,
@@ -2193,6 +2366,10 @@ export default function App() {
         dateCourtSettings: nextDateCourtSettings,
         selectedDateForCourts: dates.includes(prev.selectedDateForCourts) ? prev.selectedDateForCourts : dates[0] || "",
         fifthBoysDoubleheaderDate: dates.includes(prev.fifthBoysDoubleheaderDate) ? prev.fifthBoysDoubleheaderDate : "",
+        teamAvoidRules: (prev.teamAvoidRules || []).map((entry) => ({
+          ...entry,
+          blockedDates: (entry.blockedDates || []).filter((value) => dates.includes(value)),
+        })),
       };
     });
   }
@@ -2208,13 +2385,18 @@ export default function App() {
     const seasonYear = Number(value);
     setConfig((prev) => {
       const saturdays = getSeasonSaturdays(seasonYear).map((date) => ({ date, enabled: false }));
+      const validDates = saturdays.map((entry) => entry.date);
       return {
         ...prev,
         seasonYear,
         saturdays,
         selectedDateForCourts: saturdays[0]?.date || "",
         fifthBoysDoubleheaderDate: "",
-        dateCourtSettings: buildDateCourtSettings(saturdays.map((entry) => entry.date), prev.dateCourtSettings),
+        dateCourtSettings: buildDateCourtSettings(validDates, prev.dateCourtSettings),
+        teamAvoidRules: (prev.teamAvoidRules || []).map((entry) => ({
+          ...entry,
+          blockedDates: (entry.blockedDates || []).filter((value) => validDates.includes(value)),
+        })),
       };
     });
   }
@@ -2285,7 +2467,7 @@ export default function App() {
 
     const nextEntry = {
       name: trimmed,
-      config,
+      config: normalizeConfig(config),
       updatedAt: new Date().toLocaleString(),
     };
 
@@ -2308,7 +2490,7 @@ export default function App() {
       return;
     }
 
-    setConfig(target.config);
+    setConfig(normalizeConfig(target.config));
     setResult(null);
     setAdminScheduleDate(
       target.config?.saturdays?.find((entry) => entry.enabled)?.date ||
@@ -2339,7 +2521,7 @@ export default function App() {
   }
 
   function resetAll() {
-    setConfig(createInitialState());
+    setConfig(normalizeConfig(createInitialState()));
     setResult(null);
     setScheduleDivisionFilter("all");
     setScheduleTeamFilter("all");
@@ -2555,7 +2737,86 @@ export default function App() {
                     </div>
                   </div>
                   <div style={{ fontSize: 13, color: "#64748b" }}>
-                    Saves your admin configuration in this browser: season year, Saturdays, courts, start times, division team counts, game counts, and rule settings.
+                    Saves your admin configuration in this browser: season year, Saturdays, courts, start times, division team counts, game counts, rule settings, coaching conflicts, and team blackout rules.
+                  </div>
+                </div>
+              </Card>
+
+              <Card>
+                <SectionTitle>Coaching Conflicts</SectionTitle>
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div style={{ fontSize: 13, color: "#64748b" }}>
+                    Pick teams that cannot play at the same time because they share a coach or another admin conflict.
+                  </div>
+                  {(config.coachConflicts || []).map((entry) => (
+                    <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) auto", gap: 10, alignItems: "end", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                      <div>
+                        <label style={styles.smallLabel}>Team A</label>
+                        <select style={styles.select} value={entry.teamA || ""} onChange={(e) => updateCoachConflict(entry.id, { teamA: e.target.value })}>
+                          <option value="">Select team</option>
+                          {teamOptions.map((teamName) => <option key={teamName} value={teamName}>{teamName}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={styles.smallLabel}>Team B</label>
+                        <select style={styles.select} value={entry.teamB || ""} onChange={(e) => updateCoachConflict(entry.id, { teamB: e.target.value })}>
+                          <option value="">Select team</option>
+                          {teamOptions.map((teamName) => <option key={teamName} value={teamName}>{teamName}</option>)}
+                        </select>
+                      </div>
+                      <button style={styles.dangerButton} onClick={() => removeCoachConflict(entry.id)}>Delete</button>
+                    </div>
+                  ))}
+                  <div>
+                    <button style={styles.button} onClick={addCoachConflict}>Add Coaching Conflict</button>
+                  </div>
+                </div>
+              </Card>
+
+              <Card>
+                <SectionTitle>Team Blackouts</SectionTitle>
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div style={{ fontSize: 13, color: "#64748b" }}>
+                    Set dates or start times that a specific team should avoid. These restrictions are saved with the setup and respected by scheduling and manual moves.
+                  </div>
+                  {(config.teamAvoidRules || []).map((entry) => (
+                    <div key={entry.id} style={{ display: "grid", gap: 12, border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 10, alignItems: "end" }}>
+                        <div>
+                          <label style={styles.smallLabel}>Team</label>
+                          <select style={styles.select} value={entry.team || ""} onChange={(e) => updateTeamAvoidRule(entry.id, { team: e.target.value })}>
+                            <option value="">Select team</option>
+                            {teamOptions.map((teamName) => <option key={teamName} value={teamName}>{teamName}</option>)}
+                          </select>
+                        </div>
+                        <button style={styles.dangerButton} onClick={() => removeTeamAvoidRule(entry.id)}>Delete</button>
+                      </div>
+                      <div>
+                        <label style={styles.smallLabel}>Avoid dates</label>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 8 }}>
+                          {config.saturdays.map((dateEntry) => (
+                            <label key={`${entry.id}-${dateEntry.date}`} style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #e2e8f0", borderRadius: 10, padding: 8, fontSize: 13 }}>
+                              <input type="checkbox" checked={(entry.blockedDates || []).includes(dateEntry.date)} onChange={() => toggleAvoidRuleDate(entry.id, dateEntry.date)} />
+                              {dateEntry.date}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label style={styles.smallLabel}>Avoid times</label>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr))", gap: 8 }}>
+                          {DEFAULT_TIMES.map((time) => (
+                            <label key={`${entry.id}-${time}`} style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #e2e8f0", borderRadius: 10, padding: 8, fontSize: 13 }}>
+                              <input type="checkbox" checked={(entry.blockedTimes || []).includes(time)} onChange={() => toggleAvoidRuleTime(entry.id, time)} />
+                              {time}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div>
+                    <button style={styles.button} onClick={addTeamAvoidRule}>Add Team Blackout Rule</button>
                   </div>
                 </div>
               </Card>
