@@ -1541,7 +1541,8 @@ function schedulePenaltyScore(result, config) {
   return (
     (result.auditSummary?.missingTeams || 0) * 1000000 +
     (result.auditSummary?.earlyViolations || 0) * 150000 +
-    (result.auditSummary?.weeklyMinimumIssues || 0) * 90000 +
+    (result.auditSummary?.weeklyMinimumDeficit || 0) * 120000 +
+    (result.auditSummary?.weeklyMinimumIssues || 0) * 30000 +
     (result.auditSummary?.homeAwayIssues || 0) * 30000 +
     (result.auditSummary?.timeVarietyIssues || 0) * 12000 +
     severity +
@@ -1767,6 +1768,7 @@ function generateScheduleEngine(config) {
   }));
 
   const weeklyMinimumViolations = getWeeklyMinimumViolations(improvedSchedule, config);
+  const weeklyMinimumDeficit = weeklyMinimumViolations.reduce((sum, entry) => sum + (entry.deficit || 0), 0);
 
   const auditSummary = {
     totalGames: improvedSchedule.length,
@@ -1777,6 +1779,7 @@ function generateScheduleEngine(config) {
     missingTeams: auditRows.filter((row) => row.games !== row.target).length,
     timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
     weeklyMinimumIssues: weeklyMinimumViolations.length,
+    weeklyMinimumDeficit,
     enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
     enabledCourts: Object.values(config.dateCourtSettings).reduce(
       (sum, courts) => sum + courts.filter((court) => court.enabled && String(court.name || '').trim() !== '').length,
@@ -1856,6 +1859,7 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
   }));
 
   const weeklyMinimumViolations = getWeeklyMinimumViolations(improvedSchedule, config);
+  const weeklyMinimumDeficit = weeklyMinimumViolations.reduce((sum, entry) => sum + (entry.deficit || 0), 0);
 
   const auditSummary = {
     totalGames: improvedSchedule.length,
@@ -1866,6 +1870,7 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
     missingTeams: auditRows.filter((row) => row.games !== row.target).length,
     timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
     weeklyMinimumIssues: weeklyMinimumViolations.length,
+    weeklyMinimumDeficit,
     enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
     enabledCourts: Object.values(config.dateCourtSettings).reduce(
       (sum, courts) => sum + courts.filter((court) => court.enabled && String(court.name || '').trim() !== '').length,
@@ -1926,8 +1931,13 @@ function getWeeklyMinimumViolations(schedule, config) {
       date,
       games: countGamesOnDate(schedule, date),
       minimum,
+      deficit: Math.max(0, minimum - countGamesOnDate(schedule, date)),
     }))
     .filter((entry) => entry.games < entry.minimum);
+}
+
+function getWeeklyMinimumDeficit(schedule, config) {
+  return getWeeklyMinimumViolations(schedule, config).reduce((sum, entry) => sum + (entry.deficit || 0), 0);
 }
 
 function countTeamGamesOnDate(schedule, teamName, date) {
@@ -1969,12 +1979,16 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
 
     if (!emptyTargetSlots.length) break;
 
-    const donorDates = targetDates
+    const donorDates = getEnabledGameDates(config)
       .map((date) => ({
         date,
         games: countGamesOnDate(nextSchedule, date),
       }))
-      .filter((entry) => entry.date !== targetDate && entry.games > minimum)
+      .filter((entry) => {
+        if (entry.date === targetDate) return false;
+        const donorFloor = entry.date === config.fifthBoysDoubleheaderDate ? 0 : minimum;
+        return entry.games > donorFloor;
+      })
       .sort((a, b) => {
         if (b.games !== a.games) return b.games - a.games;
         return parseShortDate(b.date) - parseShortDate(a.date);
@@ -2014,10 +2028,14 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
           if (candidateResult.auditSummary.earlyViolations > 0) continue;
 
           const candidateScore = schedulePenaltyScore(candidateResult, config);
+          const currentDeficit = getWeeklyMinimumDeficit(nextSchedule, config);
+          const candidateDeficit = getWeeklyMinimumDeficit(candidateSchedule, config);
+          const deficitImprovement = currentDeficit - candidateDeficit;
           const targetBonus =
-            Math.max(0, minimum - countGamesOnDate(nextSchedule, targetDate)) * 3000 +
-            (countTeamGamesOnDate(nextSchedule, game.home, targetDate) === 0 ? 450 : 0) +
-            (countTeamGamesOnDate(nextSchedule, game.away, targetDate) === 0 ? 450 : 0);
+            deficitImprovement * 150000 +
+            Math.max(0, minimum - countGamesOnDate(nextSchedule, targetDate)) * 12000 +
+            (countTeamGamesOnDate(nextSchedule, game.home, targetDate) === 0 ? 1200 : 0) +
+            (countTeamGamesOnDate(nextSchedule, game.away, targetDate) === 0 ? 1200 : 0);
 
           const netScore = candidateScore - targetBonus;
 
@@ -2033,7 +2051,7 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
     }
 
     if (!bestCandidate) break;
-    if (bestCandidate.score > currentScore + 6000) break;
+    if (bestCandidate.score > currentScore + 30000 && bestCandidate.netScore >= currentScore) break;
 
     nextSchedule = bestCandidate.schedule;
     currentScore = bestCandidate.score;
