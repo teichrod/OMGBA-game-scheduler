@@ -1400,7 +1400,7 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
 
       for (const opponent of divisionTeams) {
         if (!canStillUseTeamOnDate(opponent, slot, config)) continue;
-        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: emergencyMode, allTeams })) continue;
+        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: false, allTeams })) continue;
 
         const teamNeed = getNeed(team);
         const oppNeed = getNeed(opponent);
@@ -1599,6 +1599,7 @@ function schedulePenaltyScore(result, config) {
     (result.auditSummary?.earlyViolations || 0) * 150000 +
     (result.auditSummary?.weeklyMinimumDeficit || 0) * 120000 +
     (result.auditSummary?.weeklyMinimumIssues || 0) * 30000 +
+    (result.auditSummary?.repeatedOpponentIssues || 0) * 70000 +
     (result.auditSummary?.middleGapCount || 0) * 8000 +
     (result.auditSummary?.homeAwayIssues || 0) * 30000 +
     (result.auditSummary?.timeVarietyIssues || 0) * 12000 +
@@ -1899,6 +1900,7 @@ function generateScheduleEngine(config, lockedGames = []) {
       Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.62)
         ? 'Poor AM/PM balance'
         : null,
+      repeatedOpponentData.teamViolationCounts[team.name] ? 'Repeated opponent' : null,
     ].filter(Boolean),
   }));
 
@@ -1915,6 +1917,7 @@ function generateScheduleEngine(config, lockedGames = []) {
     timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
     weeklyMinimumIssues: weeklyMinimumViolations.length,
     weeklyMinimumDeficit,
+    repeatedOpponentIssues: repeatedOpponentData.pairViolations.length,
     middleGapCount: getMiddleGapCount(improvedSchedule, config),
     enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
     enabledCourts: Object.values(config.dateCourtSettings).reduce(
@@ -1951,12 +1954,52 @@ function generateScheduleEngine(config, lockedGames = []) {
 }
 
 
+
+function getRepeatedOpponentViolations(schedule, config) {
+  const pairCounts = {};
+  for (const game of Array.isArray(schedule) ? schedule : []) {
+    if (!game?.division || !game?.home || !game?.away) continue;
+    const teams = [game.home, game.away].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const key = `${game.division}||${teams[0]}||${teams[1]}`;
+    pairCounts[key] = (pairCounts[key] || 0) + 1;
+  }
+
+  const pairViolations = [];
+  const teamViolationCounts = {};
+
+  for (const [key, count] of Object.entries(pairCounts)) {
+    const [division, teamA, teamB] = key.split("||");
+    const allowed = getAllowedRepeatLimit(config, division);
+    if (count <= allowed) continue;
+    pairViolations.push({
+      division,
+      teamA,
+      teamB,
+      count,
+      allowed,
+      extraGames: count - allowed,
+    });
+    teamViolationCounts[teamA] = (teamViolationCounts[teamA] || 0) + 1;
+    teamViolationCounts[teamB] = (teamViolationCounts[teamB] || 0) + 1;
+  }
+
+  pairViolations.sort((a, b) => {
+    if (b.extraGames !== a.extraGames) return b.extraGames - a.extraGames;
+    if (a.division !== b.division) return a.division.localeCompare(b.division);
+    if (a.teamA !== b.teamA) return a.teamA.localeCompare(b.teamA, undefined, { numeric: true });
+    return a.teamB.localeCompare(b.teamB, undefined, { numeric: true });
+  });
+
+  return { pairViolations, teamViolationCounts };
+}
+
 function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
   const improvedSchedule = sortScheduleGames(schedule.map((game) => ({ ...game })));
 
   const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
   const finalTeams = Object.values(finalTeamMap);
   const builtTeams = buildTeams(config);
+  const repeatedOpponentData = getRepeatedOpponentViolations(improvedSchedule, config);
 
   const auditRows = finalTeams.map((team) => ({
     team: team.name,
@@ -1983,6 +2026,7 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
       Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.62)
         ? 'Poor AM/PM balance'
         : null,
+      repeatedOpponentData.teamViolationCounts[team.name] ? 'Repeated opponent' : null,
     ].filter(Boolean),
   }));
 
@@ -1999,6 +2043,7 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
     timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
     weeklyMinimumIssues: weeklyMinimumViolations.length,
     weeklyMinimumDeficit,
+    repeatedOpponentIssues: repeatedOpponentData.pairViolations.length,
     middleGapCount: getMiddleGapCount(improvedSchedule, config),
     enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
     enabledCourts: Object.values(config.dateCourtSettings).reduce(
@@ -2007,11 +2052,23 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
     ),
   };
 
+  const nextUnscheduled = Array.isArray(priorUnscheduled) ? [...priorUnscheduled] : [];
+
+  if (repeatedOpponentData.pairViolations.length) {
+    nextUnscheduled.push({
+      matchup: 'Repeated opponents',
+      reason: 'One or more team pairings were scheduled more often than allowed for the division target game count.',
+      suggestion: repeatedOpponentData.pairViolations
+        .map((entry) => `${entry.division}: ${entry.teamA} vs ${entry.teamB} (${entry.count}/${entry.allowed})`)
+        .join('; '),
+    });
+  }
+
   return {
     schedule: improvedSchedule,
     auditRows,
     auditSummary,
-    unscheduled: Array.isArray(priorUnscheduled) ? [...priorUnscheduled] : [],
+    unscheduled: nextUnscheduled,
   };
 }
 
@@ -4707,7 +4764,7 @@ export default function App() {
                       style={{ ...styles.select, minHeight: 48, fontSize: 16 }}
                       value={scoreReporterTeam}
                       onChange={(e) => setScoreReporterTeam(e.target.value)}
-                      disabled={!scoreReporterDivision || Boolean(selectedScoreGameStatus?.verified)}
+                      disabled={!scoreReporterDivision}
                     >
                       <option value="">{scoreReporterDivision ? "Select team" : "Choose division first"}</option>
                       {scoreTeamsForDivision.map((team) => <option key={team} value={team}>{team}</option>)}
@@ -4719,7 +4776,7 @@ export default function App() {
                       style={{ ...styles.select, minHeight: 52, fontSize: 16 }}
                       value={scoreGameId}
                       onChange={(e) => setScoreGameId(e.target.value)}
-                      disabled={!scoreReportableGames.length || Boolean(selectedScoreGameStatus?.verified)}
+                      disabled={!scoreReportableGames.length}
                     >
                       <option value="">{scoreReportableGames.length ? "Select game" : "Choose team first"}</option>
                       {scoreReportableGames.map((game) => (
