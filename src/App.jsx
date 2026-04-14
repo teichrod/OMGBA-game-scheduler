@@ -404,12 +404,12 @@ function formatShortDate(date) {
 function formatTimeDisplay(time) {
   if (!time) return "";
   const [rawHour, rawMinute] = String(time).split(":");
-  const hour24 = Number(rawHour);
+  const hour = Number(rawHour);
   const minute = Number(rawMinute);
-  if (!Number.isFinite(hour24) || !Number.isFinite(minute)) return String(time);
-  const suffix = hour24 >= 12 ? "PM" : "AM";
-  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
-  return `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return String(time);
+  const morningTimes = new Set(["8:00", "9:05", "10:10", "11:15"]);
+  const suffix = morningTimes.has(String(time)) ? "AM" : "PM";
+  return `${hour}:${String(minute).padStart(2, "0")} ${suffix}`;
 }
 
 
@@ -3802,6 +3802,12 @@ export default function App() {
       return;
     }
 
+    const existingStatus = getOfficialScoreFromReports(game, scoreReports);
+    if (existingStatus?.verified) {
+      setScoreNotice("That score has already been verified and is locked.");
+      return;
+    }
+
     let teamScore = null;
     let opponentScore = null;
     if (scoreApproveExisting && selectedScoreApprovalContext.canApprove && selectedScoreApprovalContext.approvalScores) {
@@ -4639,7 +4645,7 @@ export default function App() {
                           <tbody>
                             {rows.map((row) => (
                               <tr key={row.team}>
-                                <td style={styles.td}>{row.team}</td>
+                                <td style={{ ...styles.td, textAlign: "left" }}>{row.team}</td>
                                 <td style={styles.td}>{row.wins}</td>
                                 <td style={styles.td}>{row.losses}</td>
                                 <td style={styles.td}>{row.ties}</td>
@@ -4701,7 +4707,7 @@ export default function App() {
                       style={{ ...styles.select, minHeight: 48, fontSize: 16 }}
                       value={scoreReporterTeam}
                       onChange={(e) => setScoreReporterTeam(e.target.value)}
-                      disabled={!scoreReporterDivision}
+                      disabled={!scoreReporterDivision || Boolean(selectedScoreGameStatus?.verified)}
                     >
                       <option value="">{scoreReporterDivision ? "Select team" : "Choose division first"}</option>
                       {scoreTeamsForDivision.map((team) => <option key={team} value={team}>{team}</option>)}
@@ -4713,7 +4719,7 @@ export default function App() {
                       style={{ ...styles.select, minHeight: 52, fontSize: 16 }}
                       value={scoreGameId}
                       onChange={(e) => setScoreGameId(e.target.value)}
-                      disabled={!scoreReportableGames.length}
+                      disabled={!scoreReportableGames.length || Boolean(selectedScoreGameStatus?.verified)}
                     >
                       <option value="">{scoreReportableGames.length ? "Select game" : "Choose team first"}</option>
                       {scoreReportableGames.map((game) => (
@@ -4741,7 +4747,7 @@ export default function App() {
                       value={scoreApproveExisting && selectedScoreApprovalContext.approvalScores ? String(selectedScoreApprovalContext.approvalScores.teamScore) : scoreForInput}
                       onChange={(e) => setScoreForInput(e.target.value.replace(/[^0-9]/g, ""))}
                       placeholder="0"
-                      disabled={scoreApproveExisting && selectedScoreApprovalContext.canApprove}
+                      disabled={Boolean(selectedScoreGameStatus?.verified) || (scoreApproveExisting && selectedScoreApprovalContext.canApprove)}
                     />
                   </div>
                   <div>
@@ -4753,15 +4759,16 @@ export default function App() {
                       value={scoreApproveExisting && selectedScoreApprovalContext.approvalScores ? String(selectedScoreApprovalContext.approvalScores.opponentScore) : scoreAgainstInput}
                       onChange={(e) => setScoreAgainstInput(e.target.value.replace(/[^0-9]/g, ""))}
                       placeholder="0"
-                      disabled={scoreApproveExisting && selectedScoreApprovalContext.canApprove}
+                      disabled={Boolean(selectedScoreGameStatus?.verified) || (scoreApproveExisting && selectedScoreApprovalContext.canApprove)}
                     />
                   </div>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <button
-                      style={{ ...styles.primaryButton, width: "100%", minHeight: 52, fontSize: 16 }}
+                      style={{ ...styles.primaryButton, width: "100%", minHeight: 52, fontSize: 16, opacity: selectedScoreGameStatus?.verified ? 0.6 : 1, cursor: selectedScoreGameStatus?.verified ? "not-allowed" : "pointer" }}
                       onClick={submitScoreReport}
+                      disabled={Boolean(selectedScoreGameStatus?.verified)}
                     >
-                      {scoreApproveExisting && selectedScoreApprovalContext.canApprove ? "Approve existing score" : "Submit score"}
+                      {selectedScoreGameStatus?.verified ? "Score locked" : scoreApproveExisting && selectedScoreApprovalContext.canApprove ? "Approve existing score" : "Submit score"}
                     </button>
                   </div>
                 </div>
@@ -4773,6 +4780,7 @@ export default function App() {
                 {selectedScoreGame && selectedScoreGameStatus ? (
                   <div style={{ fontSize: 13, color: "#475569" }}>
                     Current status: <strong style={{ color: "#0f172a" }}>{selectedScoreGameStatus.officialLabel}</strong> — {selectedScoreGameStatus.reportSummary}
+                    {selectedScoreGameStatus.verified ? " Verified scores are locked and can no longer be edited by coaches." : ""}
                   </div>
                 ) : null}
               </div>
@@ -4816,7 +4824,7 @@ export default function App() {
                     <tbody>
                       {result.auditRows.map((row) => (
                         <tr key={row.team}>
-                          <td style={styles.td}>{row.team}</td>
+                          <td style={{ ...styles.td, textAlign: "left" }}>{row.team}</td>
                           <td style={styles.td}>{row.division}</td>
                           <td style={styles.td}>{row.games}</td>
                           <td style={styles.td}>{row.target}</td>
