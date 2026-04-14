@@ -3205,10 +3205,12 @@ export default function App() {
   const [scoreReports, setScoreReports] = useState([]);
   const [scoreNotice, setScoreNotice] = useState("");
   const [scoreReporterEmail, setScoreReporterEmail] = useState("");
+  const [scoreReporterDivision, setScoreReporterDivision] = useState(initialDivisionParam !== "all" ? initialDivisionParam : "");
   const [scoreReporterTeam, setScoreReporterTeam] = useState(initialTeamParam !== "all" ? initialTeamParam : "");
   const [scoreGameId, setScoreGameId] = useState("");
   const [scoreForInput, setScoreForInput] = useState("");
   const [scoreAgainstInput, setScoreAgainstInput] = useState("");
+  const [scoreApproveExisting, setScoreApproveExisting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -3292,6 +3294,22 @@ export default function App() {
     return Array.from(new Set(result.schedule.flatMap((game) => [game.home, game.away]))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }, [result]);
 
+  const publicDivisionOptions = useMemo(() => {
+    if (!result) return [];
+    return Array.from(new Set(result.schedule.map((game) => game.division))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [result]);
+
+  const scoreTeamsForDivision = useMemo(() => {
+    if (!result || !scoreReporterDivision) return [];
+    return Array.from(
+      new Set(
+        result.schedule
+          .filter((game) => game.division === scoreReporterDivision)
+          .flatMap((game) => [game.home, game.away])
+      )
+    ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [result, scoreReporterDivision]);
+
   const scoreReportableGames = useMemo(() => {
     if (!result || !scoreReporterTeam) return [];
     return [...result.schedule]
@@ -3303,6 +3321,35 @@ export default function App() {
     () => scoreReportableGames.find((game) => getGameScoreKey(game) === scoreGameId) || null,
     [scoreReportableGames, scoreGameId]
   );
+
+  const selectedScoreGameStatus = useMemo(
+    () => (selectedScoreGame ? getOfficialScoreFromReports(selectedScoreGame, scoreReports) : null),
+    [selectedScoreGame, scoreReports]
+  );
+
+  const selectedScoreApprovalContext = useMemo(() => {
+    if (!selectedScoreGame || !scoreReporterTeam) {
+      return { canApprove: false, approvalScores: null, opponentReport: null, ownReport: null, alreadyReported: false };
+    }
+    const { homeReport, awayReport } = getLatestGameReportsByTeam(selectedScoreGame, scoreReports);
+    const ownReport = scoreReporterTeam === selectedScoreGame.home ? homeReport : awayReport;
+    const opponentReport = scoreReporterTeam === selectedScoreGame.home ? awayReport : homeReport;
+    const alreadyReported = Boolean(ownReport);
+    const normalizedOpponent = normalizeScoreReportForGame(selectedScoreGame, opponentReport);
+    const approvalScores = normalizedOpponent
+      ? (scoreReporterTeam === selectedScoreGame.home
+          ? { teamScore: normalizedOpponent.homeScore, opponentScore: normalizedOpponent.awayScore }
+          : { teamScore: normalizedOpponent.awayScore, opponentScore: normalizedOpponent.homeScore })
+      : null;
+
+    return {
+      canApprove: Boolean(opponentReport && approvalScores && !alreadyReported),
+      approvalScores,
+      opponentReport,
+      ownReport,
+      alreadyReported,
+    };
+  }, [selectedScoreGame, scoreReporterTeam, scoreReports]);
 
   const divisionStandings = useMemo(() => (result ? buildDivisionStandings(result.schedule, scoreReports) : {}), [result, scoreReports]);
 
@@ -3319,10 +3366,30 @@ export default function App() {
   }, [result, scoreReports]);
 
   useEffect(() => {
-    if (isPublicMode && scheduleTeamFilter !== "all" && !scoreReporterTeam) {
+    if (!isPublicMode || !result) return;
+    if (scheduleTeamFilter !== "all" && !scoreReporterTeam) {
       setScoreReporterTeam(scheduleTeamFilter);
     }
-  }, [isPublicMode, scheduleTeamFilter, scoreReporterTeam]);
+    const seededTeam = scheduleTeamFilter !== "all" ? scheduleTeamFilter : scoreReporterTeam;
+    if (seededTeam && !scoreReporterDivision) {
+      const teamGame = result.schedule.find((game) => game.home === seededTeam || game.away === seededTeam);
+      if (teamGame) setScoreReporterDivision(teamGame.division);
+    }
+  }, [isPublicMode, result, scheduleTeamFilter, scoreReporterTeam, scoreReporterDivision]);
+
+  useEffect(() => {
+    if (!scoreReporterDivision) {
+      if (scoreReporterTeam) setScoreReporterTeam("");
+      return;
+    }
+    if (!scoreTeamsForDivision.length) {
+      if (scoreReporterTeam) setScoreReporterTeam("");
+      return;
+    }
+    if (!scoreTeamsForDivision.includes(scoreReporterTeam)) {
+      setScoreReporterTeam(scoreTeamsForDivision[0]);
+    }
+  }, [scoreReporterDivision, scoreTeamsForDivision, scoreReporterTeam]);
 
   useEffect(() => {
     if (!scoreReportableGames.length) {
@@ -3333,6 +3400,10 @@ export default function App() {
       setScoreGameId(getGameScoreKey(scoreReportableGames[0]));
     }
   }, [scoreReportableGames, scoreGameId]);
+
+  useEffect(() => {
+    setScoreApproveExisting(false);
+  }, [scoreReporterDivision, scoreReporterTeam, scoreGameId]);
 
   const filteredSchedule = useMemo(() => {
     if (!result) return [];
@@ -3675,6 +3746,33 @@ export default function App() {
     }
   }
 
+  async function sendScoreConfirmationEmail(game, report, approvalMode = false) {
+    try {
+      const response = await fetch("/api/score-confirmation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gameId: getGameScoreKey(game),
+          division: game.division,
+          date: game.date,
+          time: game.time,
+          court: game.court,
+          home: game.home,
+          away: game.away,
+          reporterEmail: report.reporterEmail,
+          reportingTeam: report.reportingTeam,
+          teamScore: report.teamScore,
+          opponentScore: report.opponentScore,
+          approvalMode,
+          submittedAt: report.submittedAt,
+        }),
+      });
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  }
+
   async function submitScoreReport() {
     if (!result) return;
     const reporterEmail = String(scoreReporterEmail || "").trim().toLowerCase();
@@ -3682,8 +3780,12 @@ export default function App() {
       setScoreNotice("Enter a valid coach email.");
       return;
     }
+    if (!scoreReporterDivision) {
+      setScoreNotice("Choose a division first.");
+      return;
+    }
     if (!scoreReporterTeam) {
-      setScoreNotice("Choose a team first.");
+      setScoreNotice("Choose a reporting team first.");
       return;
     }
     const game = selectedScoreGame;
@@ -3691,15 +3793,27 @@ export default function App() {
       setScoreNotice("Choose a game to report.");
       return;
     }
-    const teamScore = parseNumericScore(scoreForInput);
-    const opponentScore = parseNumericScore(scoreAgainstInput);
-    if (teamScore === null || opponentScore === null) {
-      setScoreNotice("Enter non-negative whole-number scores.");
+    if (game.division !== scoreReporterDivision) {
+      setScoreNotice("That game does not belong to the selected division.");
       return;
     }
     if (game.home !== scoreReporterTeam && game.away !== scoreReporterTeam) {
       setScoreNotice("That game does not belong to the selected team.");
       return;
+    }
+
+    let teamScore = null;
+    let opponentScore = null;
+    if (scoreApproveExisting && selectedScoreApprovalContext.canApprove && selectedScoreApprovalContext.approvalScores) {
+      teamScore = selectedScoreApprovalContext.approvalScores.teamScore;
+      opponentScore = selectedScoreApprovalContext.approvalScores.opponentScore;
+    } else {
+      teamScore = parseNumericScore(scoreForInput);
+      opponentScore = parseNumericScore(scoreAgainstInput);
+      if (teamScore === null || opponentScore === null) {
+        setScoreNotice("Enter non-negative whole-number scores.");
+        return;
+      }
     }
 
     const published = await loadPublishedPayload();
@@ -3718,16 +3832,17 @@ export default function App() {
       reporterEmail,
       teamScore,
       opponentScore,
+      approvalMode: Boolean(scoreApproveExisting && selectedScoreApprovalContext.canApprove),
+      approvalOfReportId: scoreApproveExisting ? (selectedScoreApprovalContext.opponentReport?.id || "") : "",
       submittedAt: new Date().toISOString(),
     };
 
     const nextReports = existingReports.filter(
-      (report) =>
-        !(
-          report.gameId === nextReport.gameId &&
-          report.reportingTeam === nextReport.reportingTeam &&
-          String(report.reporterEmail || "").trim().toLowerCase() === reporterEmail
-        )
+      (report) => !(
+        report.gameId === nextReport.gameId &&
+        report.reportingTeam === nextReport.reportingTeam &&
+        String(report.reporterEmail || "").trim().toLowerCase() === reporterEmail
+      )
     );
     nextReports.push(nextReport);
 
@@ -3741,11 +3856,16 @@ export default function App() {
       setScoreReports(nextReports);
       setScoreForInput("");
       setScoreAgainstInput("");
+      setScoreApproveExisting(false);
       const status = getOfficialScoreFromReports(game, nextReports);
+      const emailSent = await sendScoreConfirmationEmail(game, nextReport, nextReport.approvalMode);
+      const emailNote = emailSent
+        ? " Confirmation email sent."
+        : " Confirmation email could not be sent because email delivery is not configured yet.";
       setScoreNotice(
         status.verified
-          ? `Score saved and verified: ${game.away} ${status.official.awayScore} - ${status.official.homeScore} ${game.home}.`
-          : "Score saved. Waiting for the other coach or a closer matching report."
+          ? `Score saved and verified: ${game.away} ${status.official.awayScore} - ${status.official.homeScore} ${game.home}.${emailNote}`
+          : `Score saved.${emailNote} Waiting for the other coach or a closer matching report.`
       );
     } else {
       setScoreNotice("Could not save the score report.");
@@ -3810,12 +3930,12 @@ export default function App() {
         ) : null}
 
         {isPublicMode ? (
-          <div style={styles.publicBanner}>Public view: schedule-only mode. Use filters below to browse by division or jump straight to one team.</div>
+          <div style={styles.publicBanner}>Public view: browse the schedule, standings, and coach score reporting tabs. Score reports are logged with coach emails, and confirmation emails require a configured backend email route.</div>
         ) : null}
 
         <div style={styles.tabBar}>
           {(isPublicMode
-            ? [["schedule", "Schedule"]]
+            ? [["schedule", "Schedule"], ["standings", "Standings"], ["score_reporting", "Score Reporting"]]
             : [["setup", "Setup"], ["schedule", "Schedule Views"], ["audit", "Audit"], ["issues", "Issues"]]
           ).map(([key, label]) => (
             <button key={key} style={activeTab === key ? styles.tabButtonActive : styles.tabButton} onClick={() => setActiveTab(key)}>
@@ -4475,143 +4595,187 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
+              </>
+            )}
+          </Card>
+        ) : null}
 
-                {isPublicMode ? (
-                  <div style={{ display: "grid", gap: 16, marginTop: 20 }}>
-                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
-                      <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Coach Score Reporting</div>
-                      <div style={{ fontSize: 13, color: "#475569", marginBottom: 12 }}>
-                        Report from your phone after the game. Both coaches should report each game. Scores become official when reports match exactly, are within one point on each side, or agree on point differential.
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, alignItems: "end" }}>
-                        <div style={{ gridColumn: "1 / -1" }}>
-                          <label style={styles.smallLabel}>Coach email</label>
-                          <input
-                            style={{ ...styles.input, minHeight: 48, fontSize: 16 }}
-                            value={scoreReporterEmail}
-                            onChange={(e) => setScoreReporterEmail(e.target.value)}
-                            placeholder="coach@example.com"
-                            type="email"
-                            autoComplete="email"
-                          />
-                        </div>
-                        <div style={{ gridColumn: "1 / -1" }}>
-                          <label style={styles.smallLabel}>Reporting team</label>
-                          <select
-                            style={{ ...styles.select, minHeight: 48, fontSize: 16 }}
-                            value={scoreReporterTeam}
-                            onChange={(e) => setScoreReporterTeam(e.target.value)}
-                          >
-                            <option value="">Select team</option>
-                            {allScheduleTeams.map((team) => <option key={team} value={team}>{team}</option>)}
-                          </select>
-                        </div>
-                        <div style={{ gridColumn: "1 / -1" }}>
-                          <label style={styles.smallLabel}>Game</label>
-                          <select
-                            style={{ ...styles.select, minHeight: 52, fontSize: 16 }}
-                            value={scoreGameId}
-                            onChange={(e) => setScoreGameId(e.target.value)}
-                            disabled={!scoreReportableGames.length}
-                          >
-                            <option value="">{scoreReportableGames.length ? "Select game" : "Choose team first"}</option>
-                            {scoreReportableGames.map((game) => (
-                              <option key={getGameScoreKey(game)} value={getGameScoreKey(game)}>
-                                {`${game.date} • ${formatTimeDisplay(game.time)} • ${game.away} @ ${game.home}`}
-                              </option>
+        {activeTab === "standings" && isPublicMode ? (
+          <Card>
+            <div style={{ ...styles.headerRow, marginBottom: 16 }}>
+              <SectionTitle icon={Trophy}>Division Standings</SectionTitle>
+              <div style={{ minWidth: 240 }}>
+                <label style={styles.smallLabel}>Division</label>
+                <select style={styles.select} value={scheduleDivisionFilter} onChange={(e) => setScheduleDivisionFilter(e.target.value)}>
+                  <option value="all">All divisions</option>
+                  {publicDivisionOptions.map((division) => (
+                    <option key={division} value={division}>{division}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {!result ? (
+              <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>No published schedule found yet.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 14 }}>
+                {(scheduleDivisionFilter === "all" ? DIVISIONS : [scheduleDivisionFilter]).map((division) => {
+                  const rows = divisionStandings[division] || [];
+                  return (
+                    <div key={division} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
+                      <div style={{ padding: "10px 12px", fontWeight: 700, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{division}</div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={styles.table}>
+                          <thead>
+                            <tr>
+                              <th style={styles.th}>Team</th>
+                              <th style={styles.th}>W</th>
+                              <th style={styles.th}>L</th>
+                              <th style={styles.th}>T</th>
+                              <th style={styles.th}>PF</th>
+                              <th style={styles.th}>PA</th>
+                              <th style={styles.th}>PD</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((row) => (
+                              <tr key={row.team}>
+                                <td style={styles.td}>{row.team}</td>
+                                <td style={styles.td}>{row.wins}</td>
+                                <td style={styles.td}>{row.losses}</td>
+                                <td style={styles.td}>{row.ties}</td>
+                                <td style={styles.td}>{row.pointsFor}</td>
+                                <td style={styles.td}>{row.pointsAgainst}</td>
+                                <td style={styles.td}>{row.pointDiff}</td>
+                              </tr>
                             ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label style={styles.smallLabel}>Your score</label>
-                          <input
-                            style={{ ...styles.input, minHeight: 56, fontSize: 22, textAlign: "center", fontWeight: 700 }}
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            value={scoreForInput}
-                            onChange={(e) => setScoreForInput(e.target.value.replace(/[^0-9]/g, ""))}
-                            placeholder="0"
-                          />
-                        </div>
-                        <div>
-                          <label style={styles.smallLabel}>Opponent score</label>
-                          <input
-                            style={{ ...styles.input, minHeight: 56, fontSize: 22, textAlign: "center", fontWeight: 700 }}
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            value={scoreAgainstInput}
-                            onChange={(e) => setScoreAgainstInput(e.target.value.replace(/[^0-9]/g, ""))}
-                            placeholder="0"
-                          />
-                        </div>
-                        <div style={{ gridColumn: "1 / -1" }}>
-                          <button
-                            style={{ ...styles.primaryButton, width: "100%", minHeight: 52, fontSize: 16 }}
-                            onClick={submitScoreReport}
-                          >
-                            Submit score
-                          </button>
-                        </div>
+                            {!rows.length ? (
+                              <tr><td style={styles.td} colSpan={7}>No verified scores yet.</td></tr>
+                            ) : null}
+                          </tbody>
+                        </table>
                       </div>
-                      {scoreNotice ? (
-                        <div style={{ marginTop: 10, border: "1px solid #dbeafe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 10, padding: 10, fontSize: 13, fontWeight: 600 }}>
-                          {scoreNotice}
-                        </div>
-                      ) : null}
-                      {selectedScoreGame ? (
-                        <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>
-                          Current status: <strong style={{ color: "#0f172a" }}>{getOfficialScoreFromReports(selectedScoreGame, scoreReports).officialLabel}</strong> — {getOfficialScoreFromReports(selectedScoreGame, scoreReports).reportSummary}
-                        </div>
-                      ) : null}
                     </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        ) : null}
 
-                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
-                      <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Division Standings</div>
-                      <div style={{ display: "grid", gap: 14 }}>
-                        {(scheduleDivisionFilter === "all" ? DIVISIONS : [scheduleDivisionFilter]).map((division) => {
-                          const rows = divisionStandings[division] || [];
-                          return (
-                            <div key={division} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
-                              <div style={{ padding: "10px 12px", fontWeight: 700, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{division}</div>
-                              <div style={{ overflowX: "auto" }}>
-                                <table style={styles.table}>
-                                  <thead>
-                                    <tr>
-                                      <th style={styles.th}>Team</th>
-                                      <th style={styles.th}>W</th>
-                                      <th style={styles.th}>L</th>
-                                      <th style={styles.th}>T</th>
-                                      <th style={styles.th}>PF</th>
-                                      <th style={styles.th}>PA</th>
-                                      <th style={styles.th}>PD</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {rows.map((row) => (
-                                      <tr key={row.team}>
-                                        <td style={styles.td}>{row.team}</td>
-                                        <td style={styles.td}>{row.wins}</td>
-                                        <td style={styles.td}>{row.losses}</td>
-                                        <td style={styles.td}>{row.ties}</td>
-                                        <td style={styles.td}>{row.pointsFor}</td>
-                                        <td style={styles.td}>{row.pointsAgainst}</td>
-                                        <td style={styles.td}>{row.pointDiff}</td>
-                                      </tr>
-                                    ))}
-                                    {!rows.length ? (
-                                      <tr><td style={styles.td} colSpan={7}>No verified scores yet.</td></tr>
-                                    ) : null}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+        {activeTab === "score_reporting" && isPublicMode ? (
+          <Card>
+            <SectionTitle icon={CalendarDays}>Coach Score Reporting</SectionTitle>
+            {!result ? (
+              <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>No published schedule found yet.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 16 }}>
+                <div style={{ fontSize: 13, color: "#475569" }}>
+                  Both coaches should report each game. Scores become official when both reports match exactly, are within one point on each side, or agree on point differential.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, alignItems: "end" }}>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={styles.smallLabel}>Coach email</label>
+                    <input
+                      style={{ ...styles.input, minHeight: 48, fontSize: 16 }}
+                      value={scoreReporterEmail}
+                      onChange={(e) => setScoreReporterEmail(e.target.value)}
+                      placeholder="coach@example.com"
+                      type="email"
+                      autoComplete="email"
+                    />
+                  </div>
+                  <div>
+                    <label style={styles.smallLabel}>Division</label>
+                    <select
+                      style={{ ...styles.select, minHeight: 48, fontSize: 16 }}
+                      value={scoreReporterDivision}
+                      onChange={(e) => setScoreReporterDivision(e.target.value)}
+                    >
+                      <option value="">Select division</option>
+                      {publicDivisionOptions.map((division) => <option key={division} value={division}>{division}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={styles.smallLabel}>Reporting team</label>
+                    <select
+                      style={{ ...styles.select, minHeight: 48, fontSize: 16 }}
+                      value={scoreReporterTeam}
+                      onChange={(e) => setScoreReporterTeam(e.target.value)}
+                      disabled={!scoreReporterDivision}
+                    >
+                      <option value="">{scoreReporterDivision ? "Select team" : "Choose division first"}</option>
+                      {scoreTeamsForDivision.map((team) => <option key={team} value={team}>{team}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={styles.smallLabel}>Game</label>
+                    <select
+                      style={{ ...styles.select, minHeight: 52, fontSize: 16 }}
+                      value={scoreGameId}
+                      onChange={(e) => setScoreGameId(e.target.value)}
+                      disabled={!scoreReportableGames.length}
+                    >
+                      <option value="">{scoreReportableGames.length ? "Select game" : "Choose team first"}</option>
+                      {scoreReportableGames.map((game) => (
+                        <option key={getGameScoreKey(game)} value={getGameScoreKey(game)}>
+                          {`${game.date} • ${formatTimeDisplay(game.time)} • ${game.away} @ ${game.home}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {selectedScoreApprovalContext.canApprove ? (
+                    <label style={{ gridColumn: "1 / -1", display: "flex", gap: 10, alignItems: "center", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: 12, fontSize: 14 }}>
+                      <input type="checkbox" checked={scoreApproveExisting} onChange={(e) => setScoreApproveExisting(e.target.checked)} />
+                      <span>
+                        Approve the existing report from <strong>{selectedScoreApprovalContext.opponentReport?.reportingTeam}</strong>
+                        {selectedScoreApprovalContext.approvalScores ? ` (${selectedScoreApprovalContext.approvalScores.teamScore}-${selectedScoreApprovalContext.approvalScores.opponentScore} from your team perspective)` : ""}
+                      </span>
+                    </label>
+                  ) : null}
+                  <div>
+                    <label style={styles.smallLabel}>Your score</label>
+                    <input
+                      style={{ ...styles.input, minHeight: 56, fontSize: 22, textAlign: "center", fontWeight: 700, background: scoreApproveExisting ? "#f8fafc" : "white" }}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={scoreApproveExisting && selectedScoreApprovalContext.approvalScores ? String(selectedScoreApprovalContext.approvalScores.teamScore) : scoreForInput}
+                      onChange={(e) => setScoreForInput(e.target.value.replace(/[^0-9]/g, ""))}
+                      placeholder="0"
+                      disabled={scoreApproveExisting && selectedScoreApprovalContext.canApprove}
+                    />
+                  </div>
+                  <div>
+                    <label style={styles.smallLabel}>Opponent score</label>
+                    <input
+                      style={{ ...styles.input, minHeight: 56, fontSize: 22, textAlign: "center", fontWeight: 700, background: scoreApproveExisting ? "#f8fafc" : "white" }}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={scoreApproveExisting && selectedScoreApprovalContext.approvalScores ? String(selectedScoreApprovalContext.approvalScores.opponentScore) : scoreAgainstInput}
+                      onChange={(e) => setScoreAgainstInput(e.target.value.replace(/[^0-9]/g, ""))}
+                      placeholder="0"
+                      disabled={scoreApproveExisting && selectedScoreApprovalContext.canApprove}
+                    />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <button
+                      style={{ ...styles.primaryButton, width: "100%", minHeight: 52, fontSize: 16 }}
+                      onClick={submitScoreReport}
+                    >
+                      {scoreApproveExisting && selectedScoreApprovalContext.canApprove ? "Approve existing score" : "Submit score"}
+                    </button>
+                  </div>
+                </div>
+                {scoreNotice ? (
+                  <div style={{ border: "1px solid #dbeafe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 10, padding: 10, fontSize: 13, fontWeight: 600 }}>
+                    {scoreNotice}
                   </div>
                 ) : null}
-              </>
+                {selectedScoreGame && selectedScoreGameStatus ? (
+                  <div style={{ fontSize: 13, color: "#475569" }}>
+                    Current status: <strong style={{ color: "#0f172a" }}>{selectedScoreGameStatus.officialLabel}</strong> — {selectedScoreGameStatus.reportSummary}
+                  </div>
+                ) : null}
+              </div>
             )}
           </Card>
         ) : null}
