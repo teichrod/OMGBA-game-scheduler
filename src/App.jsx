@@ -1874,6 +1874,7 @@ function generateScheduleEngine(config, lockedGames = []) {
 
   const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
   const finalTeams = Object.values(finalTeamMap);
+  const repeatedOpponentData = getRepeatedOpponentViolations(improvedSchedule, config);
 
   const auditRows = finalTeams.map((team) => ({
     team: team.name,
