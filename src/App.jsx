@@ -2305,6 +2305,87 @@ function repackSingleDateEarlier(schedule, date, config) {
   return best ? best.schedule : schedule.map((game) => ({ ...game }));
 }
 
+function compactSingleCourtEarlier(schedule, date, courtName, config) {
+  let working = schedule.map((game) => ({ ...game }));
+  const courtSlots = buildOpenSlots(config)
+    .filter((slot) => slot.date === date && slot.court === courtName)
+    .sort(compareSlotLike);
+
+  if (courtSlots.length <= 1) return working;
+
+  let changed = true;
+  let safety = 0;
+  while (changed && safety < 20) {
+    changed = false;
+    safety += 1;
+
+    const occupied = new Set(
+      working
+        .filter((game) => game.date === date)
+        .map((game) => `${game.date}|${game.time}|${game.court}`)
+    );
+
+    let lastOccupiedIndex = -1;
+    for (let i = 0; i < courtSlots.length; i += 1) {
+      if (occupied.has(`${courtSlots[i].date}|${courtSlots[i].time}|${courtSlots[i].court}`)) {
+        lastOccupiedIndex = i;
+      }
+    }
+    if (lastOccupiedIndex < 0) break;
+
+    for (let gapIndex = 0; gapIndex < lastOccupiedIndex; gapIndex += 1) {
+      const gapSlot = courtSlots[gapIndex];
+      const gapKey = `${gapSlot.date}|${gapSlot.time}|${gapSlot.court}`;
+      if (occupied.has(gapKey)) continue;
+
+      const laterGames = working
+        .filter((game) => game.date === date && game.court === courtName)
+        .map((game) => ({ ...game, slotIndex: courtSlots.findIndex((slot) => slot.time === game.time) }))
+        .filter((game) => game.slotIndex > gapIndex)
+        .sort((a, b) => a.slotIndex - b.slotIndex);
+
+      let moved = false;
+      for (const candidate of laterGames) {
+        const baseSchedule = working.filter(
+          (game) => !(game.date === candidate.date && game.time === candidate.time && game.court === candidate.court && game.home === candidate.home && game.away === candidate.away)
+        );
+        const movedGame = { ...candidate, date: gapSlot.date, time: gapSlot.time, court: gapSlot.court };
+        const message = validateManualMove(baseSchedule, movedGame, gapSlot, config);
+        if (message) continue;
+
+        const candidateSchedule = [...baseSchedule, movedGame].sort(compareSlotLike);
+        if (getWeeklyMinimumDeficit(candidateSchedule, config) > getWeeklyMinimumDeficit(working, config)) continue;
+        const result = buildResultFromSchedule(candidateSchedule, config, []);
+        if (result.auditSummary.missingTeams !== 0) continue;
+        if (result.auditSummary.earlyViolations > 0) continue;
+
+        working = candidateSchedule;
+        changed = true;
+        moved = true;
+        break;
+      }
+
+      if (moved) break;
+    }
+  }
+
+  return working;
+}
+
+function compactDateCourtsEarlier(schedule, date, config) {
+  let working = schedule.map((game) => ({ ...game }));
+  const courts = getEnabledCourtsForDate(config, date)
+    .map((court) => court.name)
+    .filter(Boolean)
+    .sort();
+
+  for (const courtName of courts) {
+    working = compactSingleCourtEarlier(working, date, courtName, config);
+  }
+
+  return working.sort(compareSlotLike);
+}
+
 function rebalanceToMinimumWeeklyGames(schedule, config) {
   const minimum = Number(config?.minGamesPerWeek || 0);
   const targetDates = getDatesSubjectToWeeklyMinimum(config);
@@ -2549,8 +2630,11 @@ function compactScheduleEarlier(schedule, config) {
       const beforeSignature = getDateOccupancySignature(nextSchedule, date, config);
       const beforeDateGaps = getDateMiddleGapCount(nextSchedule, date, config);
 
-      let candidate = repackSingleDateEarlier(nextSchedule, date, config);
+      let candidate = compactDateCourtsEarlier(nextSchedule, date, config);
+      candidate = repackSingleDateEarlier(candidate, date, config);
+      candidate = compactDateCourtsEarlier(candidate, date, config);
       candidate = fillDateGapsBySearch(candidate, date, config, 6);
+      candidate = compactDateCourtsEarlier(candidate, date, config);
 
       const afterSignature = getDateOccupancySignature(candidate, date, config);
       const afterDateGaps = getDateMiddleGapCount(candidate, date, config);
