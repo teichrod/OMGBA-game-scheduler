@@ -4383,104 +4383,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {isPublicMode ? (
-                  <div style={{ display: "grid", gap: 16, marginBottom: 20 }}>
-                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
-                      <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Coach Score Reporting</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "220px 260px 1fr 120px 120px auto", gap: 12, alignItems: "end" }}>
-                        <div>
-                          <label style={styles.smallLabel}>Coach email</label>
-                          <input style={styles.input} value={scoreReporterEmail} onChange={(e) => setScoreReporterEmail(e.target.value)} placeholder="coach@example.com" />
-                        </div>
-                        <div>
-                          <label style={styles.smallLabel}>Reporting team</label>
-                          <select style={styles.select} value={scoreReporterTeam} onChange={(e) => setScoreReporterTeam(e.target.value)}>
-                            <option value="">Select team</option>
-                            {allScheduleTeams.map((team) => <option key={team} value={team}>{team}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label style={styles.smallLabel}>Game</label>
-                          <select style={styles.select} value={scoreGameId} onChange={(e) => setScoreGameId(e.target.value)} disabled={!scoreReportableGames.length}>
-                            <option value="">{scoreReportableGames.length ? "Select game" : "Choose team first"}</option>
-                            {scoreReportableGames.map((game) => (
-                              <option key={getGameScoreKey(game)} value={getGameScoreKey(game)}>
-                                {`${game.date} • ${formatTimeDisplay(game.time)} • ${game.away} @ ${game.home}`}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label style={styles.smallLabel}>Your score</label>
-                          <input style={styles.input} inputMode="numeric" value={scoreForInput} onChange={(e) => setScoreForInput(e.target.value.replace(/[^0-9]/g, ""))} />
-                        </div>
-                        <div>
-                          <label style={styles.smallLabel}>Opponent score</label>
-                          <input style={styles.input} inputMode="numeric" value={scoreAgainstInput} onChange={(e) => setScoreAgainstInput(e.target.value.replace(/[^0-9]/g, ""))} />
-                        </div>
-                        <button style={styles.primaryButton} onClick={submitScoreReport}>Submit score</button>
-                      </div>
-                      <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>
-                        Both coaches should report each game. Scores become official when reports match exactly, are within one point on each side, or agree on point differential.
-                      </div>
-                      {scoreNotice ? (
-                        <div style={{ marginTop: 10, border: "1px solid #dbeafe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 10, padding: 10, fontSize: 13, fontWeight: 600 }}>
-                          {scoreNotice}
-                        </div>
-                      ) : null}
-                      {selectedScoreGame ? (
-                        <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>
-                          Current status: <strong style={{ color: "#0f172a" }}>{getOfficialScoreFromReports(selectedScoreGame, scoreReports).officialLabel}</strong> — {getOfficialScoreFromReports(selectedScoreGame, scoreReports).reportSummary}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
-                      <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Division Standings</div>
-                      <div style={{ display: "grid", gap: 14 }}>
-                        {(scheduleDivisionFilter === "all" ? DIVISIONS : [scheduleDivisionFilter]).map((division) => {
-                          const rows = divisionStandings[division] || [];
-                          return (
-                            <div key={division} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
-                              <div style={{ padding: "10px 12px", fontWeight: 700, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{division}</div>
-                              <div style={{ overflowX: "auto" }}>
-                                <table style={styles.table}>
-                                  <thead>
-                                    <tr>
-                                      <th style={styles.th}>Team</th>
-                                      <th style={styles.th}>W</th>
-                                      <th style={styles.th}>L</th>
-                                      <th style={styles.th}>T</th>
-                                      <th style={styles.th}>PF</th>
-                                      <th style={styles.th}>PA</th>
-                                      <th style={styles.th}>PD</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {rows.map((row) => (
-                                      <tr key={row.team}>
-                                        <td style={styles.td}>{row.team}</td>
-                                        <td style={styles.td}>{row.wins}</td>
-                                        <td style={styles.td}>{row.losses}</td>
-                                        <td style={styles.td}>{row.ties}</td>
-                                        <td style={styles.td}>{row.pointsFor}</td>
-                                        <td style={styles.td}>{row.pointsAgainst}</td>
-                                        <td style={styles.td}>{row.pointDiff}</td>
-                                      </tr>
-                                    ))}
-                                    {!rows.length ? (
-                                      <tr><td style={styles.td} colSpan={7}>No verified scores yet.</td></tr>
-                                    ) : null}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
+                {isPublicMode ? null : (
                   <div style={{ marginBottom: 20, border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 12, marginBottom: 14 }}>
                       <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
@@ -4572,6 +4475,142 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
+
+                {isPublicMode ? (
+                  <div style={{ display: "grid", gap: 16, marginTop: 20 }}>
+                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Coach Score Reporting</div>
+                      <div style={{ fontSize: 13, color: "#475569", marginBottom: 12 }}>
+                        Report from your phone after the game. Both coaches should report each game. Scores become official when reports match exactly, are within one point on each side, or agree on point differential.
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, alignItems: "end" }}>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                          <label style={styles.smallLabel}>Coach email</label>
+                          <input
+                            style={{ ...styles.input, minHeight: 48, fontSize: 16 }}
+                            value={scoreReporterEmail}
+                            onChange={(e) => setScoreReporterEmail(e.target.value)}
+                            placeholder="coach@example.com"
+                            type="email"
+                            autoComplete="email"
+                          />
+                        </div>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                          <label style={styles.smallLabel}>Reporting team</label>
+                          <select
+                            style={{ ...styles.select, minHeight: 48, fontSize: 16 }}
+                            value={scoreReporterTeam}
+                            onChange={(e) => setScoreReporterTeam(e.target.value)}
+                          >
+                            <option value="">Select team</option>
+                            {allScheduleTeams.map((team) => <option key={team} value={team}>{team}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                          <label style={styles.smallLabel}>Game</label>
+                          <select
+                            style={{ ...styles.select, minHeight: 52, fontSize: 16 }}
+                            value={scoreGameId}
+                            onChange={(e) => setScoreGameId(e.target.value)}
+                            disabled={!scoreReportableGames.length}
+                          >
+                            <option value="">{scoreReportableGames.length ? "Select game" : "Choose team first"}</option>
+                            {scoreReportableGames.map((game) => (
+                              <option key={getGameScoreKey(game)} value={getGameScoreKey(game)}>
+                                {`${game.date} • ${formatTimeDisplay(game.time)} • ${game.away} @ ${game.home}`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={styles.smallLabel}>Your score</label>
+                          <input
+                            style={{ ...styles.input, minHeight: 56, fontSize: 22, textAlign: "center", fontWeight: 700 }}
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={scoreForInput}
+                            onChange={(e) => setScoreForInput(e.target.value.replace(/[^0-9]/g, ""))}
+                            placeholder="0"
+                          />
+                        </div>
+                        <div>
+                          <label style={styles.smallLabel}>Opponent score</label>
+                          <input
+                            style={{ ...styles.input, minHeight: 56, fontSize: 22, textAlign: "center", fontWeight: 700 }}
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={scoreAgainstInput}
+                            onChange={(e) => setScoreAgainstInput(e.target.value.replace(/[^0-9]/g, ""))}
+                            placeholder="0"
+                          />
+                        </div>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                          <button
+                            style={{ ...styles.primaryButton, width: "100%", minHeight: 52, fontSize: 16 }}
+                            onClick={submitScoreReport}
+                          >
+                            Submit score
+                          </button>
+                        </div>
+                      </div>
+                      {scoreNotice ? (
+                        <div style={{ marginTop: 10, border: "1px solid #dbeafe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 10, padding: 10, fontSize: 13, fontWeight: 600 }}>
+                          {scoreNotice}
+                        </div>
+                      ) : null}
+                      {selectedScoreGame ? (
+                        <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>
+                          Current status: <strong style={{ color: "#0f172a" }}>{getOfficialScoreFromReports(selectedScoreGame, scoreReports).officialLabel}</strong> — {getOfficialScoreFromReports(selectedScoreGame, scoreReports).reportSummary}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Division Standings</div>
+                      <div style={{ display: "grid", gap: 14 }}>
+                        {(scheduleDivisionFilter === "all" ? DIVISIONS : [scheduleDivisionFilter]).map((division) => {
+                          const rows = divisionStandings[division] || [];
+                          return (
+                            <div key={division} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
+                              <div style={{ padding: "10px 12px", fontWeight: 700, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{division}</div>
+                              <div style={{ overflowX: "auto" }}>
+                                <table style={styles.table}>
+                                  <thead>
+                                    <tr>
+                                      <th style={styles.th}>Team</th>
+                                      <th style={styles.th}>W</th>
+                                      <th style={styles.th}>L</th>
+                                      <th style={styles.th}>T</th>
+                                      <th style={styles.th}>PF</th>
+                                      <th style={styles.th}>PA</th>
+                                      <th style={styles.th}>PD</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {rows.map((row) => (
+                                      <tr key={row.team}>
+                                        <td style={styles.td}>{row.team}</td>
+                                        <td style={styles.td}>{row.wins}</td>
+                                        <td style={styles.td}>{row.losses}</td>
+                                        <td style={styles.td}>{row.ties}</td>
+                                        <td style={styles.td}>{row.pointsFor}</td>
+                                        <td style={styles.td}>{row.pointsAgainst}</td>
+                                        <td style={styles.td}>{row.pointDiff}</td>
+                                      </tr>
+                                    ))}
+                                    {!rows.length ? (
+                                      <tr><td style={styles.td} colSpan={7}>No verified scores yet.</td></tr>
+                                    ) : null}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </>
             )}
           </Card>
