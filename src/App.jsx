@@ -1967,7 +1967,7 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
       .filter((entry) => entry.deficit > 0)
       .sort((a, b) => {
         if (b.deficit !== a.deficit) return b.deficit - a.deficit;
-        return parseShortDate(a.date) - parseShortDate(b.date);
+        return parseShortDate(b.date) - parseShortDate(a.date);
       });
 
     if (!deficits.length) break;
@@ -1987,8 +1987,8 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
       }))
       .filter((entry) => {
         if (entry.date === targetDate) return false;
-        const donorFloor = entry.date === config.fifthBoysDoubleheaderDate ? 0 : minimum;
-        return entry.games > donorFloor;
+        if (entry.date === config.fifthBoysDoubleheaderDate) return false;
+        return entry.games > minimum;
       })
       .sort((a, b) => {
         if (b.games !== a.games) return b.games - a.games;
@@ -1999,8 +1999,8 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
 
     let bestCandidate = null;
 
-    for (const target of emptyTargetSlots.slice(0, 8)) {
-      for (const donor of donorDates.slice(0, 6)) {
+    for (const target of emptyTargetSlots.slice(0, 12)) {
+      for (const donor of donorDates) {
         const donorGames = nextSchedule
           .filter((game) => game.date === donor.date)
           .sort((a, b) => {
@@ -2017,7 +2017,7 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
             return compareSlotLike(a, b);
           });
 
-        for (const game of donorGames.slice(0, 24)) {
+        for (const game of donorGames.slice(0, 40)) {
           const message = validateManualMove(nextSchedule.filter((g) => g !== game), { ...game }, target, config);
           if (message) continue;
 
