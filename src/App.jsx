@@ -2070,6 +2070,7 @@ function tryReduceRepeatedOpponents(schedule, config) {
   let currentData = getRepeatedOpponentViolations(working, config);
   let currentExtra = currentData.pairViolations.reduce((sum, row) => sum + row.extraGames, 0);
   if (!currentExtra) return working;
+  const doubleheaderAllowanceMap = Object.fromEntries(buildTeams(config).map((team) => [team.name, team.maxDoubleheadersPerTeam || 0]));
 
   const pairKeyForTeams = (division, teamA, teamB) => {
     const teams = [teamA, teamB].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
@@ -2081,6 +2082,12 @@ function tryReduceRepeatedOpponents(schedule, config) {
   const evaluateCandidate = (candidate) => {
     const result = buildResultFromSchedule(candidate, config, []);
     const data = getRepeatedOpponentViolations(result.schedule, config);
+    const doubleheaderIssues = (result.auditRows || []).filter((row) => row.dh > 0 && row.issues?.includes('Too many doubleheaders')).length;
+    const doubleheaderExcess = (result.auditRows || []).reduce((sum, row) => {
+      const built = buildTeams(config).find((team) => team.name === row.team);
+      const allowed = built?.maxDoubleheadersPerTeam || 0;
+      return sum + Math.max(0, (row.dh || 0) - allowed);
+    }, 0);
     return {
       schedule: sortScheduleGames(result.schedule.map((game) => ({ ...game }))),
       extra: data.pairViolations.reduce((sum, row) => sum + row.extraGames, 0),
@@ -2090,6 +2097,8 @@ function tryReduceRepeatedOpponents(schedule, config) {
       weeklyMinimumDeficit: result.auditSummary?.weeklyMinimumDeficit || 0,
       middleGapCount: result.auditSummary?.middleGapCount || 0,
       homeAwayIssues: result.auditSummary?.homeAwayIssues || 0,
+      doubleheaderIssues,
+      doubleheaderExcess,
     };
   };
 
@@ -2097,10 +2106,16 @@ function tryReduceRepeatedOpponents(schedule, config) {
     if (candidateMetrics.missingTeams > currentMetrics.missingTeams) return false;
     if (candidateMetrics.earlyViolations > currentMetrics.earlyViolations) return false;
     if (candidateMetrics.weeklyMinimumDeficit > currentMetrics.weeklyMinimumDeficit) return false;
+    if (candidateMetrics.doubleheaderIssues > currentMetrics.doubleheaderIssues) return false;
+    if (candidateMetrics.doubleheaderExcess > currentMetrics.doubleheaderExcess) return false;
     if (candidateMetrics.extra < currentMetrics.extra) return true;
     if (candidateMetrics.extra > currentMetrics.extra) return false;
     if (candidateMetrics.repeatedIssues < currentMetrics.repeatedIssues) return true;
     if (candidateMetrics.repeatedIssues > currentMetrics.repeatedIssues) return false;
+    if (candidateMetrics.doubleheaderIssues < currentMetrics.doubleheaderIssues) return true;
+    if (candidateMetrics.doubleheaderIssues > currentMetrics.doubleheaderIssues) return false;
+    if (candidateMetrics.doubleheaderExcess < currentMetrics.doubleheaderExcess) return true;
+    if (candidateMetrics.doubleheaderExcess > currentMetrics.doubleheaderExcess) return false;
     if (candidateMetrics.middleGapCount < currentMetrics.middleGapCount) return true;
     if (candidateMetrics.middleGapCount > currentMetrics.middleGapCount) return false;
     if (candidateMetrics.homeAwayIssues < currentMetrics.homeAwayIssues) return true;
