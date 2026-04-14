@@ -2047,6 +2047,117 @@ function getDateOccupancySignature(schedule, date, config) {
     .join("|");
 }
 
+function getDateMiddleGapCount(schedule, date, config) {
+  const dateSlots = buildOpenSlots(config)
+    .filter((slot) => slot.date === date)
+    .sort(compareSlotLike);
+  if (!dateSlots.length) return 0;
+
+  const occupied = new Set(
+    schedule
+      .filter((game) => game.date === date)
+      .map((game) => `${game.date}|${game.time}|${game.court}`)
+  );
+
+  let lastOccupiedIndex = -1;
+  for (let i = 0; i < dateSlots.length; i += 1) {
+    if (occupied.has(`${dateSlots[i].date}|${dateSlots[i].time}|${dateSlots[i].court}`)) {
+      lastOccupiedIndex = i;
+    }
+  }
+  if (lastOccupiedIndex < 0) return 0;
+
+  let gaps = 0;
+  for (let i = 0; i < lastOccupiedIndex; i += 1) {
+    if (!occupied.has(`${dateSlots[i].date}|${dateSlots[i].time}|${dateSlots[i].court}`)) gaps += 1;
+  }
+  return gaps;
+}
+
+function fillDateGapsBySearch(schedule, date, config, maxDepth = 6) {
+  const baseDeficit = getWeeklyMinimumDeficit(schedule, config);
+  const otherGames = schedule.filter((game) => game.date !== date).map((game) => ({ ...game }));
+  const dateSlots = buildOpenSlots(config)
+    .filter((slot) => slot.date === date)
+    .sort(compareSlotLike);
+  const slotIndexMap = new Map(dateSlots.map((slot, idx) => [`${slot.date}|${slot.time}|${slot.court}`, idx]));
+
+  function serializeDateGames(dateGames) {
+    return dateGames
+      .map((game) => `${game.home}|${game.away}|${game.time}|${game.court}`)
+      .sort()
+      .join('~');
+  }
+
+  const seen = new Set();
+
+  function helper(dateGames, depth) {
+    const workingSchedule = [...otherGames, ...dateGames.map((game) => ({ ...game }))].sort(compareSlotLike);
+    const currentGapCount = getDateMiddleGapCount(workingSchedule, date, config);
+    if (currentGapCount === 0) return workingSchedule;
+    if (depth <= 0) return null;
+
+    const stateKey = `${depth}|${serializeDateGames(dateGames)}`;
+    if (seen.has(stateKey)) return null;
+    seen.add(stateKey);
+
+    const occupiedKeys = new Set(dateGames.map((game) => `${game.date}|${game.time}|${game.court}`));
+    let gapSlot = null;
+    let lastOccupiedIndex = -1;
+    for (let i = 0; i < dateSlots.length; i += 1) {
+      if (occupiedKeys.has(`${dateSlots[i].date}|${dateSlots[i].time}|${dateSlots[i].court}`)) lastOccupiedIndex = i;
+    }
+    for (let i = 0; i < lastOccupiedIndex; i += 1) {
+      const key = `${dateSlots[i].date}|${dateSlots[i].time}|${dateSlots[i].court}`;
+      if (!occupiedKeys.has(key)) {
+        gapSlot = dateSlots[i];
+        break;
+      }
+    }
+    if (!gapSlot) return workingSchedule;
+
+    const gapIndex = slotIndexMap.get(`${gapSlot.date}|${gapSlot.time}|${gapSlot.court}`) ?? -1;
+    const candidates = dateGames
+      .map((game, idx) => ({ game, idx, slotIndex: slotIndexMap.get(`${game.date}|${game.time}|${game.court}`) ?? 9999 }))
+      .filter((entry) => entry.slotIndex > gapIndex)
+      .sort((a, b) => {
+        const aGapDistance = a.slotIndex - gapIndex;
+        const bGapDistance = b.slotIndex - gapIndex;
+        if (aGapDistance !== bGapDistance) return aGapDistance - bGapDistance;
+        const aTeamLoad = countTeamGamesOnDate(workingSchedule, a.game.home, date) + countTeamGamesOnDate(workingSchedule, a.game.away, date);
+        const bTeamLoad = countTeamGamesOnDate(workingSchedule, b.game.home, date) + countTeamGamesOnDate(workingSchedule, b.game.away, date);
+        if (aTeamLoad !== bTeamLoad) return aTeamLoad - bTeamLoad;
+        return compareSlotLike(a.game, b.game);
+      });
+
+    for (const candidate of candidates) {
+      const remainingSchedule = workingSchedule.filter((_, i) => i !== -1);
+      const scheduleWithoutCandidate = [...otherGames, ...dateGames.filter((_, idx) => idx !== candidate.idx).map((game) => ({ ...game }))].sort(compareSlotLike);
+      const movedGame = { ...candidate.game, date: gapSlot.date, time: gapSlot.time, court: gapSlot.court };
+      const message = validateManualMove(scheduleWithoutCandidate, movedGame, gapSlot, config);
+      if (message) continue;
+
+      const nextDateGames = dateGames.map((game, idx) =>
+        idx === candidate.idx ? movedGame : { ...game }
+      );
+      const nextSchedule = [...otherGames, ...nextDateGames].sort(compareSlotLike);
+      if (getWeeklyMinimumDeficit(nextSchedule, config) > baseDeficit) continue;
+      const result = buildResultFromSchedule(nextSchedule, config, []);
+      if (result.auditSummary.missingTeams !== 0) continue;
+      if (result.auditSummary.earlyViolations > 0) continue;
+
+      const recursive = helper(nextDateGames, depth - 1);
+      if (recursive) return recursive;
+    }
+
+    return null;
+  }
+
+  const dateGames = schedule.filter((game) => game.date === date).map((game) => ({ ...game }));
+  const searched = helper(dateGames, maxDepth);
+  return searched ? searched.sort(compareSlotLike) : schedule.map((game) => ({ ...game }));
+}
+
 function repackSingleDateEarlier(schedule, date, config) {
   const allSlots = buildOpenSlots(config)
     .filter((slot) => slot.date === date)
@@ -2403,23 +2514,26 @@ function compactScheduleEarlier(schedule, config) {
   let changed = true;
   let safety = 0;
 
-  while (changed && safety < 30) {
+  while (changed && safety < 40) {
     changed = false;
     safety += 1;
 
     for (const date of enabledDates) {
       const beforeSignature = getDateOccupancySignature(nextSchedule, date, config);
-      const beforeGaps = getMiddleGapCount(nextSchedule, config);
-      const repacked = repackSingleDateEarlier(nextSchedule, date, config);
-      const afterSignature = getDateOccupancySignature(repacked, date, config);
-      const afterGaps = getMiddleGapCount(repacked, config);
+      const beforeDateGaps = getDateMiddleGapCount(nextSchedule, date, config);
+
+      let candidate = repackSingleDateEarlier(nextSchedule, date, config);
+      candidate = fillDateGapsBySearch(candidate, date, config, 6);
+
+      const afterSignature = getDateOccupancySignature(candidate, date, config);
+      const afterDateGaps = getDateMiddleGapCount(candidate, date, config);
 
       const improved =
-        afterGaps < beforeGaps ||
-        (afterGaps === beforeGaps && afterSignature < beforeSignature);
+        afterDateGaps < beforeDateGaps ||
+        (afterDateGaps === beforeDateGaps && afterSignature < beforeSignature);
 
       if (improved) {
-        nextSchedule = repacked.map((game) => ({ ...game }));
+        nextSchedule = candidate.map((game) => ({ ...game }));
         changed = true;
       }
     }
@@ -3554,7 +3668,7 @@ export default function App() {
                         {gridNotice}
                       </div>
                     ) : null}
-                    <div style={{ ...styles.tableWrap, marginBottom: 20, maxHeight: 500 }}>
+                    <div style={{ ...styles.tableWrap, marginBottom: 20, maxHeight: 'none', overflow: 'visible' }}>
                       <table style={styles.table}>
                         <thead>
                           <tr>
