@@ -1940,6 +1940,7 @@ function generateScheduleEngine(config, lockedGames = []) {
     allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
   }
 
+  improvedSchedule = tryReduceRepeatedOpponents(improvedSchedule, config);
   improvedSchedule = sortScheduleGames(improvedSchedule);
 
   const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
@@ -2062,6 +2063,68 @@ function getRepeatedOpponentViolations(schedule, config) {
   });
 
   return { pairViolations, teamViolationCounts };
+}
+
+function tryReduceRepeatedOpponents(schedule, config) {
+  let working = sortScheduleGames((Array.isArray(schedule) ? schedule : []).map((game) => ({ ...game })));
+  let currentData = getRepeatedOpponentViolations(working, config);
+  let currentExtra = currentData.pairViolations.reduce((sum, row) => sum + row.extraGames, 0);
+  if (!currentExtra) return working;
+
+  const pairKeyForGame = (game) => {
+    const teams = [game.home, game.away].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return `${game.division}||${teams[0]}||${teams[1]}`;
+  };
+
+  const computeExtra = (games) => getRepeatedOpponentViolations(games, config).pairViolations.reduce((sum, row) => sum + row.extraGames, 0);
+
+  for (let pass = 0; pass < 120; pass += 1) {
+    let changed = false;
+    const violations = getRepeatedOpponentViolations(working, config).pairViolations;
+    if (!violations.length) break;
+
+    for (const violation of violations) {
+      const repeatedGames = working
+        .map((game, index) => ({ game, index }))
+        .filter(({ game }) => pairKeyForGame(game) === `${violation.division}||${violation.teamA}||${violation.teamB}`)
+        .sort((a, b) => compareSlotLike(a.game, b.game));
+
+      for (const { index: repeatedIndex, game: repeatedGame } of repeatedGames.slice(violation.allowed)) {
+        for (let otherIndex = 0; otherIndex < working.length; otherIndex += 1) {
+          if (otherIndex === repeatedIndex) continue;
+          const otherGame = working[otherIndex];
+          if (!otherGame || otherGame.division !== repeatedGame.division) continue;
+          if (otherGame.date !== repeatedGame.date || otherGame.time !== repeatedGame.time) continue;
+          if ([repeatedGame.home, repeatedGame.away].includes(otherGame.home) || [repeatedGame.home, repeatedGame.away].includes(otherGame.away)) continue;
+          if (repeatedGame.locked || otherGame.locked) continue;
+
+          const combos = [
+            [repeatedGame.home, otherGame.home, repeatedGame.away, otherGame.away],
+            [repeatedGame.home, otherGame.away, repeatedGame.away, otherGame.home],
+          ];
+
+          for (const [g1h, g1a, g2h, g2a] of combos) {
+            const candidate = working.map((game) => ({ ...game }));
+            candidate[repeatedIndex] = { ...candidate[repeatedIndex], home: g1h, away: g1a };
+            candidate[otherIndex] = { ...candidate[otherIndex], home: g2h, away: g2a };
+            const extra = computeExtra(candidate);
+            if (extra >= currentExtra) continue;
+            working = sortScheduleGames(candidate);
+            currentExtra = extra;
+            changed = true;
+            break;
+          }
+          if (changed) break;
+        }
+        if (changed) break;
+      }
+      if (changed) break;
+    }
+
+    if (!changed) break;
+  }
+
+  return working;
 }
 
 function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
@@ -3122,6 +3185,24 @@ function getOfficialScoreFromReports(game, scoreReports) {
     };
   }
 
+  const lockedReport = (Array.isArray(scoreReports) ? scoreReports : [])
+    .filter((report) => report.gameId === getGameScoreKey(game) && report.verifiedFinal && report.officialHomeScore != null && report.officialAwayScore != null)
+    .sort((a, b) => new Date(b.verifiedAt || b.submittedAt || 0).getTime() - new Date(a.verifiedAt || a.submittedAt || 0).getTime())[0] || null;
+
+  if (lockedReport) {
+    return {
+      status: "verified",
+      reportCount: (Array.isArray(scoreReports) ? scoreReports : []).filter((report) => report.gameId === getGameScoreKey(game)).length,
+      verified: true,
+      official: { homeScore: Number(lockedReport.officialHomeScore), awayScore: Number(lockedReport.officialAwayScore) },
+      officialLabel: `${lockedReport.officialAwayScore}-${lockedReport.officialHomeScore}`,
+      reportSummary: lockedReport.verificationReason || "Verified",
+      homeReport: null,
+      awayReport: null,
+      locked: true,
+    };
+  }
+
   const { relevant, homeReport, awayReport } = getLatestGameReportsByTeam(game, scoreReports);
   if (!relevant.length) {
     return {
@@ -3971,7 +4052,7 @@ export default function App() {
       submittedAt: new Date().toISOString(),
     };
 
-    const nextReports = existingReports.filter(
+    let nextReports = existingReports.filter(
       (report) => !(
         report.gameId === nextReport.gameId &&
         report.reportingTeam === nextReport.reportingTeam &&
@@ -3979,6 +4060,19 @@ export default function App() {
       )
     );
     nextReports.push(nextReport);
+
+    const status = getOfficialScoreFromReports(game, nextReports);
+    if (status.verified && status.official) {
+      const verifiedAt = new Date().toISOString();
+      nextReports = nextReports.map((report) => report.gameId === nextReport.gameId ? {
+        ...report,
+        verifiedFinal: true,
+        verifiedAt,
+        officialHomeScore: status.official.homeScore,
+        officialAwayScore: status.official.awayScore,
+        verificationReason: status.reportSummary || "Verified",
+      } : report);
+    }
 
     const ok = await savePublishedPayload({
       result: payloadResult,
@@ -3991,7 +4085,6 @@ export default function App() {
       setScoreForInput("");
       setScoreAgainstInput("");
       setScoreApproveExisting(false);
-      const status = getOfficialScoreFromReports(game, nextReports);
       const emailSent = await sendScoreConfirmationEmail(game, nextReport, nextReport.approvalMode);
       const emailNote = emailSent
         ? " Confirmation email sent."
