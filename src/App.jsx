@@ -591,10 +591,14 @@ function getProjectedDayPartPenalty(team, slotTime) {
   const targetGames = team.targetGames || 0;
   const idealMorning = Math.floor(targetGames / 2);
   const idealAfternoon = Math.ceil(targetGames / 2);
+  const imbalance = Math.abs(projectedMorning - projectedAfternoon);
+  const maxAllowedBias = Math.ceil(targetGames * 0.62);
+  const hardBiasPenalty = Math.max(0, Math.max(projectedMorning, projectedAfternoon) - maxAllowedBias) * 140;
   return (
-    Math.abs(projectedMorning - projectedAfternoon) * 24 +
-    Math.abs(projectedMorning - idealMorning) * 20 +
-    Math.abs(projectedAfternoon - idealAfternoon) * 20
+    imbalance * 40 +
+    Math.abs(projectedMorning - idealMorning) * 34 +
+    Math.abs(projectedAfternoon - idealAfternoon) * 34 +
+    hardBiasPenalty
   );
 }
 
@@ -751,8 +755,8 @@ function violatesTimeVariety(team, slotTime) {
 
   const projectedMorning = (team.morningGames || 0) + (isMorningTime(slotTime) ? 1 : 0);
   const projectedAfternoon = (team.afternoonGames || 0) + (isAfternoonTime(slotTime) ? 1 : 0);
-  const maxMorning = Math.ceil(targetGames * 0.65);
-  const maxAfternoon = Math.ceil(targetGames * 0.65);
+  const maxMorning = Math.ceil(targetGames * 0.62);
+  const maxAfternoon = Math.ceil(targetGames * 0.62);
 
   if (projectedMorning > maxMorning) return true;
   if (projectedAfternoon > maxAfternoon) return true;
@@ -876,8 +880,10 @@ function slotPenalty(teamA, teamB, slot, config = null) {
   return penalty;
 }
 
-function scheduleGame(schedule, slot, teamA, teamB) {
-  const homeTeam = chooseHomeTeam(teamA, teamB);
+function scheduleGame(schedule, slot, teamA, teamB, options = {}) {
+  const preserveHomeAway = Boolean(options.preserveHomeAway);
+  const locked = Boolean(options.locked);
+  const homeTeam = preserveHomeAway ? teamA : chooseHomeTeam(teamA, teamB);
   const awayTeam = homeTeam.id === teamA.id ? teamB : teamA;
   slot.used = true;
   applyGame(homeTeam, slot, awayTeam.name, true);
@@ -889,6 +895,7 @@ function scheduleGame(schedule, slot, teamA, teamB) {
     court: slot.court,
     home: homeTeam.name,
     away: awayTeam.name,
+    locked,
   });
 }
 
@@ -978,20 +985,17 @@ function getAmPmCorrectionScore(teamA, teamB, slot) {
   const bAfternoon = teamB.afternoonGames || 0;
 
   if (isMorningTime(slot.time)) {
-    score += Math.max(0, aAfternoon - aMorning) * 140;
-    score += Math.max(0, bAfternoon - bMorning) * 140;
+    score += Math.max(0, aAfternoon - aMorning) * 220;
+    score += Math.max(0, bAfternoon - bMorning) * 220;
+    score -= Math.max(0, aMorning - aAfternoon) * 90;
+    score -= Math.max(0, bMorning - bAfternoon) * 90;
   }
 
   if (isAfternoonTime(slot.time)) {
-    score -= Math.max(0, aAfternoon - aMorning - 1) * 100;
-    score -= Math.max(0, bAfternoon - bMorning - 1) * 100;
-  }
-
-  if (teamA.division.includes('Girls')) {
-    score += isMorningTime(slot.time) ? 40 : -30;
-  }
-  if (teamB.division.includes('Girls')) {
-    score += isMorningTime(slot.time) ? 40 : -30;
+    score += Math.max(0, aMorning - aAfternoon) * 220;
+    score += Math.max(0, bMorning - bAfternoon) * 220;
+    score -= Math.max(0, aAfternoon - aMorning) * 90;
+    score -= Math.max(0, bAfternoon - bMorning) * 90;
   }
 
   return score;
@@ -1186,6 +1190,7 @@ function placePlannedDivisionGames(allTeams, divisionTeams, plan, openSlots, sch
 
 function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config) {
   if (!config.fifthBoysDoubleheaderDate) return;
+  if (schedule.some((game) => game.date === config.fifthBoysDoubleheaderDate)) return;
 
   const teamList = teams.filter((team) => team.division === "5th Boys");
   if (teamList.length === 0) return;
@@ -1732,12 +1737,61 @@ function repairMissingTeamGamesInSchedule(schedule, config) {
   return nextSchedule.sort(compareSlotLike);
 }
 
-function generateScheduleEngine(config) {
+
+function getLockedGamesFromSchedule(schedule) {
+  return (schedule || []).filter((game) => game && game.locked);
+}
+
+function applyLockedGames(schedule, teams, openSlots, config, lockedGames, unscheduled) {
+  if (!Array.isArray(lockedGames) || lockedGames.length === 0) return;
+  const teamMap = Object.fromEntries(teams.map((team) => [team.name, team]));
+
+  for (const lockedGame of lockedGames) {
+    const homeTeam = teamMap[lockedGame.home];
+    const awayTeam = teamMap[lockedGame.away];
+    const slot = openSlots.find(
+      (entry) => !entry.used && entry.date === lockedGame.date && entry.time === lockedGame.time && entry.court === lockedGame.court
+    );
+
+    if (!homeTeam || !awayTeam || !slot) {
+      unscheduled.push({
+        matchup: `${lockedGame.away} @ ${lockedGame.home}`,
+        reason: 'Locked game could not be preserved in its saved slot.',
+        suggestion: 'Unlock or move this game, then regenerate.',
+      });
+      continue;
+    }
+
+    if (!canPairInSlot(homeTeam, awayTeam, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: true, allTeams: teams })) {
+      unscheduled.push({
+        matchup: `${lockedGame.away} @ ${lockedGame.home}`,
+        reason: 'Locked game conflicts with the current setup or other locked games.',
+        suggestion: 'Unlock or move this game, then regenerate.',
+      });
+      continue;
+    }
+
+    scheduleGame(schedule, slot, homeTeam, awayTeam, { locked: true, preserveHomeAway: true });
+  }
+}
+
+function sortScheduleGames(schedule) {
+  return [...schedule].sort((a, b) => {
+    const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
+    if (dateDiff !== 0) return dateDiff;
+    const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
+    if (timeDiff !== 0) return timeDiff;
+    return a.court.localeCompare(b.court);
+  });
+}
+
+function generateScheduleEngine(config, lockedGames = []) {
   const teams = buildTeams(config);
   const openSlots = buildOpenSlots(config);
   const schedule = [];
   const unscheduled = [];
 
+  applyLockedGames(schedule, teams, openSlots, config, lockedGames, unscheduled);
   scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config);
 
   const divisionPlans = {};
@@ -1790,13 +1844,7 @@ function generateScheduleEngine(config) {
     allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
   }
 
-  improvedSchedule.sort((a, b) => {
-    const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
-    if (dateDiff !== 0) return dateDiff;
-    const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
-    if (timeDiff !== 0) return timeDiff;
-    return a.court.localeCompare(b.court);
-  });
+  improvedSchedule = sortScheduleGames(improvedSchedule);
 
   const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
   const finalTeams = Object.values(finalTeamMap);
@@ -1823,7 +1871,7 @@ function generateScheduleEngine(config) {
       Math.abs(team.home - team.away) > 2 ? 'Home/away imbalance' : null,
       team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? 'Too many doubleheaders' : null,
       team.maxSameTimeSlot > (team.targetGames <= 8 ? 2 : 3) ? 'Time slot concentration' : null,
-      Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.65)
+      Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.62)
         ? 'Poor AM/PM balance'
         : null,
     ].filter(Boolean),
@@ -1879,15 +1927,7 @@ function generateScheduleEngine(config) {
 
 
 function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
-  const improvedSchedule = schedule
-    .map((game) => ({ ...game }))
-    .sort((a, b) => {
-      const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
-      if (dateDiff !== 0) return dateDiff;
-      const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
-      if (timeDiff !== 0) return timeDiff;
-      return a.court.localeCompare(b.court);
-    });
+  const improvedSchedule = sortScheduleGames(schedule.map((game) => ({ ...game })));
 
   const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
   const finalTeams = Object.values(finalTeamMap);
@@ -1915,7 +1955,7 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
       Math.abs(team.home - team.away) > 2 ? 'Home/away imbalance' : null,
       team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? 'Too many doubleheaders' : null,
       team.maxSameTimeSlot > (team.targetGames <= 8 ? 2 : 3) ? 'Time slot concentration' : null,
-      Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.65)
+      Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.62)
         ? 'Poor AM/PM balance'
         : null,
     ].filter(Boolean),
@@ -2849,6 +2889,31 @@ function runSelfChecks() {
   ];
 }
 
+
+function getDateTargetForSchedule(config, date) {
+  return getDatesSubjectToWeeklyMinimum(config).includes(date) ? Number(config.minGamesPerWeek || 0) : 0;
+}
+
+function getDateDebugRows(result, config) {
+  const enabledDates = config.saturdays.filter((entry) => entry.enabled).map((entry) => entry.date);
+  return enabledDates.map((date) => {
+    const actual = result?.schedule?.filter((game) => game.date === date).length || 0;
+    const target = getDateTargetForSchedule(config, date);
+    return {
+      date,
+      actual,
+      target,
+      delta: target > 0 ? actual - target : null,
+      included: target > 0,
+      meetsTarget: target <= 0 || actual >= target,
+    };
+  });
+}
+
+function sameGameKey(a, b) {
+  return a && b && a.date === b.date && a.time === b.time && a.court === b.court && a.home === b.home && a.away === b.away;
+}
+
 function getScheduleGridForDate(config, result, date) {
   const enabledTimes = config.timeSlots.filter((entry) => entry.enabled).map((entry) => entry.time);
   const courts = getEnabledCourtsForDate(config, date);
@@ -2884,6 +2949,7 @@ export default function App() {
   const [savedSetupName, setSavedSetupName] = useState("");
   const [savedSetups, setSavedSetups] = useState([]);
   const [selectedSavedSetup, setSelectedSavedSetup] = useState("");
+  const [dateDebugExpanded, setDateDebugExpanded] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -2998,6 +3064,9 @@ export default function App() {
     if (!result || !adminScheduleDate) return 0;
     return result.schedule.filter((game) => game.date === adminScheduleDate).length;
   }, [result, adminScheduleDate]);
+
+  const dateDebugRows = useMemo(() => (result ? getDateDebugRows(result, config) : []), [result, config]);
+  const lockedGameCount = useMemo(() => getLockedGamesFromSchedule(result?.schedule || []).length, [result]);
 
   function setDivisionCount(division, value) {
     const nextCount = Number(value);
@@ -3149,6 +3218,15 @@ export default function App() {
     setDragState(null);
   }
 
+
+  function toggleGameLocked(targetGame) {
+    if (isPublicMode || !result) return;
+    const nextSchedule = result.schedule.map((game) =>
+      sameGameKey(game, targetGame) ? { ...game, locked: !game.locked } : { ...game }
+    );
+    setResult(buildResultFromSchedule(nextSchedule, config, result.unscheduled));
+  }
+
   function saveCurrentSetup() {
     if (isPublicMode) return;
     const trimmed = String(savedSetupName || "").trim();
@@ -3227,14 +3305,15 @@ export default function App() {
   }
 
   function runScheduler() {
-    const next = generateScheduleEngine(config);
+    const lockedGames = getLockedGamesFromSchedule(result?.schedule || []);
+    const next = generateScheduleEngine(config, lockedGames);
     setResult(next);
     setScheduleDivisionFilter("all");
     setScheduleTeamFilter("all");
     setActiveTab("schedule");
     setPublishNotice("");
     setDragState(null);
-    setGridNotice("");
+    setGridNotice(lockedGames.length ? `Regenerated around ${lockedGames.length} locked game${lockedGames.length === 1 ? '' : 's'}.` : '');
   }
 
   async function publishSchedule() {
@@ -3291,9 +3370,10 @@ export default function App() {
                 <button style={styles.button} onClick={resetAll}>Reset</button>
                 <button style={styles.primaryButton} onClick={runScheduler}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    <Wand2 size={16} /> Generate Schedule
+                    <Wand2 size={16} /> {lockedGameCount ? `Regenerate Around ${lockedGameCount} Locked` : "Generate Schedule"}
                   </span>
                 </button>
+                {lockedGameCount ? <span style={styles.badge}>{lockedGameCount} locked game{lockedGameCount === 1 ? "" : "s"}</span> : null}
                 <button style={styles.successButton} onClick={publishSchedule} disabled={!result}>Publish Schedule</button>
                 <button style={styles.button} onClick={loadPublishedSchedule}>Load Published</button>
                 <button style={styles.dangerButton} onClick={clearPublishedSchedule}>Clear Published</button>
@@ -3769,14 +3849,42 @@ export default function App() {
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                           <label style={{ ...styles.smallLabel, marginBottom: 0 }}>View one date in grid form</label>
                           <span style={styles.badge}>{adminScheduleGameCount} games</span>
+                          {getDateTargetForSchedule(config, adminScheduleDate) > 0 ? (
+                            <span style={adminScheduleGameCount >= getDateTargetForSchedule(config, adminScheduleDate) ? styles.badge : styles.badgeDanger}>
+                              target {getDateTargetForSchedule(config, adminScheduleDate)}
+                            </span>
+                          ) : (
+                            <span style={styles.badge}>excluded from min/week</span>
+                          )}
+                          {lockedGameCount ? <span style={styles.badge}>{lockedGameCount} locked</span> : null}
                         </div>
                         <select style={styles.select} value={adminScheduleDate} onChange={(e) => setAdminScheduleDate(e.target.value)}>
                           {config.saturdays.filter((entry) => entry.enabled).map((entry) => <option key={entry.date} value={entry.date}>{entry.date}</option>)}
                         </select>
                       </div>
                       <div style={{ fontSize: 14, color: "#475569" }}>
-                        Drag a scheduled game to another open slot on this date to manually adjust the grid. The drop is blocked if it would break daily limits, 8:00 caps, or same-court back-to-back doubleheader rules.
+                        Drag a scheduled game to another open slot on this date to manually adjust the grid. Use the lock buttons in the schedule list below, then regenerate to rebuild around those fixed games. The drop is blocked if it would break daily limits, 8:00 caps, or same-court back-to-back doubleheader rules.
                       </div>
+                    </div>
+                    <div style={{ marginBottom: 16, border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 700 }}>Date targets</div>
+                        <button style={styles.button} onClick={() => setDateDebugExpanded((v) => !v)}>{dateDebugExpanded ? 'Hide' : 'Show'}</button>
+                      </div>
+                      {dateDebugExpanded ? (
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10 }}>
+                          {dateDebugRows.map((row) => (
+                            <div key={row.date} style={{ border: `1px solid ${row.meetsTarget ? '#bbf7d0' : '#fecaca'}`, background: row.meetsTarget ? '#f0fdf4' : '#fef2f2', borderRadius: 10, padding: 10 }}>
+                              <div style={{ fontWeight: 700, marginBottom: 4 }}>{row.date}</div>
+                              <div style={{ fontSize: 13, color: '#475569' }}>Actual: <strong style={{ color: '#0f172a' }}>{row.actual}</strong></div>
+                              <div style={{ fontSize: 13, color: '#475569' }}>Target: <strong style={{ color: '#0f172a' }}>{row.included ? row.target : '—'}</strong></div>
+                              <div style={{ fontSize: 12, marginTop: 4, color: row.meetsTarget ? '#166534' : '#991b1b' }}>
+                                {row.included ? (row.meetsTarget ? 'At or above minimum' : `${Math.abs(row.delta)} below minimum`) : 'Excluded from weekly minimum'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                     {gridNotice ? (
                       <div style={{ marginBottom: 12, border: "1px solid #dbeafe", background: dragState ? "#eff6ff" : "#f8fafc", color: "#1e3a8a", borderRadius: 12, padding: 12, fontSize: 14, fontWeight: 600 }}>
@@ -3828,7 +3936,10 @@ export default function App() {
                                         }}
                                         title="Drag to another open slot"
                                       >
-                                        <div>{cellGame.away} @ {cellGame.home}</div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                                          <div>{cellGame.away} @ {cellGame.home}</div>
+                                          {cellGame.locked ? <span style={{ ...styles.badge, alignSelf: 'flex-start' }}>Locked</span> : null}
+                                        </div>
                                       </div>
                                     ) : (
                                       <span style={{ color: '#94a3b8' }}>Open</span>
@@ -3881,6 +3992,7 @@ export default function App() {
                         <th style={styles.th}>Court</th>
                         <th style={styles.th}>Home</th>
                         <th style={styles.th}>Away</th>
+                        {!isPublicMode ? <th style={styles.th}>Lock</th> : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -3892,6 +4004,16 @@ export default function App() {
                           <td style={styles.td}>{game.court}</td>
                           <td style={styles.td}>{game.home}</td>
                           <td style={styles.td}>{game.away}</td>
+                          {!isPublicMode ? (
+                            <td style={styles.td}>
+                              <button
+                                style={game.locked ? styles.successButton : styles.button}
+                                onClick={() => toggleGameLocked(game)}
+                              >
+                                {game.locked ? 'Locked' : 'Lock'}
+                              </button>
+                            </td>
+                          ) : null}
                         </tr>
                       ))}
                     </tbody>
