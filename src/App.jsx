@@ -2031,6 +2031,86 @@ function countTeamGamesOnDate(schedule, teamName, date) {
   return schedule.filter((game) => game.date === date && (game.home === teamName || game.away === teamName)).length;
 }
 
+
+function repackSingleDateEarlier(schedule, date, config) {
+  const allSlots = buildOpenSlots(config)
+    .filter((slot) => slot.date === date)
+    .sort(compareSlotLike);
+
+  const dateGames = schedule
+    .filter((game) => game.date === date)
+    .map((game) => ({ ...game }));
+
+  if (!allSlots.length || dateGames.length <= 1) {
+    return schedule.map((game) => ({ ...game }));
+  }
+
+  const otherGames = schedule
+    .filter((game) => game.date !== date)
+    .map((game) => ({ ...game }));
+
+  const originalGapCount = getMiddleGapCount(schedule, config);
+  let workingSchedule = [...otherGames];
+  const remainingGames = [...dateGames];
+
+  const difficultyScore = (game) => {
+    const homeOnDate = countTeamGamesOnDate(schedule, game.home, date);
+    const awayOnDate = countTeamGamesOnDate(schedule, game.away, date);
+    const sameDayPressure = (homeOnDate > 1 ? 4 : 0) + (awayOnDate > 1 ? 4 : 0);
+    const earlyPressure =
+      (isEarlyTime(game.time) ? 2 : 0) +
+      (game.home && countTeamGamesOnDate(schedule, game.home, date) > 0 ? 1 : 0) +
+      (game.away && countTeamGamesOnDate(schedule, game.away, date) > 0 ? 1 : 0);
+    return sameDayPressure + earlyPressure;
+  };
+
+  remainingGames.sort((a, b) => {
+    const diff = difficultyScore(b) - difficultyScore(a);
+    if (diff !== 0) return diff;
+    return compareSlotLike(a, b);
+  });
+
+  for (const slot of allSlots) {
+    let placedIndex = -1;
+
+    for (let i = 0; i < remainingGames.length; i += 1) {
+      const game = remainingGames[i];
+      const movedGame = { ...game, date: slot.date, time: slot.time, court: slot.court };
+      const message = validateManualMove(workingSchedule, movedGame, slot, config);
+      if (!message) {
+        placedIndex = i;
+        workingSchedule.push(movedGame);
+        break;
+      }
+    }
+
+    if (placedIndex >= 0) {
+      remainingGames.splice(placedIndex, 1);
+    }
+
+    if (!remainingGames.length) break;
+  }
+
+  if (remainingGames.length) {
+    return schedule.map((game) => ({ ...game }));
+  }
+
+  const candidateSchedule = workingSchedule.sort(compareSlotLike);
+  const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
+  if (candidateResult.auditSummary.missingTeams !== 0) return schedule.map((game) => ({ ...game }));
+  if (candidateResult.auditSummary.earlyViolations > 0) return schedule.map((game) => ({ ...game }));
+  if (getWeeklyMinimumDeficit(candidateSchedule, config) > getWeeklyMinimumDeficit(schedule, config)) {
+    return schedule.map((game) => ({ ...game }));
+  }
+
+  const candidateGapCount = getMiddleGapCount(candidateSchedule, config);
+  if (candidateGapCount > originalGapCount) {
+    return schedule.map((game) => ({ ...game }));
+  }
+
+  return candidateSchedule;
+}
+
 function rebalanceToMinimumWeeklyGames(schedule, config) {
   const minimum = Number(config?.minGamesPerWeek || 0);
   const targetDates = getDatesSubjectToWeeklyMinimum(config);
@@ -2263,108 +2343,21 @@ function rebalanceTowardFinalSaturday(schedule, config) {
 
 function compactScheduleEarlier(schedule, config) {
   let nextSchedule = schedule.map((game) => ({ ...game }));
-  const allSlots = buildOpenSlots(config);
   const enabledDates = getEnabledGameDates(config);
-  let currentResult = buildResultFromSchedule(nextSchedule, config, []);
-  let currentScore = schedulePenaltyScore(currentResult, config);
-  let currentGaps = getMiddleGapCount(nextSchedule, config);
-  let currentWeeklyDeficit = getWeeklyMinimumDeficit(nextSchedule, config);
+  let changed = true;
+  let safety = 0;
 
-  for (const date of enabledDates) {
-    let changed = true;
-    let safety = 0;
+  while (changed && safety < 20) {
+    changed = false;
+    safety += 1;
 
-    while (changed && safety < 300) {
-      changed = false;
-      safety += 1;
+    for (const date of enabledDates) {
+      const repacked = repackSingleDateEarlier(nextSchedule, date, config);
+      const beforeGaps = getMiddleGapCount(nextSchedule, config);
+      const afterGaps = getMiddleGapCount(repacked, config);
 
-      const occupiedKeys = new Set(
-        nextSchedule
-          .filter((game) => game.date === date)
-          .map((game) => `${game.date}|${game.time}|${game.court}`)
-      );
-
-      const freeSlots = allSlots
-        .filter((slot) => slot.date === date && !occupiedKeys.has(`${slot.date}|${slot.time}|${slot.court}`))
-        .sort(compareSlotLike);
-
-      if (!freeSlots.length) break;
-
-      let bestCandidate = null;
-
-      for (const target of freeSlots) {
-        const laterGames = nextSchedule
-          .filter(
-            (game) =>
-              game.date === date &&
-              (getTimeIndex(game.time) > getTimeIndex(target.time) ||
-                (game.time === target.time && game.court.localeCompare(target.court) > 0))
-          )
-          .sort(compareSlotLike);
-
-        for (const game of laterGames) {
-          const message = validateManualMove(nextSchedule.filter((g) => g !== game), { ...game }, target, config);
-          if (message) continue;
-
-          const candidateSchedule = nextSchedule.map((g) =>
-            g === game ? { ...g, date: target.date, time: target.time, court: target.court } : g
-          );
-          const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
-          if (candidateResult.auditSummary.missingTeams !== 0) continue;
-          if (candidateResult.auditSummary.earlyViolations > 0) continue;
-
-          const candidateGaps = getMiddleGapCount(candidateSchedule, config);
-          const candidateWeeklyDeficit = getWeeklyMinimumDeficit(candidateSchedule, config);
-          if (candidateWeeklyDeficit > currentWeeklyDeficit) continue;
-
-          const candidateScore = schedulePenaltyScore(candidateResult, config);
-          const timeGain = getTimeIndex(game.time) - getTimeIndex(target.time);
-
-          if (candidateGaps >= currentGaps && candidateWeeklyDeficit === currentWeeklyDeficit && candidateScore >= currentScore) {
-            continue;
-          }
-
-          const candidateTuple = [
-            currentGaps - candidateGaps,
-            currentWeeklyDeficit - candidateWeeklyDeficit,
-            timeGain,
-            currentScore - candidateScore,
-          ];
-
-          if (!bestCandidate) {
-            bestCandidate = {
-              schedule: candidateSchedule.map((g) => ({ ...g })),
-              score: candidateScore,
-              gaps: candidateGaps,
-              weeklyDeficit: candidateWeeklyDeficit,
-              tuple: candidateTuple,
-            };
-          } else {
-            const cur = bestCandidate.tuple;
-            let better = false;
-            for (let i = 0; i < candidateTuple.length; i += 1) {
-              if (candidateTuple[i] === cur[i]) continue;
-              better = candidateTuple[i] > cur[i];
-              break;
-            }
-            if (better) {
-              bestCandidate = {
-                schedule: candidateSchedule.map((g) => ({ ...g })),
-                score: candidateScore,
-                gaps: candidateGaps,
-                weeklyDeficit: candidateWeeklyDeficit,
-                tuple: candidateTuple,
-              };
-            }
-          }
-        }
-      }
-
-      if (bestCandidate) {
-        nextSchedule = bestCandidate.schedule;
-        currentScore = bestCandidate.score;
-        currentGaps = bestCandidate.gaps;
-        currentWeeklyDeficit = bestCandidate.weeklyDeficit;
+      if (afterGaps < beforeGaps) {
+        nextSchedule = repacked.map((game) => ({ ...game }));
         changed = true;
       }
     }
@@ -2372,6 +2365,7 @@ function compactScheduleEarlier(schedule, config) {
 
   return nextSchedule.sort(compareSlotLike);
 }
+
 
 function validateManualMove(schedule, gameToMove, target, config) {
   if (config.fifthBoysDoubleheaderDate && target.date === config.fifthBoysDoubleheaderDate && gameToMove.division !== '5th Boys') {
