@@ -1000,6 +1000,8 @@ function getAmPmCorrectionScore(teamA, teamB, slot) {
 function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, allTeams, options = {}) {
   const { ignoreTimeVariety = false } = options;
   const byId = Object.fromEntries(divisionTeams.map((team) => [team.id, team]));
+  const dateCounts = getCurrentDateGameCountsFromTeams(allTeams);
+  const dateTargetDeficit = getDateTargetDeficitFromCounts(slot.date, dateCounts, config);
   let bestIndex = -1;
   let bestScore = -Infinity;
 
@@ -1019,6 +1021,10 @@ function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, a
     const roundPenalty = item.roundIndex * 3 + (item.repeatIndex || 1) * 5;
 
     let score = needScore + ampmScore - repeatPenalty - dayPenalty - slotCost - roundPenalty;
+    score += dateTargetDeficit * 900;
+    if (dateTargetDeficit > 0) {
+      score += parseShortDate(slot.date) / 1000000;
+    }
 
     if (teamA.division === '5th Boys' && config.fifthBoysDoubleheaderDate && slot.date === config.fifthBoysDoubleheaderDate) {
       const aOnDhDate = teamA.gamesByDate[config.fifthBoysDoubleheaderDate] || 0;
@@ -1043,23 +1049,31 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
   const divisionTeamMap = Object.fromEntries(
     DIVISIONS.map((division) => [division, teams.filter((team) => team.division === division)])
   );
-  const minimumPerWeek = Number(config.minGamesPerWeek || 0);
+  const dateTargets = getPerDateGameTargets(config);
 
   while (true) {
     const freeSlots = openSlots
       .filter((slot) => !slot.used)
       .sort((a, b) => {
-        if (minimumPerWeek > 0) {
-          const aCount = countGamesOnDate(schedule, a.date);
-          const bCount = countGamesOnDate(schedule, b.date);
-          const aDef = Math.max(0, minimumPerWeek - aCount);
-          const bDef = Math.max(0, minimumPerWeek - bCount);
-          if (bDef !== aDef) return bDef - aDef;
-          if ((aDef > 0 || bDef > 0) && a.date !== b.date) {
-            return parseShortDate(b.date) - parseShortDate(a.date);
-          }
-          if (aCount !== bCount) return aCount - bCount;
+        const freeSlotsByDate = openSlots
+          .filter((slot) => !slot.used)
+          .reduce((acc, slot) => {
+            acc[slot.date] = (acc[slot.date] || 0) + 1;
+            return acc;
+          }, {});
+        const aCount = countGamesOnDate(schedule, a.date);
+        const bCount = countGamesOnDate(schedule, b.date);
+        const aDef = Math.max(0, Number(dateTargets[a.date] || 0) - aCount);
+        const bDef = Math.max(0, Number(dateTargets[b.date] || 0) - bCount);
+        const aUrgency = aDef > 0 ? aDef / Math.max(1, freeSlotsByDate[a.date] || 1) : 0;
+        const bUrgency = bDef > 0 ? bDef / Math.max(1, freeSlotsByDate[b.date] || 1) : 0;
+
+        if (bUrgency !== aUrgency) return bUrgency - aUrgency;
+        if (bDef !== aDef) return bDef - aDef;
+        if ((aDef > 0 || bDef > 0) && a.date !== b.date) {
+          return parseShortDate(b.date) - parseShortDate(a.date);
         }
+        if (aCount !== bCount) return aCount - bCount;
         return compareSlotLike(a, b);
       });
 
@@ -1111,6 +1125,7 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
 
 function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, allowIgnoreTimeVariety = false) {
   const slotGroups = buildOrderedSlotGroups(openSlots);
+  const dateCounts = getCurrentDateGameCountsFromTeams(allTeams);
   let best = null;
   let bestScore = Infinity;
 
@@ -1118,7 +1133,9 @@ function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTea
     for (const slot of group.slots) {
       if (!canPairInSlot(teamA, teamB, slot, config, { ignoreTimeVariety: allowIgnoreTimeVariety, allTeams })) continue;
 
+      const dateTargetDeficit = getDateTargetDeficitFromCounts(slot.date, dateCounts, config);
       let penalty = 0;
+      penalty -= dateTargetDeficit * 320;
       penalty += slotPenalty(teamA, teamB, slot, config) * (allowIgnoreTimeVariety ? 0.15 : 0.35);
       penalty += (teamA.gamesByDate[slot.date] || 0) * 20;
       penalty += (teamB.gamesByDate[slot.date] || 0) * 20;
@@ -1350,6 +1367,7 @@ function canStillUseTeamOnDate(team, slot, config) {
 
 function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, options = {}) {
   const { emergencyMode = false } = options;
+  const dateCounts = getCurrentDateGameCountsFromTeams(allTeams);
 
   const divisionTeams = allTeams.filter(
     (candidate) => candidate.division === team.division && candidate.id !== team.id
@@ -1371,9 +1389,11 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
         const oppNeed = getNeed(opponent);
         const repeatCount = team.opponents?.[opponent.name] || 0;
 
+        const dateTargetDeficit = getDateTargetDeficitFromCounts(slot.date, dateCounts, config);
         let score = 0;
         score += teamNeed * 1400;
         score += oppNeed * (emergencyMode ? 250 : 700);
+        score += dateTargetDeficit * 900;
 
         if (oppNeed > 0) score += 450;
         else score += emergencyMode ? 150 : -120;
@@ -1760,9 +1780,6 @@ function generateScheduleEngine(config) {
   let allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
 
   if (allTeamsScheduled) {
-    improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-    improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
-
     if (Number(config.minGamesPerWeek || 0) > 0) {
       improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
       improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
@@ -1772,7 +1789,10 @@ function generateScheduleEngine(config) {
       improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
       improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
       improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+      improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
     } else {
+      improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
+      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
       improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
       improvedSchedule = rebalanceTowardFinalSaturday(improvedSchedule, config);
       improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
@@ -1971,6 +1991,45 @@ function getFinalEnabledDate(config) {
 
 function countGamesOnDate(schedule, date) {
   return schedule.filter((game) => game.date === date).length;
+}
+
+function getPerDateGameTargets(config) {
+  const dates = getEnabledGameDates(config);
+  const minimum = Number(config?.minGamesPerWeek || 0);
+  const targets = Object.fromEntries(dates.map((date) => [date, 0]));
+
+  if (minimum <= 0) return targets;
+
+  for (const date of dates) {
+    if (date === config.fifthBoysDoubleheaderDate) continue;
+    targets[date] = Math.min(minimum, getTotalSlotsForDate(config, date));
+  }
+
+  return targets;
+}
+
+function getCurrentDateGameCountsFromTeams(allTeams) {
+  const doubled = {};
+  for (const team of allTeams || []) {
+    for (const game of team.scheduledGames || []) {
+      doubled[game.date] = (doubled[game.date] || 0) + 1;
+    }
+  }
+
+  const counts = {};
+  for (const [date, value] of Object.entries(doubled)) {
+    counts[date] = Math.floor(value / 2);
+  }
+  return counts;
+}
+
+function getDateTargetDeficitFromCounts(date, countsByDate, config) {
+  const targets = getPerDateGameTargets(config);
+  return Math.max(0, Number(targets[date] || 0) - Number(countsByDate?.[date] || 0));
+}
+
+function getDateTargetDeficitFromTeams(date, allTeams, config) {
+  return getDateTargetDeficitFromCounts(date, getCurrentDateGameCountsFromTeams(allTeams), config);
 }
 
 function getDatesSubjectToWeeklyMinimum(config) {
