@@ -1039,22 +1039,37 @@ function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, a
 }
 
 function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unscheduled, config) {
-  const enabledDates = config.saturdays.filter((entry) => entry.enabled).map((entry) => entry.date);
+  const enabledDates = getEnabledGameDates(config);
   const divisionTeamMap = Object.fromEntries(
     DIVISIONS.map((division) => [division, teams.filter((team) => team.division === division)])
   );
+  const minimumPerWeek = Number(config.minGamesPerWeek || 0);
 
-  for (let dateIndex = 0; dateIndex < enabledDates.length; dateIndex += 1) {
-    const date = enabledDates[dateIndex];
-    const freeSlots = getFreeSlotsForDate(openSlots, date);
-    if (!freeSlots.length) continue;
+  while (true) {
+    const freeSlots = openSlots
+      .filter((slot) => !slot.used)
+      .sort((a, b) => {
+        if (minimumPerWeek > 0) {
+          const aCount = countGamesOnDate(schedule, a.date);
+          const bCount = countGamesOnDate(schedule, b.date);
+          const aDef = Math.max(0, minimumPerWeek - aCount);
+          const bDef = Math.max(0, minimumPerWeek - bCount);
+          if (bDef !== aDef) return bDef - aDef;
+          if ((aDef > 0 || bDef > 0) && a.date !== b.date) {
+            return parseShortDate(b.date) - parseShortDate(a.date);
+          }
+          if (aCount !== bCount) return aCount - bCount;
+        }
+        return compareSlotLike(a, b);
+      });
 
-    const rotatedOrder = getRotatedDivisionOrder(dateIndex, 2);
+    if (!freeSlots.length) break;
+
+    let placedAny = false;
 
     for (const slot of freeSlots) {
-      if (slot.used) continue;
-
-      let placed = false;
+      const dateIndex = Math.max(0, enabledDates.indexOf(slot.date));
+      const rotatedOrder = getRotatedDivisionOrder(dateIndex, 2);
       const divisionOrder = [...rotatedOrder, ...DIVISIONS.filter((d) => !rotatedOrder.includes(d))];
 
       for (const division of divisionOrder) {
@@ -1069,12 +1084,12 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
 
         scheduleGame(schedule, slot, chosen.teamA, chosen.teamB);
         pendingPlan.splice(chosen.index, 1);
-        placed = true;
+        placedAny = true;
         break;
       }
-
-      if (placed) continue;
     }
+
+    if (!placedAny) break;
   }
 
   for (const division of DIVISIONS) {
@@ -1547,6 +1562,7 @@ function schedulePenaltyScore(result, config) {
     (result.auditSummary?.earlyViolations || 0) * 150000 +
     (result.auditSummary?.weeklyMinimumDeficit || 0) * 120000 +
     (result.auditSummary?.weeklyMinimumIssues || 0) * 30000 +
+    (result.auditSummary?.middleGapCount || 0) * 8000 +
     (result.auditSummary?.homeAwayIssues || 0) * 30000 +
     (result.auditSummary?.timeVarietyIssues || 0) * 12000 +
     severity +
@@ -1750,6 +1766,10 @@ function generateScheduleEngine(config) {
     if (Number(config.minGamesPerWeek || 0) > 0) {
       improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
       improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+      improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+      improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
+      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+      improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
       improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
       improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
     } else {
@@ -1815,6 +1835,7 @@ function generateScheduleEngine(config) {
     timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
     weeklyMinimumIssues: weeklyMinimumViolations.length,
     weeklyMinimumDeficit,
+    middleGapCount: getMiddleGapCount(improvedSchedule, config),
     enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
     enabledCourts: Object.values(config.dateCourtSettings).reduce(
       (sum, courts) => sum + courts.filter((court) => court.enabled && String(court.name || '').trim() !== '').length,
@@ -1906,6 +1927,7 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
     timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
     weeklyMinimumIssues: weeklyMinimumViolations.length,
     weeklyMinimumDeficit,
+    middleGapCount: getMiddleGapCount(improvedSchedule, config),
     enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
     enabledCourts: Object.values(config.dateCourtSettings).reduce(
       (sum, courts) => sum + courts.filter((court) => court.enabled && String(court.name || '').trim() !== '').length,
@@ -1973,6 +1995,36 @@ function getWeeklyMinimumViolations(schedule, config) {
 
 function getWeeklyMinimumDeficit(schedule, config) {
   return getWeeklyMinimumViolations(schedule, config).reduce((sum, entry) => sum + (entry.deficit || 0), 0);
+}
+
+function getMiddleGapCount(schedule, config) {
+  const dates = getEnabledGameDates(config);
+  const allSlots = buildOpenSlots(config);
+  let gaps = 0;
+
+  for (const date of dates) {
+    const dateSlots = allSlots.filter((slot) => slot.date === date).sort(compareSlotLike);
+    if (!dateSlots.length) continue;
+    const occupied = new Set(
+      schedule
+        .filter((game) => game.date === date)
+        .map((game) => `${game.date}|${game.time}|${game.court}`)
+    );
+    let seenOccupied = false;
+    let lastOccupiedIndex = -1;
+    for (let i = 0; i < dateSlots.length; i += 1) {
+      if (occupied.has(`${dateSlots[i].date}|${dateSlots[i].time}|${dateSlots[i].court}`)) {
+        seenOccupied = true;
+        lastOccupiedIndex = i;
+      }
+    }
+    if (!seenOccupied) continue;
+    for (let i = 0; i < lastOccupiedIndex; i += 1) {
+      if (!occupied.has(`${dateSlots[i].date}|${dateSlots[i].time}|${dateSlots[i].court}`)) gaps += 1;
+    }
+  }
+
+  return gaps;
 }
 
 function countTeamGamesOnDate(schedule, teamName, date) {
@@ -2212,14 +2264,16 @@ function rebalanceTowardFinalSaturday(schedule, config) {
 function compactScheduleEarlier(schedule, config) {
   let nextSchedule = schedule.map((game) => ({ ...game }));
   const allSlots = buildOpenSlots(config);
-  const enabledDates = config.saturdays.filter((entry) => entry.enabled).map((entry) => entry.date);
-  let currentScore = schedulePenaltyScore(buildResultFromSchedule(nextSchedule, config, []), config);
+  const enabledDates = getEnabledGameDates(config);
+  let currentResult = buildResultFromSchedule(nextSchedule, config, []);
+  let currentScore = schedulePenaltyScore(currentResult, config);
+  let currentGaps = getMiddleGapCount(nextSchedule, config);
 
   for (const date of enabledDates) {
     let changed = true;
     let safety = 0;
 
-    while (changed && safety < 120) {
+    while (changed && safety < 240) {
       changed = false;
       safety += 1;
 
@@ -2237,7 +2291,7 @@ function compactScheduleEarlier(schedule, config) {
 
       let bestCandidate = null;
 
-      for (const target of freeSlots.slice(0, 4)) {
+      for (const target of freeSlots) {
         const laterGames = nextSchedule
           .filter(
             (game) =>
@@ -2247,7 +2301,7 @@ function compactScheduleEarlier(schedule, config) {
           )
           .sort(compareSlotLike);
 
-        for (const game of laterGames.slice(0, 12)) {
+        for (const game of laterGames) {
           const message = validateManualMove(nextSchedule.filter((g) => g !== game), { ...game }, target, config);
           if (message) continue;
 
@@ -2258,26 +2312,53 @@ function compactScheduleEarlier(schedule, config) {
           if (candidateResult.auditSummary.missingTeams !== 0) continue;
           if (candidateResult.auditSummary.earlyViolations > 0) continue;
 
+          const candidateGaps = getMiddleGapCount(candidateSchedule, config);
           const candidateScore = schedulePenaltyScore(candidateResult, config);
-          const compactnessBonus =
-            (getTimeIndex(game.time) - getTimeIndex(target.time)) * 220 +
-            (game.court !== target.court ? 8 : 0);
+          const timeGain = (getTimeIndex(game.time) - getTimeIndex(target.time));
 
-          const netScore = candidateScore - compactnessBonus;
+          const betterGaps = candidateGaps < currentGaps;
+          const acceptableScore = candidateScore <= currentScore + 2000;
+          const betterScore = candidateScore < currentScore;
 
-          if (!bestCandidate || netScore < bestCandidate.netScore) {
-            bestCandidate = {
-              schedule: candidateSchedule.map((g) => ({ ...g })),
-              score: candidateScore,
-              netScore,
-            };
+          const candidateTuple = [
+            currentGaps - candidateGaps,
+            timeGain,
+            currentScore - candidateScore,
+          ];
+
+          if ((betterGaps && acceptableScore) || betterScore) {
+            if (!bestCandidate) {
+              bestCandidate = {
+                schedule: candidateSchedule.map((g) => ({ ...g })),
+                score: candidateScore,
+                gaps: candidateGaps,
+                tuple: candidateTuple,
+              };
+            } else {
+              const cur = bestCandidate.tuple;
+              let better = false;
+              for (let i = 0; i < candidateTuple.length; i += 1) {
+                if (candidateTuple[i] === cur[i]) continue;
+                better = candidateTuple[i] > cur[i];
+                break;
+              }
+              if (better) {
+                bestCandidate = {
+                  schedule: candidateSchedule.map((g) => ({ ...g })),
+                  score: candidateScore,
+                  gaps: candidateGaps,
+                  tuple: candidateTuple,
+                };
+              }
+            }
           }
         }
       }
 
-      if (bestCandidate && bestCandidate.score <= currentScore + 2500) {
+      if (bestCandidate) {
         nextSchedule = bestCandidate.schedule;
         currentScore = bestCandidate.score;
+        currentGaps = bestCandidate.gaps;
         changed = true;
       }
     }
