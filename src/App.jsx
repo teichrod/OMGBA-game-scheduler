@@ -2542,26 +2542,6 @@ export default function App() {
     setDragState(null);
   }
 
-  function deleteScheduledGame(gameToDelete) {
-    if (!result || !gameToDelete) return;
-
-    const nextSchedule = result.schedule.filter(
-      (game) =>
-        !(
-          game.date === gameToDelete.date &&
-          game.time === gameToDelete.time &&
-          game.court === gameToDelete.court &&
-          game.home === gameToDelete.home &&
-          game.away === gameToDelete.away
-        )
-    );
-
-    const nextResult = buildResultFromSchedule(nextSchedule, config, result.unscheduled);
-    setResult(nextResult);
-    setGridNotice(`Deleted ${gameToDelete.away} @ ${gameToDelete.home}.`);
-    setDragState(null);
-  }
-
   function saveCurrentSetup() {
     if (isPublicMode) return;
     const trimmed = String(savedSetupName || "").trim();
@@ -3160,7 +3140,7 @@ export default function App() {
                         </select>
                       </div>
                       <div style={{ fontSize: 14, color: "#475569" }}>
-                        Drag a scheduled game to another open slot on this date to manually adjust the grid, or click Delete on a game card to remove it. The drop is blocked if it would break daily limits, 8:00 caps, or same-court back-to-back doubleheader rules.
+                        Drag a scheduled game to another open slot on this date to manually adjust the grid. The drop is blocked if it would break daily limits, 8:00 caps, or same-court back-to-back doubleheader rules.
                       </div>
                     </div>
                     {gridNotice ? (
@@ -3213,36 +3193,7 @@ export default function App() {
                                         }}
                                         title="Drag to another open slot"
                                       >
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-                                          <div>{cellGame.away} @ {cellGame.home}</div>
-                                          {!isPublicMode ? (
-                                            <button
-                                              type="button"
-                                              style={{
-                                                border: '1px solid #fca5a5',
-                                                background: 'white',
-                                                color: '#b91c1c',
-                                                borderRadius: 8,
-                                                padding: '2px 6px',
-                                                fontSize: 12,
-                                                fontWeight: 700,
-                                                cursor: 'pointer',
-                                              }}
-                                              onClick={(e) => {
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                                deleteScheduledGame(cellGame);
-                                              }}
-                                              onMouseDown={(e) => {
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                              }}
-                                              title="Delete this game"
-                                            >
-                                              Delete
-                                            </button>
-                                          ) : null}
-                                        </div>
+                                        <div>{cellGame.away} @ {cellGame.home}</div>
                                       </div>
                                     ) : (
                                       <span style={{ color: '#94a3b8' }}>Open</span>
