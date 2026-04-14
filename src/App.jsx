@@ -1400,7 +1400,7 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
 
       for (const opponent of divisionTeams) {
         if (!canStillUseTeamOnDate(opponent, slot, config)) continue;
-        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: false, allTeams })) continue;
+        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: emergencyMode, allTeams })) continue;
 
         const teamNeed = getNeed(team);
         const oppNeed = getNeed(opponent);
