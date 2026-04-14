@@ -1383,6 +1383,10 @@ function canStillUseTeamOnDate(team, slot, config) {
   return true;
 }
 
+function countRepeatedOpponentPartners(team) {
+  return Object.values(team?.opponents || {}).filter((count) => count > 1).length;
+}
+
 function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, options = {}) {
   const { emergencyMode = false, currentSchedule = [] } = options;
 
@@ -1406,6 +1410,9 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
         const oppNeed = getNeed(opponent);
         const repeatCount = team.opponents?.[opponent.name] || 0;
         const slotDateDeficit = getDateMinimumDeficit(currentSchedule, slot.date, config);
+        const teamRepeatedPartners = countRepeatedOpponentPartners(team);
+        const opponentRepeatedPartners = countRepeatedOpponentPartners(opponent);
+        const createsNewRepeatPair = repeatCount >= getAllowedRepeatLimit(config, team.division);
 
         let score = 0;
         score += teamNeed * 1400;
@@ -1415,7 +1422,18 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
         if (oppNeed > 0) score += 450;
         else score += emergencyMode ? 150 : -120;
 
-        score -= repeatCount * (emergencyMode ? 25 : 140);
+        if (repeatCount === 0) {
+          score += emergencyMode ? 2200 : 700;
+        } else {
+          score -= repeatCount * (emergencyMode ? 900 : 1400);
+        }
+
+        if (createsNewRepeatPair) {
+          score -= emergencyMode ? 9000 : 18000;
+        }
+
+        score -= teamRepeatedPartners * (emergencyMode ? 1200 : 1800);
+        score -= opponentRepeatedPartners * (emergencyMode ? 1200 : 1800);
         score -= (team.gamesByDate?.[slot.date] || 0) * 60;
         score -= (opponent.gamesByDate?.[slot.date] || 0) * 60;
 
