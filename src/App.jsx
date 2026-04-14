@@ -3027,13 +3027,15 @@ export default function App() {
                 <div style={{ border: "1px solid #e2e8f0", background: "#f8fafc", padding: 12, borderRadius: 12, fontSize: 14, color: "#475569", marginBottom: 12 }}>
                   Choose the season year, then select the Saturdays to use from November through February.
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 12 }}>
-                  {config.saturdays.map((entry, index) => (
-                    <div key={`${entry.date}-${index}`} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
-                      <input type="checkbox" checked={entry.enabled} onChange={(e) => toggleSaturday(index, e.target.checked)} />
-                      <input style={styles.input} value={entry.date} onChange={(e) => updateSaturdayDate(index, e.target.value)} />
-                    </div>
-                  ))}
+                <div style={{ maxHeight: 220, overflowY: "auto", paddingRight: 4 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 12 }}>
+                    {config.saturdays.map((entry, index) => (
+                      <div key={`${entry.date}-${index}`} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                        <input type="checkbox" checked={entry.enabled} onChange={(e) => toggleSaturday(index, e.target.checked)} />
+                        <input style={styles.input} value={entry.date} onChange={(e) => updateSaturdayDate(index, e.target.value)} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </Card>
 
@@ -3048,39 +3050,43 @@ export default function App() {
                 <div style={{ border: "1px solid #e2e8f0", background: "#f8fafc", padding: 12, borderRadius: 12, fontSize: 14, color: "#475569", marginBottom: 12 }}>
                   Choose which courts are active on the selected date, choose the first game start time for each court, and review how many slots remain on that court for the day.
                 </div>
-                <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 140px 110px", gap: 12, padding: "0 12px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#64748b" }}>
-                    <div>Use</div>
-                    <div>Court</div>
-                    <div>First game</div>
-                    <div>Slots left</div>
-                  </div>
-                  {(config.dateCourtSettings[selectedCourtDate] || []).map((court, index) => (
-                    <div key={`${selectedCourtDate}-${court.name || "custom"}-${index}`} style={{ display: "grid", gridTemplateColumns: "80px 1fr 140px 110px", gap: 12, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
-                      <div><input type="checkbox" checked={court.enabled} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { enabled: e.target.checked })} /></div>
-                      <input style={styles.input} value={court.name} placeholder={index === (config.dateCourtSettings[selectedCourtDate] || []).length - 1 ? "Custom court name" : "Court name"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { name: e.target.value })} />
-                      <select style={styles.select} value={court.startTime || "8:00"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { startTime: e.target.value })}>
-                        {DEFAULT_TIMES.map((time) => <option key={time} value={time}>{time} start</option>)}
-                      </select>
-                      <div style={{ fontWeight: 700 }}>{getSlotsRemainingForCourt(config, court)}</div>
+                <div style={{ maxHeight: 360, overflowY: "auto", paddingRight: 4 }}>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 140px 110px", gap: 12, padding: "0 12px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#64748b", position: "sticky", top: 0, background: "white", zIndex: 1 }}>
+                      <div>Use</div>
+                      <div>Court</div>
+                      <div>First game</div>
+                      <div>Slots left</div>
                     </div>
-                  ))}
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, background: "#f8fafc", fontWeight: 700 }}>
-                    <span>Total slots for {selectedCourtDate || "selected date"}</span>
-                    <span>{selectedDateSlotTotal}</span>
+                    {(config.dateCourtSettings[selectedCourtDate] || []).map((court, index) => (
+                      <div key={`${selectedCourtDate}-${court.name || "custom"}-${index}`} style={{ display: "grid", gridTemplateColumns: "80px 1fr 140px 110px", gap: 12, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                        <div><input type="checkbox" checked={court.enabled} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { enabled: e.target.checked })} /></div>
+                        <input style={styles.input} value={court.name} placeholder={index === (config.dateCourtSettings[selectedCourtDate] || []).length - 1 ? "Custom court name" : "Court name"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { name: e.target.value })} />
+                        <select style={styles.select} value={court.startTime || "8:00"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { startTime: e.target.value })}>
+                          {DEFAULT_TIMES.map((time) => <option key={time} value={time}>{time} start</option>)}
+                        </select>
+                        <div style={{ fontWeight: 700 }}>{getSlotsRemainingForCourt(config, court)}</div>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, background: "#f8fafc", fontWeight: 700 }}>
+                      <span>Total slots for {selectedCourtDate || "selected date"}</span>
+                      <span>{selectedDateSlotTotal}</span>
+                    </div>
                   </div>
                 </div>
               </Card>
 
               <Card>
                 <SectionTitle>Time Slots</SectionTitle>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10 }}>
-                  {config.timeSlots.map((slot, index) => (
-                    <label key={slot.time} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, fontSize: 14 }}>
-                      <input type="checkbox" checked={slot.enabled} onChange={(e) => toggleTime(index, e.target.checked)} />
-                      {slot.time}
-                    </label>
-                  ))}
+                <div style={{ maxHeight: 120, overflowY: "auto", paddingRight: 4 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10 }}>
+                    {config.timeSlots.map((slot, index) => (
+                      <label key={slot.time} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, fontSize: 14 }}>
+                        <input type="checkbox" checked={slot.enabled} onChange={(e) => toggleTime(index, e.target.checked)} />
+                        {slot.time}
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </Card>
 
