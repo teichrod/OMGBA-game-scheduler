@@ -401,6 +401,18 @@ function formatShortDate(date) {
   return `${m}/${d}/${y}`;
 }
 
+function formatTimeDisplay(time) {
+  if (!time) return "";
+  const [rawHour, rawMinute] = String(time).split(":");
+  const hour24 = Number(rawHour);
+  const minute = Number(rawMinute);
+  if (!Number.isFinite(hour24) || !Number.isFinite(minute)) return String(time);
+  const suffix = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
+}
+
+
 function parseShortDate(value) {
   const [m, d, y] = String(value).split("/");
   return new Date(2000 + Number(y), Number(m) - 1, Number(d)).getTime();
@@ -3227,7 +3239,7 @@ export default function App() {
     );
     const nextResult = buildResultFromSchedule(nextSchedule, config, result.unscheduled);
     setResult(nextResult);
-    setGridNotice(`Moved ${sourceGame.away} @ ${sourceGame.home} to ${date} ${time} ${court}.`);
+    setGridNotice(`Moved ${sourceGame.away} @ ${sourceGame.home} to ${date} ${formatTimeDisplay(time)} ${court}.`);
     setDragState(null);
   }
 
@@ -3786,7 +3798,7 @@ export default function App() {
                       <div><input type="checkbox" checked={court.enabled} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { enabled: e.target.checked })} /></div>
                       <input style={styles.input} value={court.name} placeholder={index === (config.dateCourtSettings[selectedCourtDate] || []).length - 1 ? "Custom court name" : "Court name"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { name: e.target.value })} />
                       <select style={styles.select} value={court.startTime || "8:00"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { startTime: e.target.value })}>
-                        {DEFAULT_TIMES.map((time) => <option key={time} value={time}>{time} start</option>)}
+                        {DEFAULT_TIMES.map((time) => <option key={time} value={time}>{formatTimeDisplay(time)} start</option>)}
                       </select>
                       <div style={{ fontWeight: 700 }}>{getSlotsRemainingForCourt(config, court)}</div>
                     </div>
@@ -3842,7 +3854,7 @@ export default function App() {
                 {result && !isPublicMode ? (
                   <button
                     style={styles.button}
-                    onClick={() => exportCsv("filtered_schedule.csv", [["Division", "Date", "Time", "Court", "Home", "Away"], ...filteredSchedule.map((g) => [g.division, g.date, g.time, g.court, g.home, g.away])])}
+                    onClick={() => exportCsv("filtered_schedule.csv", [["Division", "Date", "Time", "Court", "Home", "Away"], ...filteredSchedule.map((g) => [g.division, g.date, formatTimeDisplay(g.time), g.court, g.home, g.away])])}
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                       <Download size={16} /> Export View
@@ -3917,7 +3929,7 @@ export default function App() {
                         <tbody>
                           {adminScheduleGrid.map((row) => (
                             <tr key={row.time}>
-                              <td style={styles.td}><strong>{row.time}</strong></td>
+                              <td style={styles.td}><strong>{formatTimeDisplay(row.time)}</strong></td>
                               {adminScheduleCourts.map((court) => {
                                 const cellGame = getGameAtCell(result, adminScheduleDate, row.time, court.name);
                                 const isDropTarget = dragState && dragState.date === adminScheduleDate && dragState.time === row.time && dragState.court === court.name;
@@ -4015,7 +4027,7 @@ export default function App() {
                         <tr key={`${game.date}-${game.time}-${game.court}-${idx}`}>
                           <td style={styles.td}>{game.division}</td>
                           <td style={styles.td}>{game.date}</td>
-                          <td style={styles.td}>{game.time}</td>
+                          <td style={styles.td}>{formatTimeDisplay(game.time)}</td>
                           <td style={styles.td}>{game.court}</td>
                           <td style={styles.td}>{game.home}</td>
                           <td style={styles.td}>{game.away}</td>
