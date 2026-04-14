@@ -1311,7 +1311,7 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
 
         if (score > bestScore) {
           bestScore = score;
-          best = { teamA: team, teamB: opponent, slot };
+          best = { teamA: team, teamB: opponent, slot, score, emergencyMode, repeatCount };
         }
       }
     }
@@ -1364,6 +1364,55 @@ function getDivisionTeamsNeedingGames(allTeams, division) {
     });
 }
 
+function countUnusedOpponentsForTeam(team, divisionTeams) {
+  return divisionTeams.filter((other) => other.id !== team.id && (team.opponents?.[other.name] || 0) === 0).length;
+}
+
+function hasAnyLegalNonRepeatCandidate(team, allTeams, slotGroups, config) {
+  const divisionTeams = allTeams.filter((candidate) => candidate.division === team.division && candidate.id !== team.id);
+  for (const group of slotGroups) {
+    for (const slot of group.slots) {
+      if (slot.used) continue;
+      if (!canStillUseTeamOnDate(team, slot, config)) continue;
+      for (const opponent of divisionTeams) {
+        if ((team.opponents?.[opponent.name] || 0) > 0) continue;
+        if (!canStillUseTeamOnDate(opponent, slot, config)) continue;
+        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: false, allTeams })) continue;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function findBestDivisionCompletionCandidate(division, teams, slotGroups, config, currentSchedule = []) {
+  const needyTeams = getDivisionTeamsNeedingGames(teams, division);
+  let bestNonRepeat = null;
+  let bestNonRepeatScore = -Infinity;
+  let bestEmergency = null;
+  let bestEmergencyScore = -Infinity;
+
+  for (const team of needyTeams) {
+    const nonRepeatCandidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config, { emergencyMode: false, currentSchedule });
+    if (nonRepeatCandidate && typeof nonRepeatCandidate.score === 'number' && nonRepeatCandidate.score > bestNonRepeatScore) {
+      bestNonRepeatScore = nonRepeatCandidate.score;
+      bestNonRepeat = nonRepeatCandidate;
+    }
+  }
+
+  if (bestNonRepeat) return bestNonRepeat;
+
+  for (const team of needyTeams) {
+    const emergencyCandidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config, { emergencyMode: true, currentSchedule });
+    if (emergencyCandidate && typeof emergencyCandidate.score === 'number' && emergencyCandidate.score > bestEmergencyScore) {
+      bestEmergencyScore = emergencyCandidate.score;
+      bestEmergency = emergencyCandidate;
+    }
+  }
+
+  return bestEmergency;
+}
+
 function canStillUseTeamOnDate(team, slot, config) {
   const onDate = team.gamesByDate?.[slot.date] || 0;
   if (onDate >= 2) return false;
@@ -1413,6 +1462,11 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
         const teamRepeatedPartners = countRepeatedOpponentPartners(team);
         const opponentRepeatedPartners = countRepeatedOpponentPartners(opponent);
         const createsNewRepeatPair = repeatCount >= getAllowedRepeatLimit(config, team.division);
+        const divisionTeams = allTeams.filter((candidate) => candidate.division === team.division);
+        const teamUnusedOpponents = countUnusedOpponentsForTeam(team, divisionTeams);
+        const opponentUnusedOpponents = countUnusedOpponentsForTeam(opponent, divisionTeams);
+        const teamHasAnyNonRepeat = hasAnyLegalNonRepeatCandidate(team, allTeams, slotGroups, config);
+        const opponentHasAnyNonRepeat = hasAnyLegalNonRepeatCandidate(opponent, allTeams, slotGroups, config);
 
         let score = 0;
         score += teamNeed * 1400;
@@ -1430,6 +1484,13 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
 
         if (createsNewRepeatPair) {
           score -= emergencyMode ? 9000 : 18000;
+        }
+
+        if (repeatCount > 0) {
+          score -= teamUnusedOpponents * (emergencyMode ? 2200 : 4000);
+          score -= opponentUnusedOpponents * (emergencyMode ? 2200 : 4000);
+          if (teamHasAnyNonRepeat) score -= emergencyMode ? 12000 : 22000;
+          if (opponentHasAnyNonRepeat) score -= emergencyMode ? 12000 : 22000;
         }
 
         score -= teamRepeatedPartners * (emergencyMode ? 1200 : 1800);
@@ -1451,7 +1512,7 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
 
         if (score > bestScore) {
           bestScore = score;
-          best = { teamA: team, teamB: opponent, slot };
+          best = { teamA: team, teamB: opponent, slot, score, emergencyMode, repeatCount };
         }
       }
     }
@@ -1476,32 +1537,23 @@ function forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, co
       if (needyTeams.length === 0) break;
 
       const slotGroups = buildOrderedSlotGroups(openSlots);
-      let placed = false;
+      const candidate = findBestDivisionCompletionCandidate(division, teams, slotGroups, config, schedule);
 
-      for (const team of needyTeams) {
-        let candidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config, { emergencyMode: false, currentSchedule: schedule });
-        if (!candidate) {
-          candidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config, { emergencyMode: true, currentSchedule: schedule });
-        }
-        if (!candidate) continue;
-
+      if (candidate) {
         scheduleGame(schedule, candidate.slot, candidate.teamA, candidate.teamB);
-        placed = true;
-        break;
+        continue;
       }
 
-      if (!placed) {
-        const stuckTeams = needyTeams
-          .filter((team) => team.gamesScheduled < team.targetGames)
-          .map((team) => `${team.name} (${team.gamesScheduled}/${team.targetGames})`);
+      const stuckTeams = needyTeams
+        .filter((team) => team.gamesScheduled < team.targetGames)
+        .map((team) => `${team.name} (${team.gamesScheduled}/${team.targetGames})`);
 
-        unscheduled.push({
-          matchup: `${division} forced completion`,
-          reason: "No legal slot/opponent found even after emergency rematch mode",
-          suggestion: stuckTeams.join("; "),
-        });
-        break;
-      }
+      unscheduled.push({
+        matchup: `${division} forced completion`,
+        reason: "No legal slot/opponent found even after emergency rematch mode",
+        suggestion: stuckTeams.join("; "),
+      });
+      break;
     }
   }
 }
