@@ -625,8 +625,6 @@ function buildTeams(config) {
     } else if (division === "5th Boys") {
       maxDoubleheadersPerTeam = isOddDivision ? 2 : 1;
     } else {
-      improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
       maxDoubleheadersPerTeam = isOddDivision ? 1 : 0;
     }
 
@@ -1000,10 +998,11 @@ function getAmPmCorrectionScore(teamA, teamB, slot) {
 }
 
 function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, allTeams, options = {}) {
-  const { ignoreTimeVariety = false } = options;
+  const { ignoreTimeVariety = false, currentSchedule = [] } = options;
   const byId = Object.fromEntries(divisionTeams.map((team) => [team.id, team]));
   let bestIndex = -1;
   let bestScore = -Infinity;
+  const slotDateDeficit = getDateMinimumDeficit(currentSchedule, slot.date, config);
 
   for (let i = 0; i < pendingPlan.length; i += 1) {
     const item = pendingPlan[i];
@@ -1019,8 +1018,10 @@ function choosePlannedMatchupForSlot(divisionTeams, pendingPlan, slot, config, a
     const slotCost = slotPenalty(teamA, teamB, slot, config) * (ignoreTimeVariety ? 0.1 : 0.2);
     const ampmScore = getAmPmCorrectionScore(teamA, teamB, slot);
     const roundPenalty = item.roundIndex * 3 + (item.repeatIndex || 1) * 5;
+    const weeklyMinimumBonus = slotDateDeficit > 0 ? (slotDateDeficit * 3200) : 0;
+    const lateDateBonus = slotDateDeficit > 0 ? (parseShortDate(slot.date) * 0.001) : 0;
 
-    let score = needScore + ampmScore - repeatPenalty - dayPenalty - slotCost - roundPenalty;
+    let score = needScore + ampmScore + weeklyMinimumBonus + lateDateBonus - repeatPenalty - dayPenalty - slotCost - roundPenalty;
 
     if (teamA.division === '5th Boys' && config.fifthBoysDoubleheaderDate && slot.date === config.fifthBoysDoubleheaderDate) {
       const aOnDhDate = teamA.gamesByDate[config.fifthBoysDoubleheaderDate] || 0;
@@ -1045,11 +1046,25 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
   const divisionTeamMap = Object.fromEntries(
     DIVISIONS.map((division) => [division, teams.filter((team) => team.division === division)])
   );
+  const minimumPerWeek = Number(config.minGamesPerWeek || 0);
 
   while (true) {
     const freeSlots = openSlots
       .filter((slot) => !slot.used)
-      .sort((a, b) => compareSlotsForScheduling(a, b, schedule, config));
+      .sort((a, b) => {
+        if (minimumPerWeek > 0) {
+          const aCount = countGamesOnDate(schedule, a.date);
+          const bCount = countGamesOnDate(schedule, b.date);
+          const aDef = Math.max(0, minimumPerWeek - aCount);
+          const bDef = Math.max(0, minimumPerWeek - bCount);
+          if (bDef !== aDef) return bDef - aDef;
+          if ((aDef > 0 || bDef > 0) && a.date !== b.date) {
+            return parseShortDate(b.date) - parseShortDate(a.date);
+          }
+          if (aCount !== bCount) return aCount - bCount;
+        }
+        return compareSlotLike(a, b);
+      });
 
     if (!freeSlots.length) break;
 
@@ -1064,9 +1079,9 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
         const pendingPlan = divisionPlans[division] || [];
         if (!pendingPlan.length) continue;
 
-        let chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, teams, { ignoreTimeVariety: false });
+        let chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, teams, { ignoreTimeVariety: false, currentSchedule: schedule });
         if (!chosen) {
-          chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, teams, { ignoreTimeVariety: true });
+          chosen = choosePlannedMatchupForSlot(divisionTeamMap[division], pendingPlan, slot, config, teams, { ignoreTimeVariety: true, currentSchedule: schedule });
         }
         if (!chosen) continue;
 
@@ -1097,8 +1112,8 @@ function placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unsc
   }
 }
 
-function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, currentSchedule = [], allowIgnoreTimeVariety = false) {
-  const slotGroups = buildOrderedSlotGroups(openSlots, currentSchedule, config);
+function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, allowIgnoreTimeVariety = false, currentSchedule = []) {
+  const slotGroups = buildOrderedSlotGroups(openSlots);
   let best = null;
   let bestScore = Infinity;
 
@@ -1108,10 +1123,11 @@ function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTea
 
       let penalty = 0;
       penalty += slotPenalty(teamA, teamB, slot, config) * (allowIgnoreTimeVariety ? 0.15 : 0.35);
-      penalty -= getSchedulingDateDeficit(currentSchedule, slot.date, config) * 900;
       penalty += (teamA.gamesByDate[slot.date] || 0) * 20;
       penalty += (teamB.gamesByDate[slot.date] || 0) * 20;
       penalty += group.groupIndex * 3;
+      const slotDateDeficit = getDateMinimumDeficit(currentSchedule, slot.date, config);
+      if (slotDateDeficit > 0) penalty -= slotDateDeficit * 2600;
       if (isEarlyTime(slot.time)) {
         penalty += (teamA.earlyGames || 0) * 40;
         penalty += (teamB.earlyGames || 0) * 40;
@@ -1133,7 +1149,7 @@ function chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTea
     if (best) return best;
   }
 
-  return null;
+  return best;
 }
 
 function placePlannedDivisionGames(allTeams, divisionTeams, plan, openSlots, schedule, unscheduled, config) {
@@ -1152,8 +1168,8 @@ function placePlannedDivisionGames(allTeams, divisionTeams, plan, openSlots, sch
     if (!teamA || !teamB) continue;
     if (teamA.gamesScheduled >= teamA.targetGames || teamB.gamesScheduled >= teamB.targetGames) continue;
 
-    let slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, schedule, false);
-    if (!slot) slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, schedule, true);
+    let slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, false, schedule);
+    if (!slot) slot = chooseBestSlotForPlannedMatchup(teamA, teamB, openSlots, config, allTeams, true, schedule);
 
     if (!slot) {
       unscheduled.push({
@@ -1276,14 +1292,10 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
   return best;
 }
 
-function buildOrderedSlotGroups(openSlots, currentSchedule = [], config = null) {
+function buildOrderedSlotGroups(openSlots) {
   const freeSlots = openSlots
     .filter((slot) => !slot.used)
     .sort((a, b) => {
-      if (config) {
-        const byTarget = compareSlotsForScheduling(a, b, currentSchedule, config);
-        if (byTarget !== 0) return byTarget;
-      }
       const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
       if (dateDiff !== 0) return dateDiff;
       const timeDiff = getTimeIndex(a.time) - getTimeIndex(b.time);
@@ -1302,8 +1314,6 @@ function buildOrderedSlotGroups(openSlots, currentSchedule = [], config = null) 
         slots: [slot],
       });
     } else {
-      improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
       last.slots.push(slot);
     }
   }
@@ -1344,7 +1354,7 @@ function canStillUseTeamOnDate(team, slot, config) {
 }
 
 function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, options = {}) {
-  const { emergencyMode = false } = options;
+  const { emergencyMode = false, currentSchedule = [] } = options;
 
   const divisionTeams = allTeams.filter(
     (candidate) => candidate.division === team.division && candidate.id !== team.id
@@ -1365,10 +1375,12 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
         const teamNeed = getNeed(team);
         const oppNeed = getNeed(opponent);
         const repeatCount = team.opponents?.[opponent.name] || 0;
+        const slotDateDeficit = getDateMinimumDeficit(currentSchedule, slot.date, config);
 
         let score = 0;
         score += teamNeed * 1400;
         score += oppNeed * (emergencyMode ? 250 : 700);
+        score += slotDateDeficit * 3600;
 
         if (oppNeed > 0) score += 450;
         else score += emergencyMode ? 150 : -120;
@@ -1388,7 +1400,6 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
         }
 
         score -= group.groupIndex * 3;
-        score += getSchedulingDateDeficit(schedule, slot.date, config) * 1200;
 
         if (score > bestScore) {
           bestScore = score;
@@ -1416,13 +1427,13 @@ function forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, co
       const needyTeams = getDivisionTeamsNeedingGames(teams, division);
       if (needyTeams.length === 0) break;
 
-      const slotGroups = buildOrderedSlotGroups(openSlots, schedule, config);
+      const slotGroups = buildOrderedSlotGroups(openSlots);
       let placed = false;
 
       for (const team of needyTeams) {
-        let candidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config, { emergencyMode: false });
+        let candidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config, { emergencyMode: false, currentSchedule: schedule });
         if (!candidate) {
-          candidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config, { emergencyMode: true });
+          candidate = chooseCompletionFirstCandidate(team, teams, slotGroups, config, { emergencyMode: true, currentSchedule: schedule });
         }
         if (!candidate) continue;
 
@@ -1756,6 +1767,9 @@ function generateScheduleEngine(config) {
   let allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
 
   if (allTeamsScheduled) {
+    improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
+    improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+
     if (Number(config.minGamesPerWeek || 0) > 0) {
       improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
       improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
@@ -1766,16 +1780,8 @@ function generateScheduleEngine(config) {
       improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
       improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
     } else {
-      improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
       improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
       improvedSchedule = rebalanceTowardFinalSaturday(improvedSchedule, config);
-      improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
-    }
-
-    if (Number(config.minGamesPerWeek || 0) > 0) {
-      improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
       improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
     }
 
@@ -1980,6 +1986,26 @@ function getDatesSubjectToWeeklyMinimum(config) {
   return getEnabledGameDates(config).filter((date) => date !== config.fifthBoysDoubleheaderDate);
 }
 
+function getDateMinimumTarget(config, date) {
+  if (!date) return 0;
+  if (date === config?.fifthBoysDoubleheaderDate) return 0;
+  const minimum = Number(config?.minGamesPerWeek || 0);
+  if (minimum <= 0) return 0;
+  return getDatesSubjectToWeeklyMinimum(config).includes(date) ? minimum : 0;
+}
+
+function getDateMinimumDeficit(schedule, date, config) {
+  const target = getDateMinimumTarget(config, date);
+  if (target <= 0) return 0;
+  return Math.max(0, target - countGamesOnDate(schedule, date));
+}
+
+function getDateMinimumSlack(schedule, date, config) {
+  const target = getDateMinimumTarget(config, date);
+  if (target <= 0) return 0;
+  return countGamesOnDate(schedule, date) - target;
+}
+
 function getWeeklyMinimumViolations(schedule, config) {
   const minimum = Number(config?.minGamesPerWeek || 0);
   if (minimum <= 0) return [];
@@ -1996,34 +2022,6 @@ function getWeeklyMinimumViolations(schedule, config) {
 
 function getWeeklyMinimumDeficit(schedule, config) {
   return getWeeklyMinimumViolations(schedule, config).reduce((sum, entry) => sum + (entry.deficit || 0), 0);
-}
-
-
-function getSchedulingTargetForDate(date, config) {
-  const minimum = Number(config?.minGamesPerWeek || 0);
-  if (minimum <= 0) return 0;
-  if (!date || date === config?.fifthBoysDoubleheaderDate) return 0;
-  return minimum;
-}
-
-function getSchedulingDateDeficit(schedule, date, config) {
-  const target = getSchedulingTargetForDate(date, config);
-  if (target <= 0) return 0;
-  return Math.max(0, target - countGamesOnDate(schedule, date));
-}
-
-function compareSlotsForScheduling(a, b, schedule, config) {
-  const aDef = getSchedulingDateDeficit(schedule, a.date, config);
-  const bDef = getSchedulingDateDeficit(schedule, b.date, config);
-  if (bDef != aDef) return bDef - aDef;
-  if (aDef > 0 || bDef > 0) {
-    const dateCmp = parseShortDate(b.date) - parseShortDate(a.date);
-    if (dateCmp !== 0) return dateCmp;
-  }
-  const aCount = countGamesOnDate(schedule, a.date);
-  const bCount = countGamesOnDate(schedule, b.date);
-  if (aCount !== bCount) return aCount - bCount;
-  return compareSlotLike(a, b);
 }
 
 function getMiddleGapCount(schedule, config) {
@@ -2417,8 +2415,6 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
                 priorityTuple,
               };
             } else {
-      improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
               const cur = bestCandidate.priorityTuple;
               let better = false;
               for (let i = 0; i < priorityTuple.length; i += 1) {
@@ -2559,9 +2555,13 @@ function compactScheduleEarlier(schedule, config) {
       const afterSignature = getDateOccupancySignature(candidate, date, config);
       const afterDateGaps = getDateMiddleGapCount(candidate, date, config);
 
+      const beforeDeficit = getWeeklyMinimumDeficit(nextSchedule, config);
+      const afterDeficit = getWeeklyMinimumDeficit(candidate, config);
       const improved =
-        afterDateGaps < beforeDateGaps ||
-        (afterDateGaps === beforeDateGaps && afterSignature < beforeSignature);
+        afterDeficit <= beforeDeficit && (
+          afterDateGaps < beforeDateGaps ||
+          (afterDateGaps === beforeDateGaps && afterSignature < beforeSignature)
+        );
 
       if (improved) {
         nextSchedule = candidate.map((game) => ({ ...game }));
@@ -2812,8 +2812,6 @@ export default function App() {
         setResult(published.result);
         setPublishedMeta(published.meta || null);
       } else {
-      improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
         setResult(null);
         setPublishedMeta(null);
       }
@@ -3166,8 +3164,6 @@ export default function App() {
       setPublishedMeta(meta);
       setPublishNotice("Schedule published for public view.");
     } else {
-      improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
       setPublishNotice("Publish failed.");
     }
   }
@@ -3180,8 +3176,6 @@ export default function App() {
       setActiveTab("schedule");
       setPublishNotice("Published schedule loaded.");
     } else {
-      improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
       setPublishNotice("No published schedule found yet.");
     }
   }
@@ -3193,8 +3187,6 @@ export default function App() {
       if (isPublicMode) setResult(null);
       setPublishNotice("Published schedule cleared.");
     } else {
-      improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
       setPublishNotice("Could not clear published schedule.");
     }
   }
