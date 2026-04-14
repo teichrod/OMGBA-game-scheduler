@@ -2393,6 +2393,11 @@ export default function App() {
     return getScheduleGridForDate(config, result, adminScheduleDate);
   }, [config, result, adminScheduleDate]);
 
+  const adminScheduleGameCount = useMemo(() => {
+    if (!result || !adminScheduleDate) return 0;
+    return result.schedule.filter((game) => game.date === adminScheduleDate).length;
+  }, [result, adminScheduleDate]);
+
   function setDivisionCount(division, value) {
     const nextCount = Number(value);
     setConfig((prev) => ({
@@ -3135,7 +3140,10 @@ export default function App() {
                   <div style={{ marginBottom: 20 }}>
                     <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16, alignItems: "end", marginBottom: 16 }}>
                       <div>
-                        <label style={styles.smallLabel}>View one date in grid form</label>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                          <label style={{ ...styles.smallLabel, marginBottom: 0 }}>View one date in grid form</label>
+                          <span style={styles.badge}>{adminScheduleGameCount} games</span>
+                        </div>
                         <select style={styles.select} value={adminScheduleDate} onChange={(e) => setAdminScheduleDate(e.target.value)}>
                           {config.saturdays.filter((entry) => entry.enabled).map((entry) => <option key={entry.date} value={entry.date}>{entry.date}</option>)}
                         </select>
