@@ -2268,12 +2268,13 @@ function compactScheduleEarlier(schedule, config) {
   let currentResult = buildResultFromSchedule(nextSchedule, config, []);
   let currentScore = schedulePenaltyScore(currentResult, config);
   let currentGaps = getMiddleGapCount(nextSchedule, config);
+  let currentWeeklyDeficit = getWeeklyMinimumDeficit(nextSchedule, config);
 
   for (const date of enabledDates) {
     let changed = true;
     let safety = 0;
 
-    while (changed && safety < 240) {
+    while (changed && safety < 300) {
       changed = false;
       safety += 1;
 
@@ -2313,43 +2314,47 @@ function compactScheduleEarlier(schedule, config) {
           if (candidateResult.auditSummary.earlyViolations > 0) continue;
 
           const candidateGaps = getMiddleGapCount(candidateSchedule, config);
-          const candidateScore = schedulePenaltyScore(candidateResult, config);
-          const timeGain = (getTimeIndex(game.time) - getTimeIndex(target.time));
+          const candidateWeeklyDeficit = getWeeklyMinimumDeficit(candidateSchedule, config);
+          if (candidateWeeklyDeficit > currentWeeklyDeficit) continue;
 
-          const betterGaps = candidateGaps < currentGaps;
-          const acceptableScore = candidateScore <= currentScore + 2000;
-          const betterScore = candidateScore < currentScore;
+          const candidateScore = schedulePenaltyScore(candidateResult, config);
+          const timeGain = getTimeIndex(game.time) - getTimeIndex(target.time);
+
+          if (candidateGaps >= currentGaps && candidateWeeklyDeficit === currentWeeklyDeficit && candidateScore >= currentScore) {
+            continue;
+          }
 
           const candidateTuple = [
             currentGaps - candidateGaps,
+            currentWeeklyDeficit - candidateWeeklyDeficit,
             timeGain,
             currentScore - candidateScore,
           ];
 
-          if ((betterGaps && acceptableScore) || betterScore) {
-            if (!bestCandidate) {
+          if (!bestCandidate) {
+            bestCandidate = {
+              schedule: candidateSchedule.map((g) => ({ ...g })),
+              score: candidateScore,
+              gaps: candidateGaps,
+              weeklyDeficit: candidateWeeklyDeficit,
+              tuple: candidateTuple,
+            };
+          } else {
+            const cur = bestCandidate.tuple;
+            let better = false;
+            for (let i = 0; i < candidateTuple.length; i += 1) {
+              if (candidateTuple[i] === cur[i]) continue;
+              better = candidateTuple[i] > cur[i];
+              break;
+            }
+            if (better) {
               bestCandidate = {
                 schedule: candidateSchedule.map((g) => ({ ...g })),
                 score: candidateScore,
                 gaps: candidateGaps,
+                weeklyDeficit: candidateWeeklyDeficit,
                 tuple: candidateTuple,
               };
-            } else {
-              const cur = bestCandidate.tuple;
-              let better = false;
-              for (let i = 0; i < candidateTuple.length; i += 1) {
-                if (candidateTuple[i] === cur[i]) continue;
-                better = candidateTuple[i] > cur[i];
-                break;
-              }
-              if (better) {
-                bestCandidate = {
-                  schedule: candidateSchedule.map((g) => ({ ...g })),
-                  score: candidateScore,
-                  gaps: candidateGaps,
-                  tuple: candidateTuple,
-                };
-              }
             }
           }
         }
@@ -2359,6 +2364,7 @@ function compactScheduleEarlier(schedule, config) {
         nextSchedule = bestCandidate.schedule;
         currentScore = bestCandidate.score;
         currentGaps = bestCandidate.gaps;
+        currentWeeklyDeficit = bestCandidate.weeklyDeficit;
         changed = true;
       }
     }
