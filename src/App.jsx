@@ -81,13 +81,17 @@ function getAssociationCode(entry) {
 }
 
 function buildFormattedTeamName(division, entry, fallbackIndex) {
-  const assoc = getAssociationCode(entry) || "TM";
+  const associationCode = getAssociationCode(entry);
+  const assoc = associationCode || "TM";
   const gender = getDivisionGenderCode(division);
   const grade = getDivisionGradeCode(division);
-  const teamNumber =
-    entry?.associationTeamNumber && String(entry.associationTeamNumber).trim()
-      ? String(entry.associationTeamNumber).padStart(2, "0")
-      : String(fallbackIndex).padStart(2, "0");
+  const teamNumber = associationCode
+    ? (
+        entry?.associationTeamNumber && String(entry.associationTeamNumber).trim()
+          ? String(entry.associationTeamNumber).padStart(2, "0")
+          : String(fallbackIndex).padStart(2, "0")
+      )
+    : String(fallbackIndex).padStart(2, "0");
   const coach = sanitizeCoachLastName(entry?.coachLastName);
 
   return coach
