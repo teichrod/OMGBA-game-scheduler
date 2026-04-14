@@ -2071,15 +2071,47 @@ function tryReduceRepeatedOpponents(schedule, config) {
   let currentExtra = currentData.pairViolations.reduce((sum, row) => sum + row.extraGames, 0);
   if (!currentExtra) return working;
 
-  const pairKeyForGame = (game) => {
-    const teams = [game.home, game.away].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    return `${game.division}||${teams[0]}||${teams[1]}`;
+  const pairKeyForTeams = (division, teamA, teamB) => {
+    const teams = [teamA, teamB].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return `${division}||${teams[0]}||${teams[1]}`;
   };
 
-  const computeExtra = (games) => getRepeatedOpponentViolations(games, config).pairViolations.reduce((sum, row) => sum + row.extraGames, 0);
+  const pairKeyForGame = (game) => pairKeyForTeams(game.division, game.home, game.away);
 
-  for (let pass = 0; pass < 120; pass += 1) {
-    let changed = false;
+  const evaluateCandidate = (candidate) => {
+    const result = buildResultFromSchedule(candidate, config, []);
+    const data = getRepeatedOpponentViolations(result.schedule, config);
+    return {
+      schedule: sortScheduleGames(result.schedule.map((game) => ({ ...game }))),
+      extra: data.pairViolations.reduce((sum, row) => sum + row.extraGames, 0),
+      repeatedIssues: data.pairViolations.length,
+      missingTeams: result.auditSummary?.missingTeams || 0,
+      earlyViolations: result.auditSummary?.earlyViolations || 0,
+      weeklyMinimumDeficit: result.auditSummary?.weeklyMinimumDeficit || 0,
+      middleGapCount: result.auditSummary?.middleGapCount || 0,
+      homeAwayIssues: result.auditSummary?.homeAwayIssues || 0,
+    };
+  };
+
+  const isBetter = (candidateMetrics, currentMetrics) => {
+    if (candidateMetrics.missingTeams > currentMetrics.missingTeams) return false;
+    if (candidateMetrics.earlyViolations > currentMetrics.earlyViolations) return false;
+    if (candidateMetrics.weeklyMinimumDeficit > currentMetrics.weeklyMinimumDeficit) return false;
+    if (candidateMetrics.extra < currentMetrics.extra) return true;
+    if (candidateMetrics.extra > currentMetrics.extra) return false;
+    if (candidateMetrics.repeatedIssues < currentMetrics.repeatedIssues) return true;
+    if (candidateMetrics.repeatedIssues > currentMetrics.repeatedIssues) return false;
+    if (candidateMetrics.middleGapCount < currentMetrics.middleGapCount) return true;
+    if (candidateMetrics.middleGapCount > currentMetrics.middleGapCount) return false;
+    if (candidateMetrics.homeAwayIssues < currentMetrics.homeAwayIssues) return true;
+    return false;
+  };
+
+  let currentMetrics = evaluateCandidate(working);
+
+  for (let pass = 0; pass < 60; pass += 1) {
+    let bestMetrics = currentMetrics;
+    let bestSchedule = null;
     const violations = getRepeatedOpponentViolations(working, config).pairViolations;
     if (!violations.length) break;
 
@@ -2090,38 +2122,52 @@ function tryReduceRepeatedOpponents(schedule, config) {
         .sort((a, b) => compareSlotLike(a.game, b.game));
 
       for (const { index: repeatedIndex, game: repeatedGame } of repeatedGames.slice(violation.allowed)) {
-        for (let otherIndex = 0; otherIndex < working.length; otherIndex += 1) {
-          if (otherIndex === repeatedIndex) continue;
-          const otherGame = working[otherIndex];
-          if (!otherGame || otherGame.division !== repeatedGame.division) continue;
-          if (otherGame.date !== repeatedGame.date || otherGame.time !== repeatedGame.time) continue;
-          if ([repeatedGame.home, repeatedGame.away].includes(otherGame.home) || [repeatedGame.home, repeatedGame.away].includes(otherGame.away)) continue;
-          if (repeatedGame.locked || otherGame.locked) continue;
+        const candidatePool = working
+          .map((game, index) => ({ game, index }))
+          .filter(({ game, index }) => {
+            if (index === repeatedIndex) return false;
+            if (!game || game.division !== repeatedGame.division) return false;
+            if (game.locked || repeatedGame.locked) return false;
+            if ([repeatedGame.home, repeatedGame.away].includes(game.home) || [repeatedGame.home, repeatedGame.away].includes(game.away)) return false;
+            return true;
+          })
+          .sort((a, b) => {
+            const sameTimeA = a.game.date === repeatedGame.date && a.game.time === repeatedGame.time ? 0 : 1;
+            const sameTimeB = b.game.date === repeatedGame.date && b.game.time === repeatedGame.time ? 0 : 1;
+            if (sameTimeA !== sameTimeB) return sameTimeA - sameTimeB;
+            const sameDateA = a.game.date === repeatedGame.date ? 0 : 1;
+            const sameDateB = b.game.date === repeatedGame.date ? 0 : 1;
+            if (sameDateA !== sameDateB) return sameDateA - sameDateB;
+            return compareSlotLike(a.game, b.game);
+          });
 
+        for (const { index: otherIndex, game: otherGame } of candidatePool) {
           const combos = [
             [repeatedGame.home, otherGame.home, repeatedGame.away, otherGame.away],
             [repeatedGame.home, otherGame.away, repeatedGame.away, otherGame.home],
           ];
 
           for (const [g1h, g1a, g2h, g2a] of combos) {
+            const newKey1 = pairKeyForTeams(repeatedGame.division, g1h, g1a);
+            const newKey2 = pairKeyForTeams(otherGame.division, g2h, g2a);
+            if (newKey1 === pairKeyForGame(repeatedGame) && newKey2 === pairKeyForGame(otherGame)) continue;
             const candidate = working.map((game) => ({ ...game }));
             candidate[repeatedIndex] = { ...candidate[repeatedIndex], home: g1h, away: g1a };
             candidate[otherIndex] = { ...candidate[otherIndex], home: g2h, away: g2a };
-            const extra = computeExtra(candidate);
-            if (extra >= currentExtra) continue;
-            working = sortScheduleGames(candidate);
-            currentExtra = extra;
-            changed = true;
-            break;
+            const metrics = evaluateCandidate(candidate);
+            if (!isBetter(metrics, bestMetrics)) continue;
+            bestMetrics = metrics;
+            bestSchedule = metrics.schedule;
           }
-          if (changed) break;
         }
-        if (changed) break;
       }
-      if (changed) break;
     }
 
-    if (!changed) break;
+    if (!bestSchedule) break;
+    working = bestSchedule;
+    currentMetrics = bestMetrics;
+    currentExtra = currentMetrics.extra;
+    if (!currentExtra) break;
   }
 
   return working;
