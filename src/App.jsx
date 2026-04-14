@@ -1951,11 +1951,11 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
   if (minimum <= 0 || targetDates.length === 0) return schedule.map((game) => ({ ...game }));
 
   let nextSchedule = schedule.map((game) => ({ ...game }));
-  let currentScore = schedulePenaltyScore(buildResultFromSchedule(nextSchedule, config, []), config);
+  let currentDeficit = getWeeklyMinimumDeficit(nextSchedule, config);
   const allSlots = buildOpenSlots(config);
   let safety = 0;
 
-  while (safety < 120) {
+  while (safety < 240) {
     safety += 1;
 
     const deficits = targetDates
@@ -1972,90 +1972,116 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
 
     if (!deficits.length) break;
 
-    const targetDate = deficits[0].date;
-    const occupied = new Set(nextSchedule.map((game) => `${game.date}|${game.time}|${game.court}`));
-    const emptyTargetSlots = allSlots
-      .filter((slot) => slot.date === targetDate && !occupied.has(`${slot.date}|${slot.time}|${slot.court}`))
-      .sort(compareSlotLike);
-
-    if (!emptyTargetSlots.length) break;
-
-    const donorDates = getEnabledGameDates(config)
-      .map((date) => ({
-        date,
-        games: countGamesOnDate(nextSchedule, date),
-      }))
-      .filter((entry) => {
-        if (entry.date === targetDate) return false;
-        if (entry.date === config.fifthBoysDoubleheaderDate) return false;
-        return entry.games > minimum;
-      })
-      .sort((a, b) => {
-        if (b.games !== a.games) return b.games - a.games;
-        return parseShortDate(b.date) - parseShortDate(a.date);
-      });
-
-    if (!donorDates.length) break;
-
     let bestCandidate = null;
 
-    for (const target of emptyTargetSlots.slice(0, 12)) {
+    for (const deficitEntry of deficits) {
+      const targetDate = deficitEntry.date;
+      const occupied = new Set(nextSchedule.map((game) => `${game.date}|${game.time}|${game.court}`));
+      const emptyTargetSlots = allSlots
+        .filter((slot) => slot.date === targetDate && !occupied.has(`${slot.date}|${slot.time}|${slot.court}`))
+        .sort(compareSlotLike);
+
+      if (!emptyTargetSlots.length) continue;
+
+      const donorDates = getEnabledGameDates(config)
+        .map((date) => ({
+          date,
+          games: countGamesOnDate(nextSchedule, date),
+          surplus: countGamesOnDate(nextSchedule, date) - minimum,
+        }))
+        .filter((entry) => {
+          if (entry.date === targetDate) return false;
+          if (entry.date === config.fifthBoysDoubleheaderDate) return false;
+          return entry.surplus > 0;
+        })
+        .sort((a, b) => {
+          if (b.surplus !== a.surplus) return b.surplus - a.surplus;
+          if (b.games !== a.games) return b.games - a.games;
+          return parseShortDate(a.date) - parseShortDate(b.date);
+        });
+
       for (const donor of donorDates) {
         const donorGames = nextSchedule
           .filter((game) => game.date === donor.date)
           .sort((a, b) => {
-            const aTargetCount =
-              countTeamGamesOnDate(nextSchedule, a.home, targetDate) +
-              countTeamGamesOnDate(nextSchedule, a.away, targetDate);
-            const bTargetCount =
-              countTeamGamesOnDate(nextSchedule, b.home, targetDate) +
-              countTeamGamesOnDate(nextSchedule, b.away, targetDate);
+            const aTargetCount = countTeamGamesOnDate(nextSchedule, a.home, targetDate) + countTeamGamesOnDate(nextSchedule, a.away, targetDate);
+            const bTargetCount = countTeamGamesOnDate(nextSchedule, b.home, targetDate) + countTeamGamesOnDate(nextSchedule, b.away, targetDate);
             if (aTargetCount !== bTargetCount) return aTargetCount - bTargetCount;
-            const aDateLoad = countTeamGamesOnDate(nextSchedule, a.home, donor.date) + countTeamGamesOnDate(nextSchedule, a.away, donor.date);
-            const bDateLoad = countTeamGamesOnDate(nextSchedule, b.home, donor.date) + countTeamGamesOnDate(nextSchedule, b.away, donor.date);
-            if (bDateLoad !== aDateLoad) return bDateLoad - aDateLoad;
+            const aDonorCount = countTeamGamesOnDate(nextSchedule, a.home, donor.date) + countTeamGamesOnDate(nextSchedule, a.away, donor.date);
+            const bDonorCount = countTeamGamesOnDate(nextSchedule, b.home, donor.date) + countTeamGamesOnDate(nextSchedule, b.away, donor.date);
+            if (bDonorCount !== aDonorCount) return bDonorCount - aDonorCount;
             return compareSlotLike(a, b);
           });
 
-        for (const game of donorGames.slice(0, 40)) {
-          const message = validateManualMove(nextSchedule.filter((g) => g !== game), { ...game }, target, config);
-          if (message) continue;
+        for (const target of emptyTargetSlots) {
+          for (const game of donorGames) {
+            const baseSchedule = nextSchedule.filter((g) => g !== game);
+            const message = validateManualMove(baseSchedule, { ...game }, target, config);
+            if (message) continue;
 
-          const candidateSchedule = nextSchedule.map((g) =>
-            g === game ? { ...g, date: target.date, time: target.time, court: target.court } : g
-          );
-          const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
-          if (candidateResult.auditSummary.missingTeams !== 0) continue;
-          if (candidateResult.auditSummary.earlyViolations > 0) continue;
+            const candidateSchedule = nextSchedule.map((g) =>
+              g === game ? { ...g, date: target.date, time: target.time, court: target.court } : g
+            );
+            const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
+            if (candidateResult.auditSummary.missingTeams !== 0) continue;
+            if (candidateResult.auditSummary.earlyViolations > 0) continue;
 
-          const candidateScore = schedulePenaltyScore(candidateResult, config);
-          const currentDeficit = getWeeklyMinimumDeficit(nextSchedule, config);
-          const candidateDeficit = getWeeklyMinimumDeficit(candidateSchedule, config);
-          const deficitImprovement = currentDeficit - candidateDeficit;
-          const targetBonus =
-            deficitImprovement * 150000 +
-            Math.max(0, minimum - countGamesOnDate(nextSchedule, targetDate)) * 12000 +
-            (countTeamGamesOnDate(nextSchedule, game.home, targetDate) === 0 ? 1200 : 0) +
-            (countTeamGamesOnDate(nextSchedule, game.away, targetDate) === 0 ? 1200 : 0);
+            const candidateDeficit = getWeeklyMinimumDeficit(candidateSchedule, config);
+            const deficitImprovement = currentDeficit - candidateDeficit;
+            if (deficitImprovement <= 0) continue;
 
-          const netScore = candidateScore - targetBonus;
+            const candidateScore = schedulePenaltyScore(candidateResult, config);
+            const donorRemaining = countGamesOnDate(candidateSchedule, donor.date);
+            const targetRemainingDeficit = Math.max(0, minimum - countGamesOnDate(candidateSchedule, targetDate));
+            const targetExposure =
+              (countTeamGamesOnDate(nextSchedule, game.home, targetDate) === 0 ? 1 : 0) +
+              (countTeamGamesOnDate(nextSchedule, game.away, targetDate) === 0 ? 1 : 0);
 
-          if (!bestCandidate || netScore < bestCandidate.netScore) {
-            bestCandidate = {
-              schedule: candidateSchedule.map((g) => ({ ...g })),
-              score: candidateScore,
-              netScore,
-            };
+            const priorityTuple = [
+              deficitImprovement,
+              deficitEntry.deficit,
+              donor.surplus,
+              targetExposure,
+              -targetRemainingDeficit,
+              donorRemaining,
+              -candidateScore,
+            ];
+
+            if (!bestCandidate) {
+              bestCandidate = {
+                schedule: candidateSchedule.map((g) => ({ ...g })),
+                score: candidateScore,
+                deficit: candidateDeficit,
+                priorityTuple,
+              };
+            } else {
+              const cur = bestCandidate.priorityTuple;
+              let better = false;
+              for (let i = 0; i < priorityTuple.length; i += 1) {
+                if (priorityTuple[i] === cur[i]) continue;
+                better = priorityTuple[i] > cur[i];
+                break;
+              }
+              if (better) {
+                bestCandidate = {
+                  schedule: candidateSchedule.map((g) => ({ ...g })),
+                  score: candidateScore,
+                  deficit: candidateDeficit,
+                  priorityTuple,
+                };
+              }
+            }
           }
         }
       }
+
+      if (bestCandidate && bestCandidate.deficit < currentDeficit) break;
     }
 
     if (!bestCandidate) break;
-    if (bestCandidate.score > currentScore + 30000 && bestCandidate.netScore >= currentScore) break;
 
     nextSchedule = bestCandidate.schedule;
-    currentScore = bestCandidate.score;
+    currentDeficit = bestCandidate.deficit;
   }
 
   return nextSchedule.sort(compareSlotLike);
