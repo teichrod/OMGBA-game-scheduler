@@ -1940,6 +1940,7 @@ function generateScheduleEngine(config, lockedGames = []) {
     allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
   }
 
+  improvedSchedule = rebuildAvoidableRepeatDivisions(improvedSchedule, config);
   improvedSchedule = tryReduceRepeatedOpponents(improvedSchedule, config);
   improvedSchedule = sortScheduleGames(improvedSchedule);
 
@@ -2026,6 +2027,171 @@ function generateScheduleEngine(config, lockedGames = []) {
 }
 
 
+
+
+function buildDivisionUniqueMatchPlan(divisionTeams, targetGames, config, division) {
+  const rounds = buildRoundRobinRounds(divisionTeams);
+  if (!rounds.length) return [];
+
+  const maxUniqueRounds = Math.min(rounds.length, Number(targetGames || 0));
+  const plan = [];
+
+  const pushRound = (roundIndex) => {
+    for (const [a, b] of rounds[roundIndex] || []) {
+      if (!a || !b) continue;
+      plan.push({
+        teamAId: a.id,
+        teamBId: b.id,
+        division,
+        roundIndex,
+        repeatIndex: 1,
+      });
+    }
+  };
+
+  if (division === "5th Boys" && config.fifthBoysDoubleheaderDate) {
+    let usedRounds = 0;
+    for (let r = 0; r < Math.min(2, maxUniqueRounds); r += 1) {
+      pushRound(r);
+      usedRounds += 1;
+    }
+    for (let r = 2; usedRounds < maxUniqueRounds && r < rounds.length; r += 1) {
+      pushRound(r);
+      usedRounds += 1;
+    }
+  } else {
+    for (let r = 0; r < maxUniqueRounds; r += 1) {
+      pushRound(r);
+    }
+  }
+
+  return plan;
+}
+
+function rebuildAvoidableRepeatDivisions(schedule, config) {
+  let working = sortScheduleGames((Array.isArray(schedule) ? schedule : []).map((game) => ({ ...game })));
+  const baseTeams = buildTeams(config);
+  const targetByDivision = Object.fromEntries(DIVISIONS.map((division) => [division, Number(config.divisionGames[division] || 0)]));
+  const countByDivision = Object.fromEntries(DIVISIONS.map((division) => [division, Number(config.divisions[division] || 0)]));
+
+  const getDivisionExtra = (games, division) => {
+    return getRepeatedOpponentViolations(games, config).pairViolations
+      .filter((row) => row.division === division)
+      .reduce((sum, row) => sum + row.extraGames, 0);
+  };
+
+  for (const division of DIVISIONS) {
+    const teamCount = countByDivision[division] || 0;
+    const targetGames = targetByDivision[division] || 0;
+    if (!teamCount || !targetGames) continue;
+    if (targetGames > Math.max(0, teamCount - 1)) continue;
+
+    const divisionGames = working.filter((game) => game.division === division);
+    if (!divisionGames.length) continue;
+    if (divisionGames.some((game) => game.locked)) continue;
+
+    const originalExtra = getDivisionExtra(working, division);
+    if (!originalExtra) continue;
+
+    const candidateScheduleWithoutDivision = working
+      .filter((game) => game.division !== division)
+      .map((game) => ({ ...game }));
+
+    const allTeamMap = makeTeamMapFromSchedule(candidateScheduleWithoutDivision, config);
+    const freshDivisionTeams = baseTeams
+      .filter((team) => team.division === division)
+      .map((team) => cloneTeamState({
+        ...team,
+        gamesScheduled: 0,
+        earlyGames: 0,
+        home: 0,
+        away: 0,
+        doubleHeaders: 0,
+        maxSameTimeSlot: 0,
+        gamesByDate: {},
+        gamesByTime: {},
+        opponents: {},
+        scheduledGames: [],
+        morningGames: 0,
+        afternoonGames: 0,
+      }));
+
+    const otherTeams = Object.values(allTeamMap).map((team) => cloneTeamState(team));
+    const allTeams = [...otherTeams, ...freshDivisionTeams];
+
+    let pendingPlan = buildDivisionUniqueMatchPlan(freshDivisionTeams, targetGames, config, division);
+    if (!pendingPlan.length) continue;
+
+    const slotObjects = divisionGames
+      .map((game) => ({
+        key: `${game.date}|${game.time}|${game.court}`,
+        date: game.date,
+        time: game.time,
+        court: game.court,
+        used: false,
+      }))
+      .sort((a, b) => {
+        if (division === "5th Boys" && config.fifthBoysDoubleheaderDate) {
+          const aDh = a.date === config.fifthBoysDoubleheaderDate ? 0 : 1;
+          const bDh = b.date === config.fifthBoysDoubleheaderDate ? 0 : 1;
+          if (aDh !== bDh) return aDh - bDh;
+        }
+        return compareSlotLike(a, b);
+      });
+
+    let candidateSchedule = candidateScheduleWithoutDivision.map((game) => ({ ...game }));
+    let failed = false;
+
+    for (const slot of slotObjects) {
+      let slotPlan = pendingPlan;
+      if (division === "5th Boys" && config.fifthBoysDoubleheaderDate) {
+        if (slot.date === config.fifthBoysDoubleheaderDate) {
+          slotPlan = pendingPlan.filter((item) => item.roundIndex < 2);
+        } else {
+          slotPlan = pendingPlan.filter((item) => item.roundIndex >= 2);
+        }
+      }
+      if (!slotPlan.length) {
+        failed = true;
+        break;
+      }
+
+      let chosen = choosePlannedMatchupForSlot(freshDivisionTeams, slotPlan, slot, config, allTeams, {
+        ignoreTimeVariety: false,
+        currentSchedule: candidateSchedule,
+      });
+      if (!chosen) {
+        chosen = choosePlannedMatchupForSlot(freshDivisionTeams, slotPlan, slot, config, allTeams, {
+          ignoreTimeVariety: true,
+          currentSchedule: candidateSchedule,
+        });
+      }
+      if (!chosen) {
+        failed = true;
+        break;
+      }
+
+      scheduleGame(candidateSchedule, slot, chosen.teamA, chosen.teamB);
+      const planIndex = pendingPlan.indexOf(chosen.item);
+      if (planIndex >= 0) pendingPlan.splice(planIndex, 1);
+    }
+
+    if (failed || pendingPlan.length) continue;
+
+    const baseResult = buildResultFromSchedule(working, config, []);
+    const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
+    const candidateExtra = getDivisionExtra(candidateSchedule, division);
+    if (candidateExtra >= originalExtra) continue;
+    if ((candidateResult.auditSummary?.missingTeams || 0) > (baseResult.auditSummary?.missingTeams || 0)) continue;
+    if ((candidateResult.auditSummary?.earlyViolations || 0) > (baseResult.auditSummary?.earlyViolations || 0)) continue;
+    if ((candidateResult.auditSummary?.weeklyMinimumDeficit || 0) > (baseResult.auditSummary?.weeklyMinimumDeficit || 0)) continue;
+    if ((candidateResult.auditSummary?.middleGapCount || 0) > (baseResult.auditSummary?.middleGapCount || 0)) continue;
+
+    working = candidateSchedule;
+  }
+
+  return sortScheduleGames(working);
+}
 
 function getRepeatedOpponentViolations(schedule, config) {
   const pairCounts = {};
