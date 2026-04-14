@@ -1686,6 +1686,25 @@ function rebalanceScheduleTimes(schedule, config) {
   });
 }
 
+
+function repairMissingTeamGamesInSchedule(schedule, config) {
+  const nextSchedule = schedule.map((game) => ({ ...game }));
+  const teamMap = makeTeamMapFromSchedule(nextSchedule, config);
+  const teams = Object.values(teamMap).map((team) => cloneTeamState(team));
+  const openSlots = buildOpenSlots(config);
+
+  for (const slot of openSlots) {
+    if (nextSchedule.some((game) => game.date === slot.date && game.time === slot.time && game.court === slot.court)) {
+      slot.used = true;
+    }
+  }
+
+  const unscheduled = [];
+  forceScheduleRemainingGames(teams, openSlots, nextSchedule, unscheduled, config);
+
+  return nextSchedule.sort(compareSlotLike);
+}
+
 function generateScheduleEngine(config) {
   const teams = buildTeams(config);
   const openSlots = buildOpenSlots(config);
@@ -1714,19 +1733,30 @@ function generateScheduleEngine(config) {
   forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, config);
 
   let improvedSchedule = schedule.map((game) => ({ ...game }));
+  improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
 
-  const previewTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
-  const previewRows = Object.values(previewTeamMap);
-  const allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
+  let previewTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
+  let previewRows = Object.values(previewTeamMap);
+  let allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
 
   if (allTeamsScheduled) {
     improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-    improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
-    improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
-    improvedSchedule = rebalanceTowardFinalSaturday(improvedSchedule, config);
-    improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
-    improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
-    improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
+    improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+
+    if (Number(config.minGamesPerWeek || 0) > 0) {
+      improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
+      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+      improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
+      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+    } else {
+      improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+      improvedSchedule = rebalanceTowardFinalSaturday(improvedSchedule, config);
+      improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+    }
+
+    previewTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
+    previewRows = Object.values(previewTeamMap);
+    allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
   }
 
   improvedSchedule.sort((a, b) => {
