@@ -2082,6 +2082,7 @@ function buildDivisionUniqueMatchPlan(divisionTeams, targetGames, config, divisi
   return plan;
 }
 
+
 function rebuildAvoidableRepeatDivisions(schedule, config) {
   let working = sortScheduleGames((Array.isArray(schedule) ? schedule : []).map((game) => ({ ...game })));
   const baseTeams = buildTeams(config);
@@ -2094,18 +2095,136 @@ function rebuildAvoidableRepeatDivisions(schedule, config) {
       .reduce((sum, row) => sum + row.extraGames, 0);
   };
 
+  const tryExactUniqueRoundRebuild = (games, division) => {
+    const teamCount = countByDivision[division] || 0;
+    const targetGames = targetByDivision[division] || 0;
+    if (!teamCount || !targetGames) return null;
+    if (teamCount % 2 !== 0) return null;
+    if (targetGames > Math.max(0, teamCount - 1)) return null;
+
+    const roundSize = teamCount / 2;
+    const dhDate = division === "5th Boys" ? config.fifthBoysDoubleheaderDate : "";
+    const divisionGames = games.filter((game) => game.division === division);
+    if (!divisionGames.length) return null;
+    if (divisionGames.some((game) => game.locked)) return null;
+
+    const preservedDhGames = dhDate
+      ? divisionGames.filter((game) => game.date === dhDate).map((game) => ({ ...game }))
+      : [];
+
+    const rebuildGames = dhDate
+      ? divisionGames.filter((game) => game.date !== dhDate)
+      : divisionGames.slice();
+
+    if (!rebuildGames.length) return null;
+
+    const gamesByDate = {};
+    for (const game of rebuildGames) {
+      if (!gamesByDate[game.date]) gamesByDate[game.date] = [];
+      gamesByDate[game.date].push(game);
+    }
+
+    const orderedDates = Object.keys(gamesByDate).sort((a, b) => parseShortDate(a) - parseShortDate(b));
+    const expectedRounds = targetGames - (dhDate ? 2 : 0);
+    if (orderedDates.length !== expectedRounds) return null;
+    if (!orderedDates.every((date) => gamesByDate[date].length === roundSize)) return null;
+    if (dhDate && preservedDhGames.length !== roundSize * 2) return null;
+
+    const candidateBaseSchedule = games
+      .filter((game) => game.division !== division)
+      .map((game) => ({ ...game }))
+      .concat(preservedDhGames.map((game) => ({ ...game })));
+
+    const candidateTeamMap = makeTeamMapFromSchedule(candidateBaseSchedule, config);
+    const freshDivisionTeams = baseTeams
+      .filter((team) => team.division === division)
+      .map((team) => cloneTeamState(candidateTeamMap[team.name] || {
+        ...team,
+        gamesScheduled: 0,
+        earlyGames: 0,
+        home: 0,
+        away: 0,
+        doubleHeaders: 0,
+        maxSameTimeSlot: 0,
+        gamesByDate: {},
+        gamesByTime: {},
+        opponents: {},
+        scheduledGames: [],
+        morningGames: 0,
+        afternoonGames: 0,
+      }));
+
+    const allTeams = Object.values(candidateTeamMap)
+      .filter((team) => team.division !== division)
+      .map((team) => cloneTeamState(team))
+      .concat(freshDivisionTeams);
+
+    const rounds = buildRoundRobinRounds(freshDivisionTeams);
+    if (!rounds.length) return null;
+
+    const startRound = dhDate ? 2 : 0;
+    if (startRound + expectedRounds > rounds.length) return null;
+
+    let candidateSchedule = candidateBaseSchedule.map((game) => ({ ...game }));
+
+    for (let i = 0; i < orderedDates.length; i += 1) {
+      const date = orderedDates[i];
+      const slots = gamesByDate[date]
+        .map((game) => ({
+          key: `${game.date}|${game.time}|${game.court}`,
+          date: game.date,
+          time: game.time,
+          court: game.court,
+          used: false,
+        }))
+        .sort((a, b) => compareSlotLike(a, b));
+
+      const pairings = rounds[startRound + i] || [];
+      if (pairings.length !== roundSize || slots.length !== roundSize) return null;
+
+      for (let j = 0; j < roundSize; j += 1) {
+        const pairing = pairings[j];
+        const slot = slots[j];
+        if (!pairing || !slot) return null;
+        if (!canPairInSlot(pairing[0], pairing[1], slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: false, allTeams })) {
+          return null;
+        }
+        scheduleGame(candidateSchedule, slot, pairing[0], pairing[1]);
+      }
+    }
+
+    return sortScheduleGames(candidateSchedule);
+  };
+
   for (const division of DIVISIONS) {
     const teamCount = countByDivision[division] || 0;
     const targetGames = targetByDivision[division] || 0;
     if (!teamCount || !targetGames) continue;
     if (targetGames > Math.max(0, teamCount - 1)) continue;
 
+    const originalExtra = getDivisionExtra(working, division);
+    if (!originalExtra) continue;
+
+    const exactRebuild = tryExactUniqueRoundRebuild(working, division);
+    if (exactRebuild) {
+      const baseResult = buildResultFromSchedule(working, config, []);
+      const candidateResult = buildResultFromSchedule(exactRebuild, config, []);
+      const candidateExtra = getDivisionExtra(exactRebuild, division);
+      if (
+        candidateExtra < originalExtra &&
+        (candidateResult.auditSummary?.missingTeams || 0) <= (baseResult.auditSummary?.missingTeams || 0) &&
+        (candidateResult.auditSummary?.earlyViolations || 0) <= (baseResult.auditSummary?.earlyViolations || 0) &&
+        (candidateResult.auditSummary?.weeklyMinimumDeficit || 0) <= (baseResult.auditSummary?.weeklyMinimumDeficit || 0) &&
+        (candidateResult.auditSummary?.middleGapCount || 0) <= (baseResult.auditSummary?.middleGapCount || 0)
+      ) {
+        working = exactRebuild;
+        continue;
+      }
+    }
+
     const divisionGames = working.filter((game) => game.division === division);
     if (!divisionGames.length) continue;
     if (divisionGames.some((game) => game.locked)) continue;
-
-    const originalExtra = getDivisionExtra(working, division);
-    if (!originalExtra) continue;
 
     const candidateScheduleWithoutDivision = working
       .filter((game) => game.division !== division)
@@ -2206,7 +2325,6 @@ function rebuildAvoidableRepeatDivisions(schedule, config) {
 
   return sortScheduleGames(working);
 }
-
 function getRepeatedOpponentViolations(schedule, config) {
   const pairCounts = {};
   for (const game of Array.isArray(schedule) ? schedule : []) {
