@@ -1886,9 +1886,16 @@ function generateScheduleEngine(config, lockedGames = []) {
   const openSlots = buildOpenSlots(config);
   const schedule = [];
   const unscheduled = [];
+  const repeatTrace = [];
+  const pushRepeatTrace = (label, sourceSchedule = schedule) => {
+    repeatTrace.push(buildRepeatTraceEntry(label, sourceSchedule, config));
+  };
 
+  pushRepeatTrace('Start');
   applyLockedGames(schedule, teams, openSlots, config, lockedGames, unscheduled);
+  pushRepeatTrace('After locked games');
   scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config);
+  pushRepeatTrace('After 5th Boys doubleheader day');
 
   const divisionPlans = {};
   for (const division of DIVISIONS) {
@@ -1898,6 +1905,7 @@ function generateScheduleEngine(config, lockedGames = []) {
   }
 
   placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unscheduled, config);
+  pushRepeatTrace('After planned games by date');
 
   for (const division of DIVISIONS) {
     const leftovers = divisionPlans[division] || [];
@@ -1907,7 +1915,9 @@ function generateScheduleEngine(config, lockedGames = []) {
     divisionPlans[division] = [];
   }
 
+  pushRepeatTrace('After planned division leftovers');
   forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, config);
+  pushRepeatTrace('After completion fallback');
 
   let improvedSchedule = schedule.map((game) => ({ ...game }));
   improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
@@ -1940,9 +1950,13 @@ function generateScheduleEngine(config, lockedGames = []) {
     allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
   }
 
+  pushRepeatTrace('Before repeat repair', improvedSchedule);
   improvedSchedule = rebuildAvoidableRepeatDivisions(improvedSchedule, config);
+  pushRepeatTrace('After avoidable-repeat rebuild', improvedSchedule);
   improvedSchedule = tryReduceRepeatedOpponents(improvedSchedule, config);
+  pushRepeatTrace('After repeat-opponent repair', improvedSchedule);
   improvedSchedule = sortScheduleGames(improvedSchedule);
+  pushRepeatTrace('Final schedule', improvedSchedule);
 
   const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
   const finalTeams = Object.values(finalTeamMap);
@@ -2023,7 +2037,7 @@ function generateScheduleEngine(config, lockedGames = []) {
     });
   }
 
-  return { schedule: improvedSchedule, auditRows, auditSummary, unscheduled };
+  return { schedule: improvedSchedule, auditRows, auditSummary, unscheduled, repeatTrace: annotateRepeatTrace(repeatTrace), divisionRepeatMath: buildDivisionRepeatMath(config) };
 }
 
 
@@ -4390,7 +4404,7 @@ export default function App() {
         <div style={styles.tabBar}>
           {(isPublicMode
             ? [["schedule", "Schedule"], ["standings", "Standings"], ["score_reporting", "Score Reporting"]]
-            : [["setup", "Setup"], ["schedule", "Schedule Views"], ["audit", "Audit"], ["issues", "Issues"]]
+            : [["setup", "Setup"], ["schedule", "Schedule Views"], ["audit", "Audit"], ["debug", "Repeat Debug"], ["issues", "Issues"]]
           ).map(([key, label]) => (
             <button key={key} style={activeTab === key ? styles.tabButtonActive : styles.tabButton} onClick={() => setActiveTab(key)}>
               {label}
@@ -5298,6 +5312,93 @@ export default function App() {
           </div>
         ) : null}
 
+        {activeTab === "debug" && !isPublicMode ? (
+          <div style={{ display: "grid", gap: 24 }}>
+            <Card>
+              <SectionTitle>Division Repeat Math</SectionTitle>
+              <div style={{ ...styles.tableWrap, maxHeight: 420 }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Division</th>
+                      <th style={styles.th}>Teams</th>
+                      <th style={styles.th}>Target Games</th>
+                      <th style={styles.th}>Max Unique Opponents</th>
+                      <th style={styles.th}>Repeats Avoidable?</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(result?.divisionRepeatMath || buildDivisionRepeatMath(config)).map((row) => (
+                      <tr key={row.division}>
+                        <td style={{ ...styles.td, textAlign: "left" }}>{row.division}</td>
+                        <td style={styles.td}>{row.teams}</td>
+                        <td style={styles.td}>{row.targetGames}</td>
+                        <td style={styles.td}>{row.maxUniqueOpponents}</td>
+                        <td style={styles.td}>{row.repeatsShouldBeAvoidable ? "Yes" : "No"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            <Card>
+              <SectionTitle>Repeat Opponent Trace</SectionTitle>
+              {!result ? (
+                <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>Generate a schedule to trace when repeat opponents appear.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 16 }}>
+                  {(result.repeatTrace || []).map((phase) => (
+                    <div key={phase.label} style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16, display: "grid", gap: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 700 }}>{phase.label}</div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <Badge>{phase.totalGames} games</Badge>
+                          <Badge danger={phase.repeatedPairs.length > 0}>{phase.repeatedPairs.length} repeated pairs</Badge>
+                          <Badge danger={phase.affectedTeams > 0}>{phase.affectedTeams} affected teams</Badge>
+                        </div>
+                      </div>
+
+                      {phase.repeatedPairs.length === 0 ? (
+                        <div style={{ fontSize: 14, color: "#166534" }}>No repeated opponents at this phase.</div>
+                      ) : (
+                        <div style={{ ...styles.tableWrap, maxHeight: 320 }}>
+                          <table style={styles.table}>
+                            <thead>
+                              <tr>
+                                <th style={styles.th}>Division</th>
+                                <th style={styles.th}>Pair</th>
+                                <th style={styles.th}>Meetings</th>
+                                <th style={styles.th}>Allowed</th>
+                                <th style={styles.th}>First Appears Here?</th>
+                                <th style={styles.th}>Games</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {phase.repeatedPairs.map((pair) => (
+                                <tr key={`${phase.label}-${pair.key}`}>
+                                  <td style={styles.td}>{pair.division}</td>
+                                  <td style={{ ...styles.td, textAlign: "left" }}>{pair.teamA} vs {pair.teamB}</td>
+                                  <td style={styles.td}>{pair.count}</td>
+                                  <td style={styles.td}>{pair.allowed}</td>
+                                  <td style={styles.td}>{pair.introducedHere ? "Yes" : "No"}</td>
+                                  <td style={{ ...styles.td, textAlign: "left", fontSize: 12 }}>
+                                    {pair.meetings.map((meeting) => `${meeting.date} ${formatTimeDisplay(meeting.time)} ${meeting.court}`).join(' • ')}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+        ) : null}
+
         {activeTab === "issues" && !isPublicMode ? (
           <Card>
             <SectionTitle icon={AlertTriangle}>Scheduling Issues</SectionTitle>
@@ -5327,4 +5428,67 @@ export default function App() {
       </div>
     </div>
   );
+}function getRepeatedOpponentMeetingMap(schedule) {
+  const map = {};
+  for (const game of schedule || []) {
+    const teams = [game.home, game.away].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const key = `${game.division}::${teams[0]}::${teams[1]}`;
+    if (!map[key]) map[key] = [];
+    map[key].push({
+      date: game.date,
+      time: game.time,
+      court: game.court,
+      home: game.home,
+      away: game.away,
+    });
+  }
+  Object.values(map).forEach((games) => games.sort(compareSlotLike));
+  return map;
 }
+
+function buildRepeatTraceEntry(label, schedule, config) {
+  const repeatedOpponentData = getRepeatedOpponentViolations(schedule, config);
+  const meetingMap = getRepeatedOpponentMeetingMap(schedule);
+  return {
+    label,
+    totalGames: (schedule || []).length,
+    affectedTeams: Object.keys(repeatedOpponentData.teamViolationCounts || {}).length,
+    repeatedPairs: repeatedOpponentData.pairViolations.map((entry) => {
+      const key = `${entry.division}::${[entry.teamA, entry.teamB].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join('::')}`;
+      return {
+        ...entry,
+        key,
+        meetings: meetingMap[key] || [],
+      };
+    }),
+  };
+}
+
+function annotateRepeatTrace(entries) {
+  const seen = new Set();
+  return (entries || []).map((entry) => ({
+    ...entry,
+    repeatedPairs: (entry.repeatedPairs || []).map((pair) => {
+      const introducedHere = !seen.has(pair.key);
+      seen.add(pair.key);
+      return { ...pair, introducedHere };
+    }),
+  }));
+}
+
+function buildDivisionRepeatMath(config) {
+  return DIVISIONS.map((division) => {
+    const teams = Number(config?.divisions?.[division] || 0);
+    const targetGames = Number(config?.divisionGames?.[division] || 0);
+    const maxUniqueOpponents = Math.max(0, teams - 1);
+    return {
+      division,
+      teams,
+      targetGames,
+      maxUniqueOpponents,
+      repeatsShouldBeAvoidable: teams > 1 && targetGames <= maxUniqueOpponents,
+    };
+  });
+}
+
+
