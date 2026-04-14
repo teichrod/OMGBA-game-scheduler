@@ -50,6 +50,7 @@ const SEASON_YEAR_OPTIONS = Array.from({ length: 8 }, (_, i) => 2026 + i);
 const TEAM_COUNT_OPTIONS = Array.from({ length: 21 }, (_, i) => String(i + 4));
 const GAME_COUNT_OPTIONS = ["6", "7", "8", "9", "10", "11", "12"];
 const MAX_EARLY_OPTIONS = ["0", "1", "2", "3", "4"];
+const MIN_GAMES_PER_WEEK_OPTIONS = Array.from({ length: 41 }, (_, i) => String(i));
 
 const ASSOCIATION_OPTIONS = ["OM", "BP", "CD", "RA"];
 
@@ -432,6 +433,7 @@ function createInitialState() {
   return {
     seasonYear,
     maxEarlyGames: 2,
+    minGamesPerWeek: 0,
     globalAllowDoubleheaders: false,
     selectedDateForCourts: saturdays[0]?.date || "",
     fifthBoysDoubleheaderDate: "",
@@ -1539,6 +1541,7 @@ function schedulePenaltyScore(result, config) {
   return (
     (result.auditSummary?.missingTeams || 0) * 1000000 +
     (result.auditSummary?.earlyViolations || 0) * 150000 +
+    (result.auditSummary?.weeklyMinimumIssues || 0) * 90000 +
     (result.auditSummary?.homeAwayIssues || 0) * 30000 +
     (result.auditSummary?.timeVarietyIssues || 0) * 12000 +
     severity +
@@ -1717,8 +1720,10 @@ function generateScheduleEngine(config) {
 
   if (allTeamsScheduled) {
     improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
+    improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
     improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
     improvedSchedule = rebalanceTowardFinalSaturday(improvedSchedule, config);
+    improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
     improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
   }
 
@@ -1761,6 +1766,8 @@ function generateScheduleEngine(config) {
     ].filter(Boolean),
   }));
 
+  const weeklyMinimumViolations = getWeeklyMinimumViolations(improvedSchedule, config);
+
   const auditSummary = {
     totalGames: improvedSchedule.length,
     totalTeams: teams.length,
@@ -1769,6 +1776,7 @@ function generateScheduleEngine(config) {
     homeAwayIssues: auditRows.filter((row) => Math.abs(row.home - row.away) > 2).length,
     missingTeams: auditRows.filter((row) => row.games !== row.target).length,
     timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
+    weeklyMinimumIssues: weeklyMinimumViolations.length,
     enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
     enabledCourts: Object.values(config.dateCourtSettings).reduce(
       (sum, courts) => sum + courts.filter((court) => court.enabled && String(court.name || '').trim() !== '').length,
@@ -1788,6 +1796,16 @@ function generateScheduleEngine(config) {
         suggestion: missing.join('; '),
       });
     }
+  }
+
+  if (weeklyMinimumViolations.length) {
+    unscheduled.push({
+      matchup: 'Minimum games per week',
+      reason: `One or more enabled Saturdays fell below the required minimum of ${Number(config.minGamesPerWeek || 0)} games, excluding the 5th Boys doubleheader date.`,
+      suggestion: weeklyMinimumViolations
+        .map((entry) => `${entry.date} (${entry.games}/${entry.minimum})`)
+        .join('; '),
+    });
   }
 
   return { schedule: improvedSchedule, auditRows, auditSummary, unscheduled };
@@ -1837,6 +1855,8 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
     ].filter(Boolean),
   }));
 
+  const weeklyMinimumViolations = getWeeklyMinimumViolations(improvedSchedule, config);
+
   const auditSummary = {
     totalGames: improvedSchedule.length,
     totalTeams: builtTeams.length,
@@ -1845,6 +1865,7 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
     homeAwayIssues: auditRows.filter((row) => Math.abs(row.home - row.away) > 2).length,
     missingTeams: auditRows.filter((row) => row.games !== row.target).length,
     timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
+    weeklyMinimumIssues: weeklyMinimumViolations.length,
     enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
     enabledCourts: Object.values(config.dateCourtSettings).reduce(
       (sum, courts) => sum + courts.filter((court) => court.enabled && String(court.name || '').trim() !== '').length,
@@ -1890,8 +1911,135 @@ function countGamesOnDate(schedule, date) {
   return schedule.filter((game) => game.date === date).length;
 }
 
+function getDatesSubjectToWeeklyMinimum(config) {
+  const minGames = Number(config?.minGamesPerWeek || 0);
+  if (minGames <= 0) return [];
+  return getEnabledGameDates(config).filter((date) => date !== config.fifthBoysDoubleheaderDate);
+}
+
+function getWeeklyMinimumViolations(schedule, config) {
+  const minimum = Number(config?.minGamesPerWeek || 0);
+  if (minimum <= 0) return [];
+
+  return getDatesSubjectToWeeklyMinimum(config)
+    .map((date) => ({
+      date,
+      games: countGamesOnDate(schedule, date),
+      minimum,
+    }))
+    .filter((entry) => entry.games < entry.minimum);
+}
+
 function countTeamGamesOnDate(schedule, teamName, date) {
   return schedule.filter((game) => game.date === date && (game.home === teamName || game.away === teamName)).length;
+}
+
+function rebalanceToMinimumWeeklyGames(schedule, config) {
+  const minimum = Number(config?.minGamesPerWeek || 0);
+  const targetDates = getDatesSubjectToWeeklyMinimum(config);
+  if (minimum <= 0 || targetDates.length === 0) return schedule.map((game) => ({ ...game }));
+
+  let nextSchedule = schedule.map((game) => ({ ...game }));
+  let currentScore = schedulePenaltyScore(buildResultFromSchedule(nextSchedule, config, []), config);
+  const allSlots = buildOpenSlots(config);
+  let safety = 0;
+
+  while (safety < 120) {
+    safety += 1;
+
+    const deficits = targetDates
+      .map((date) => ({
+        date,
+        games: countGamesOnDate(nextSchedule, date),
+        deficit: Math.max(0, minimum - countGamesOnDate(nextSchedule, date)),
+      }))
+      .filter((entry) => entry.deficit > 0)
+      .sort((a, b) => {
+        if (b.deficit !== a.deficit) return b.deficit - a.deficit;
+        return parseShortDate(a.date) - parseShortDate(b.date);
+      });
+
+    if (!deficits.length) break;
+
+    const targetDate = deficits[0].date;
+    const occupied = new Set(nextSchedule.map((game) => `${game.date}|${game.time}|${game.court}`));
+    const emptyTargetSlots = allSlots
+      .filter((slot) => slot.date === targetDate && !occupied.has(`${slot.date}|${slot.time}|${slot.court}`))
+      .sort(compareSlotLike);
+
+    if (!emptyTargetSlots.length) break;
+
+    const donorDates = targetDates
+      .map((date) => ({
+        date,
+        games: countGamesOnDate(nextSchedule, date),
+      }))
+      .filter((entry) => entry.date !== targetDate && entry.games > minimum)
+      .sort((a, b) => {
+        if (b.games !== a.games) return b.games - a.games;
+        return parseShortDate(b.date) - parseShortDate(a.date);
+      });
+
+    if (!donorDates.length) break;
+
+    let bestCandidate = null;
+
+    for (const target of emptyTargetSlots.slice(0, 8)) {
+      for (const donor of donorDates.slice(0, 6)) {
+        const donorGames = nextSchedule
+          .filter((game) => game.date === donor.date)
+          .sort((a, b) => {
+            const aTargetCount =
+              countTeamGamesOnDate(nextSchedule, a.home, targetDate) +
+              countTeamGamesOnDate(nextSchedule, a.away, targetDate);
+            const bTargetCount =
+              countTeamGamesOnDate(nextSchedule, b.home, targetDate) +
+              countTeamGamesOnDate(nextSchedule, b.away, targetDate);
+            if (aTargetCount !== bTargetCount) return aTargetCount - bTargetCount;
+            const aDateLoad = countTeamGamesOnDate(nextSchedule, a.home, donor.date) + countTeamGamesOnDate(nextSchedule, a.away, donor.date);
+            const bDateLoad = countTeamGamesOnDate(nextSchedule, b.home, donor.date) + countTeamGamesOnDate(nextSchedule, b.away, donor.date);
+            if (bDateLoad !== aDateLoad) return bDateLoad - aDateLoad;
+            return compareSlotLike(a, b);
+          });
+
+        for (const game of donorGames.slice(0, 24)) {
+          const message = validateManualMove(nextSchedule.filter((g) => g !== game), { ...game }, target, config);
+          if (message) continue;
+
+          const candidateSchedule = nextSchedule.map((g) =>
+            g === game ? { ...g, date: target.date, time: target.time, court: target.court } : g
+          );
+          const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
+          if (candidateResult.auditSummary.missingTeams !== 0) continue;
+          if (candidateResult.auditSummary.earlyViolations > 0) continue;
+
+          const candidateScore = schedulePenaltyScore(candidateResult, config);
+          const targetBonus =
+            Math.max(0, minimum - countGamesOnDate(nextSchedule, targetDate)) * 3000 +
+            (countTeamGamesOnDate(nextSchedule, game.home, targetDate) === 0 ? 450 : 0) +
+            (countTeamGamesOnDate(nextSchedule, game.away, targetDate) === 0 ? 450 : 0);
+
+          const netScore = candidateScore - targetBonus;
+
+          if (!bestCandidate || netScore < bestCandidate.netScore) {
+            bestCandidate = {
+              schedule: candidateSchedule.map((g) => ({ ...g })),
+              score: candidateScore,
+              netScore,
+            };
+          }
+        }
+      }
+    }
+
+    if (!bestCandidate) break;
+    if (bestCandidate.score > currentScore + 6000) break;
+
+    nextSchedule = bestCandidate.schedule;
+    currentScore = bestCandidate.score;
+  }
+
+  return nextSchedule.sort(compareSlotLike);
 }
 
 function rebalanceTowardFinalSaturday(schedule, config) {
@@ -2338,7 +2486,9 @@ export default function App() {
       (sum, division) => sum + (Number(config.divisions[division] || 0) * Number(config.divisionGames[division] || 0)) / 2,
       0
     );
-    return { enabledDates, totalSlots, totalTeams, totalNeededGames };
+    const eligibleWeeklyMinimumDates = getDatesSubjectToWeeklyMinimum(config).length;
+    const minimumGamesRequiredByWeek = eligibleWeeklyMinimumDates * Number(config.minGamesPerWeek || 0);
+    return { enabledDates, totalSlots, totalTeams, totalNeededGames, eligibleWeeklyMinimumDates, minimumGamesRequiredByWeek };
   }, [config]);
 
   const selectedDateSlotTotal = useMemo(() => getTotalSlotsForDate(config, selectedCourtDate), [config, selectedCourtDate]);
@@ -2718,6 +2868,18 @@ export default function App() {
           </div>
         ) : null}
 
+        {!isPublicMode && Number(config.minGamesPerWeek || 0) > 0 && capacity.minimumGamesRequiredByWeek > capacity.totalNeededGames ? (
+          <div style={styles.alert}>
+            <AlertTriangle size={18} />
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>Minimum-per-week warning</div>
+              <div>
+                You set a minimum of <strong>{Number(config.minGamesPerWeek || 0)}</strong> games across <strong>{capacity.eligibleWeeklyMinimumDates}</strong> counted Saturdays, which requires at least <strong>{capacity.minimumGamesRequiredByWeek}</strong> total games. The season currently only contains <strong>{capacity.totalNeededGames}</strong> games. The 5th Boys doubleheader date is excluded.
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {isPublicMode ? (
           <div style={styles.publicBanner}>Public view: schedule-only mode. Use filters below to browse by division or jump straight to one team.</div>
         ) : null}
@@ -2775,6 +2937,18 @@ export default function App() {
                       onChange={(e) => setConfig((prev) => ({ ...prev, maxEarlyGames: Number(e.target.value) }))}
                     >
                       {MAX_EARLY_OPTIONS.map((value) => (
+                        <option key={value} value={value}>{value}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={styles.smallLabel}>Minimum games per week (excluding 5th Boys DH date)</label>
+                    <select
+                      style={styles.select}
+                      value={String(config.minGamesPerWeek || 0)}
+                      onChange={(e) => setConfig((prev) => ({ ...prev, minGamesPerWeek: Number(e.target.value) }))}
+                    >
+                      {MIN_GAMES_PER_WEEK_OPTIONS.map((value) => (
                         <option key={value} value={value}>{value}</option>
                       ))}
                     </select>
@@ -3090,10 +3264,11 @@ export default function App() {
                 </div>
               </Card>
 
-              <div style={styles.statsGrid}>
+              <div style={styles.statsGrid5}>
                 <StatCard label="Teams" value={capacity.totalTeams} subvalue={`Season ${config.seasonYear}-${String(config.seasonYear + 1).slice(-2)}`} />
                 <StatCard label="Needed games" value={capacity.totalNeededGames} />
                 <StatCard label="Available slots" value={capacity.totalSlots} />
+                <StatCard label="Min/week" value={Number(config.minGamesPerWeek || 0)} subvalue="DH date excluded" />
                 <StatCard label="5th Boys DH" value={config.fifthBoysDoubleheaderDate || "Not set"} />
               </div>
 
@@ -3278,10 +3453,11 @@ export default function App() {
 
         {activeTab === "audit" && !isPublicMode ? (
           <div style={{ display: "grid", gap: 24 }}>
-            <div style={styles.statsGrid5}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0,1fr))", gap: 16 }}>
               <StatCard label="All teams scheduled" value={result ? (result.auditSummary.allTeamsScheduled ? "Yes" : "No") : "—"} />
               <StatCard label="Missing teams" value={result ? result.auditSummary.missingTeams : "—"} />
               <StatCard label="Early violations" value={result ? result.auditSummary.earlyViolations : "—"} />
+              <StatCard label="Min/week issues" value={result ? result.auditSummary.weeklyMinimumIssues : "—"} />
               <StatCard label="Home/away issues" value={result ? result.auditSummary.homeAwayIssues : "—"} />
               <StatCard label="Time variety issues" value={result ? result.auditSummary.timeVarietyIssues : "—"} />
             </div>
