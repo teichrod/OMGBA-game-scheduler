@@ -80,18 +80,31 @@ function getAssociationCode(entry) {
   return String(entry.association || "").trim().toUpperCase();
 }
 
-function buildFormattedTeamName(division, entry, fallbackIndex) {
+function formatTeamNumber(num, totalTeamsInDivision) {
+  const n = Number(num || 1);
+  const safeNum = Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+  const total = Number(totalTeamsInDivision || 0);
+
+  if (total >= 10) {
+    return String(safeNum).padStart(2, "0");
+  }
+
+  return String(safeNum);
+}
+
+function buildFormattedTeamName(division, entry, fallbackIndex, totalTeamsInDivision = 0) {
   const associationCode = getAssociationCode(entry);
   const assoc = associationCode || "TM";
   const gender = getDivisionGenderCode(division);
   const grade = getDivisionGradeCode(division);
-  const teamNumber = associationCode
+  const rawTeamNumber = associationCode
     ? (
         entry?.associationTeamNumber && String(entry.associationTeamNumber).trim()
-          ? String(entry.associationTeamNumber).padStart(2, "0")
-          : String(fallbackIndex).padStart(2, "0")
+          ? String(entry.associationTeamNumber)
+          : String(fallbackIndex)
       )
-    : String(fallbackIndex).padStart(2, "0");
+    : String(fallbackIndex);
+  const teamNumber = formatTeamNumber(rawTeamNumber, totalTeamsInDivision);
   const coach = sanitizeCoachLastName(entry?.coachLastName);
 
   return coach
@@ -470,7 +483,7 @@ function buildTeamNamesFromConfig(config) {
     const count = Number(config?.divisions?.[division] || 0);
     const details = syncDivisionTeamDetails(config?.divisionTeamDetails?.[division], count);
     for (let i = 0; i < count; i += 1) {
-      names.push(buildFormattedTeamName(division, details[i], i + 1));
+      names.push(buildFormattedTeamName(division, details[i], i + 1, count));
     }
   }
   return names;
@@ -636,7 +649,7 @@ function buildTeams(config) {
       const detail = details[i];
       teams.push({
         id: `${division}::${i + 1}`,
-        name: buildFormattedTeamName(division, detail, i + 1),
+        name: buildFormattedTeamName(division, detail, i + 1, count),
         division,
         teamIndex: i + 1,
         association: getAssociationCode(detail),
@@ -3643,7 +3656,7 @@ export default function App() {
                               idx
                             );
 
-                            const previewName = buildFormattedTeamName(division, entry, idx + 1);
+                            const previewName = buildFormattedTeamName(division, entry, idx + 1, count);
 
                             return (
                               <div
@@ -3698,15 +3711,17 @@ export default function App() {
                                     })
                                   }
                                 >
-                                  {Array.from({ length: count }, (_, n) => String(n + 1)).map((num) => (
-                                    <option
-                                      key={num}
-                                      value={num}
-                                      disabled={associationCode && usedNumbers.includes(num)}
-                                    >
-                                      {num}
-                                    </option>
-                                  ))}
+                                  {Array.from({ length: count }, (_, n) => n + 1)
+                                    .sort((a, b) => a - b)
+                                    .map((num) => (
+                                      <option
+                                        key={num}
+                                        value={String(num)}
+                                        disabled={associationCode && usedNumbers.includes(String(num))}
+                                      >
+                                        {num}
+                                      </option>
+                                    ))}
                                 </select>
 
                                 <input
