@@ -50,7 +50,7 @@ const SEASON_YEAR_OPTIONS = Array.from({ length: 8 }, (_, i) => 2026 + i);
 const TEAM_COUNT_OPTIONS = Array.from({ length: 21 }, (_, i) => String(i + 4));
 const GAME_COUNT_OPTIONS = ["6", "7", "8", "9", "10", "11", "12"];
 const MAX_EARLY_OPTIONS = ["0", "1", "2", "3", "4"];
-const MIN_GAMES_PER_WEEK_OPTIONS = Array.from({ length: 41 }, (_, i) => String(i));
+const MIN_GAMES_PER_WEEK_OPTIONS = Array.from({ length: 21 }, (_, i) => String(25 + i));
 
 const ASSOCIATION_OPTIONS = ["OM", "BP", "CD", "RA"];
 
@@ -433,7 +433,7 @@ function createInitialState() {
   return {
     seasonYear,
     maxEarlyGames: 2,
-    minGamesPerWeek: 0,
+    minGamesPerWeek: 25,
     globalAllowDoubleheaders: false,
     selectedDateForCourts: saturdays[0]?.date || "",
     fifthBoysDoubleheaderDate: "",
@@ -1726,6 +1726,7 @@ function generateScheduleEngine(config) {
     improvedSchedule = rebalanceTowardFinalSaturday(improvedSchedule, config);
     improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
     improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+    improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
   }
 
   improvedSchedule.sort((a, b) => {
