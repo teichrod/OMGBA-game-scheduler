@@ -2939,6 +2939,233 @@ function sameGameKey(a, b) {
   return a && b && a.date === b.date && a.time === b.time && a.court === b.court && a.home === b.home && a.away === b.away;
 }
 
+function getGameScoreKey(game) {
+  return game ? [game.division, game.date, game.time, game.court, game.home, game.away].join("||") : "";
+}
+
+function parseNumericScore(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+
+function normalizeScoreReportForGame(game, report) {
+  if (!game || !report) return null;
+  const teamScore = parseNumericScore(report.teamScore);
+  const opponentScore = parseNumericScore(report.opponentScore);
+  if (teamScore === null || opponentScore === null) return null;
+
+  if (report.reportingTeam === game.home) {
+    return { homeScore: teamScore, awayScore: opponentScore };
+  }
+  if (report.reportingTeam === game.away) {
+    return { homeScore: opponentScore, awayScore: teamScore };
+  }
+  return null;
+}
+
+function getLatestGameReportsByTeam(game, scoreReports) {
+  const relevant = (Array.isArray(scoreReports) ? scoreReports : [])
+    .filter((report) => report.gameId === getGameScoreKey(game))
+    .sort((a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime());
+
+  const latestByTeam = {};
+  for (const report of relevant) {
+    const team = report.reportingTeam;
+    if (!team || latestByTeam[team]) continue;
+    latestByTeam[team] = report;
+  }
+
+  return {
+    relevant,
+    homeReport: latestByTeam[game?.home] || null,
+    awayReport: latestByTeam[game?.away] || null,
+  };
+}
+
+function getOfficialScoreFromReports(game, scoreReports) {
+  if (!game) {
+    return {
+      status: "unreported",
+      reportCount: 0,
+      verified: false,
+      official: null,
+      officialLabel: "—",
+      reportSummary: "No score reports yet.",
+    };
+  }
+
+  const { relevant, homeReport, awayReport } = getLatestGameReportsByTeam(game, scoreReports);
+  if (!relevant.length) {
+    return {
+      status: "unreported",
+      reportCount: 0,
+      verified: false,
+      official: null,
+      officialLabel: "—",
+      reportSummary: "No score reports yet.",
+    };
+  }
+
+  if (!homeReport || !awayReport) {
+    return {
+      status: "awaiting_opponent",
+      reportCount: relevant.length,
+      verified: false,
+      official: null,
+      officialLabel: "Pending",
+      reportSummary: "Waiting for both coaches to report.",
+      homeReport,
+      awayReport,
+    };
+  }
+
+  const normalizedHome = normalizeScoreReportForGame(game, homeReport);
+  const normalizedAway = normalizeScoreReportForGame(game, awayReport);
+  if (!normalizedHome || !normalizedAway) {
+    return {
+      status: "invalid",
+      reportCount: relevant.length,
+      verified: false,
+      official: null,
+      officialLabel: "Review",
+      reportSummary: "Could not align one or more reports with the game.",
+      homeReport,
+      awayReport,
+    };
+  }
+
+  const exactMatch =
+    normalizedHome.homeScore === normalizedAway.homeScore &&
+    normalizedHome.awayScore === normalizedAway.awayScore;
+  const withinOne =
+    Math.abs(normalizedHome.homeScore - normalizedAway.homeScore) <= 1 &&
+    Math.abs(normalizedHome.awayScore - normalizedAway.awayScore) <= 1;
+
+  const diffA = normalizedHome.homeScore - normalizedHome.awayScore;
+  const diffB = normalizedAway.homeScore - normalizedAway.awayScore;
+  const sameDiff = diffA === diffB && Math.sign(diffA) === Math.sign(diffB);
+
+  if (!exactMatch && !withinOne && !sameDiff) {
+    return {
+      status: "mismatch",
+      reportCount: relevant.length,
+      verified: false,
+      official: null,
+      officialLabel: "Review",
+      reportSummary: "Coach reports do not agree closely enough yet.",
+      homeReport,
+      awayReport,
+    };
+  }
+
+  let officialHome = Math.round((normalizedHome.homeScore + normalizedAway.homeScore) / 2);
+  let officialAway = Math.round((normalizedHome.awayScore + normalizedAway.awayScore) / 2);
+  let reason = exactMatch ? "Exact match" : withinOne ? "Within one point" : "Matching point differential";
+
+  if (sameDiff && !exactMatch && !withinOne) {
+    const targetDiff = diffA;
+    const avgTotal = Math.round(
+      (normalizedHome.homeScore + normalizedHome.awayScore + normalizedAway.homeScore + normalizedAway.awayScore) / 2
+    );
+    const maybeHome = (avgTotal + targetDiff) / 2;
+    const maybeAway = avgTotal - maybeHome;
+    if (Number.isInteger(maybeHome) && Number.isInteger(maybeAway)) {
+      officialHome = maybeHome;
+      officialAway = maybeAway;
+    } else {
+      officialHome = normalizedHome.homeScore;
+      officialAway = normalizedHome.awayScore;
+    }
+  }
+
+  return {
+    status: "verified",
+    reportCount: relevant.length,
+    verified: true,
+    official: { homeScore: officialHome, awayScore: officialAway },
+    officialLabel: `${officialAway}-${officialHome}`,
+    reportSummary: reason,
+    homeReport,
+    awayReport,
+  };
+}
+
+function getGameScoreDisplay(game, scoreReports) {
+  const status = getOfficialScoreFromReports(game, scoreReports);
+  if (status.verified && status.official) {
+    return `${game.away} ${status.official.awayScore} - ${status.official.homeScore} ${game.home}`;
+  }
+  if (status.status === "awaiting_opponent") return "1 report";
+  if (status.status === "mismatch") return "Needs review";
+  return "—";
+}
+
+function buildDivisionStandings(schedule, scoreReports) {
+  const standingsByDivision = {};
+
+  for (const game of Array.isArray(schedule) ? schedule : []) {
+    if (!standingsByDivision[game.division]) standingsByDivision[game.division] = {};
+    const divisionMap = standingsByDivision[game.division];
+
+    for (const team of [game.home, game.away]) {
+      if (!divisionMap[team]) {
+        divisionMap[team] = {
+          team,
+          wins: 0,
+          losses: 0,
+          ties: 0,
+          pointsFor: 0,
+          pointsAgainst: 0,
+          pointDiff: 0,
+          gamesPlayed: 0,
+        };
+      }
+    }
+
+    const scoreStatus = getOfficialScoreFromReports(game, scoreReports);
+    if (!scoreStatus.verified || !scoreStatus.official) continue;
+
+    const homeRow = divisionMap[game.home];
+    const awayRow = divisionMap[game.away];
+    const homeScore = scoreStatus.official.homeScore;
+    const awayScore = scoreStatus.official.awayScore;
+
+    homeRow.gamesPlayed += 1;
+    awayRow.gamesPlayed += 1;
+    homeRow.pointsFor += homeScore;
+    homeRow.pointsAgainst += awayScore;
+    awayRow.pointsFor += awayScore;
+    awayRow.pointsAgainst += homeScore;
+    homeRow.pointDiff = homeRow.pointsFor - homeRow.pointsAgainst;
+    awayRow.pointDiff = awayRow.pointsFor - awayRow.pointsAgainst;
+
+    if (homeScore > awayScore) {
+      homeRow.wins += 1;
+      awayRow.losses += 1;
+    } else if (awayScore > homeScore) {
+      awayRow.wins += 1;
+      homeRow.losses += 1;
+    } else {
+      homeRow.ties += 1;
+      awayRow.ties += 1;
+    }
+  }
+
+  return Object.fromEntries(
+    Object.entries(standingsByDivision).map(([division, rows]) => [
+      division,
+      Object.values(rows).sort((a, b) => {
+        if (b.wins !== a.wins) return b.wins - a.wins;
+        if (b.ties !== a.ties) return b.ties - a.ties;
+        if (a.losses !== b.losses) return a.losses - b.losses;
+        if (b.pointDiff !== a.pointDiff) return b.pointDiff - a.pointDiff;
+        if (b.pointsFor !== a.pointsFor) return b.pointsFor - a.pointsFor;
+        return a.team.localeCompare(b.team, undefined, { numeric: true });
+      }),
+    ])
+  );
+}
+
 function getScheduleGridForDate(config, result, date) {
   const enabledTimes = config.timeSlots.filter((entry) => entry.enabled).map((entry) => entry.time);
   const courts = getEnabledCourtsForDate(config, date);
@@ -2975,6 +3202,13 @@ export default function App() {
   const [savedSetups, setSavedSetups] = useState([]);
   const [selectedSavedSetup, setSelectedSavedSetup] = useState("");
   const [dateDebugExpanded, setDateDebugExpanded] = useState(true);
+  const [scoreReports, setScoreReports] = useState([]);
+  const [scoreNotice, setScoreNotice] = useState("");
+  const [scoreReporterEmail, setScoreReporterEmail] = useState("");
+  const [scoreReporterTeam, setScoreReporterTeam] = useState(initialTeamParam !== "all" ? initialTeamParam : "");
+  const [scoreGameId, setScoreGameId] = useState("");
+  const [scoreForInput, setScoreForInput] = useState("");
+  const [scoreAgainstInput, setScoreAgainstInput] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -2986,9 +3220,11 @@ export default function App() {
       if (published?.result) {
         setResult(published.result);
         setPublishedMeta(published.meta || null);
+        setScoreReports(Array.isArray(published.scoreReports) ? published.scoreReports : []);
       } else {
         setResult(null);
         setPublishedMeta(null);
+        setScoreReports([]);
       }
     }
 
@@ -3048,8 +3284,55 @@ export default function App() {
       scheduleDivisionFilter === "all"
         ? result.schedule
         : result.schedule.filter((game) => game.division === scheduleDivisionFilter);
-    return Array.from(new Set(divisionFilteredGames.flatMap((game) => [game.home, game.away]))).sort((a, b) => a.localeCompare(b));
+    return Array.from(new Set(divisionFilteredGames.flatMap((game) => [game.home, game.away]))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }, [result, scheduleDivisionFilter]);
+
+  const allScheduleTeams = useMemo(() => {
+    if (!result) return [];
+    return Array.from(new Set(result.schedule.flatMap((game) => [game.home, game.away]))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [result]);
+
+  const scoreReportableGames = useMemo(() => {
+    if (!result || !scoreReporterTeam) return [];
+    return [...result.schedule]
+      .filter((game) => game.home === scoreReporterTeam || game.away === scoreReporterTeam)
+      .sort((a, b) => compareSlotLike(a, b));
+  }, [result, scoreReporterTeam]);
+
+  const selectedScoreGame = useMemo(
+    () => scoreReportableGames.find((game) => getGameScoreKey(game) === scoreGameId) || null,
+    [scoreReportableGames, scoreGameId]
+  );
+
+  const divisionStandings = useMemo(() => (result ? buildDivisionStandings(result.schedule, scoreReports) : {}), [result, scoreReports]);
+
+  const scoreLogRows = useMemo(() => {
+    if (!result) return [];
+    const gameMap = new Map(result.schedule.map((game) => [getGameScoreKey(game), game]));
+    return [...scoreReports]
+      .map((report) => {
+        const game = gameMap.get(report.gameId);
+        const status = game ? getOfficialScoreFromReports(game, scoreReports) : null;
+        return { report, game, status };
+      })
+      .sort((a, b) => new Date(b.report.submittedAt || 0).getTime() - new Date(a.report.submittedAt || 0).getTime());
+  }, [result, scoreReports]);
+
+  useEffect(() => {
+    if (isPublicMode && scheduleTeamFilter !== "all" && !scoreReporterTeam) {
+      setScoreReporterTeam(scheduleTeamFilter);
+    }
+  }, [isPublicMode, scheduleTeamFilter, scoreReporterTeam]);
+
+  useEffect(() => {
+    if (!scoreReportableGames.length) {
+      setScoreGameId("");
+      return;
+    }
+    if (!scoreReportableGames.some((game) => getGameScoreKey(game) === scoreGameId)) {
+      setScoreGameId(getGameScoreKey(scoreReportableGames[0]));
+    }
+  }, [scoreReportableGames, scoreGameId]);
 
   const filteredSchedule = useMemo(() => {
     if (!result) return [];
@@ -3327,6 +3610,13 @@ export default function App() {
     setDragState(null);
     setGridNotice("");
     setSavedSetupName("");
+    setScoreReports([]);
+    setScoreNotice("");
+    setScoreReporterEmail("");
+    setScoreReporterTeam(initialTeamParam !== "all" ? initialTeamParam : "");
+    setScoreGameId("");
+    setScoreForInput("");
+    setScoreAgainstInput("");
   }
 
   function runScheduler() {
@@ -3343,13 +3633,17 @@ export default function App() {
 
   async function publishSchedule() {
     if (!result) return;
+    const scheduleGameIds = new Set(result.schedule.map((game) => getGameScoreKey(game)));
+    const retainedReports = (Array.isArray(scoreReports) ? scoreReports : []).filter((report) => scheduleGameIds.has(report.gameId));
     const meta = {
       publishedAt: new Date().toLocaleString(),
       totalGames: result.schedule.length,
+      verifiedGames: result.schedule.filter((game) => getOfficialScoreFromReports(game, retainedReports).verified).length,
     };
-    const ok = await savePublishedPayload({ result, meta });
+    const ok = await savePublishedPayload({ result, meta, scoreReports: retainedReports });
     if (ok) {
       setPublishedMeta(meta);
+      setScoreReports(retainedReports);
       setPublishNotice("Schedule published for public view.");
     } else {
       setPublishNotice("Publish failed.");
@@ -3361,6 +3655,7 @@ export default function App() {
     if (published?.result) {
       setResult(published.result);
       setPublishedMeta(published.meta || null);
+      setScoreReports(Array.isArray(published.scoreReports) ? published.scoreReports : []);
       setActiveTab("schedule");
       setPublishNotice("Published schedule loaded.");
     } else {
@@ -3372,10 +3667,88 @@ export default function App() {
     const ok = await clearPublishedPayload();
     if (ok) {
       setPublishedMeta(null);
+      setScoreReports([]);
       if (isPublicMode) setResult(null);
       setPublishNotice("Published schedule cleared.");
     } else {
       setPublishNotice("Could not clear published schedule.");
+    }
+  }
+
+  async function submitScoreReport() {
+    if (!result) return;
+    const reporterEmail = String(scoreReporterEmail || "").trim().toLowerCase();
+    if (!reporterEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reporterEmail)) {
+      setScoreNotice("Enter a valid coach email.");
+      return;
+    }
+    if (!scoreReporterTeam) {
+      setScoreNotice("Choose a team first.");
+      return;
+    }
+    const game = selectedScoreGame;
+    if (!game) {
+      setScoreNotice("Choose a game to report.");
+      return;
+    }
+    const teamScore = parseNumericScore(scoreForInput);
+    const opponentScore = parseNumericScore(scoreAgainstInput);
+    if (teamScore === null || opponentScore === null) {
+      setScoreNotice("Enter non-negative whole-number scores.");
+      return;
+    }
+    if (game.home !== scoreReporterTeam && game.away !== scoreReporterTeam) {
+      setScoreNotice("That game does not belong to the selected team.");
+      return;
+    }
+
+    const published = await loadPublishedPayload();
+    const payloadResult = published?.result || result;
+    const existingReports = Array.isArray(published?.scoreReports) ? published.scoreReports : [];
+    const nextReport = {
+      id: createRowId("score"),
+      gameId: getGameScoreKey(game),
+      division: game.division,
+      date: game.date,
+      time: game.time,
+      court: game.court,
+      home: game.home,
+      away: game.away,
+      reportingTeam: scoreReporterTeam,
+      reporterEmail,
+      teamScore,
+      opponentScore,
+      submittedAt: new Date().toISOString(),
+    };
+
+    const nextReports = existingReports.filter(
+      (report) =>
+        !(
+          report.gameId === nextReport.gameId &&
+          report.reportingTeam === nextReport.reportingTeam &&
+          String(report.reporterEmail || "").trim().toLowerCase() === reporterEmail
+        )
+    );
+    nextReports.push(nextReport);
+
+    const ok = await savePublishedPayload({
+      result: payloadResult,
+      meta: published?.meta || publishedMeta || null,
+      scoreReports: nextReports,
+    });
+
+    if (ok) {
+      setScoreReports(nextReports);
+      setScoreForInput("");
+      setScoreAgainstInput("");
+      const status = getOfficialScoreFromReports(game, nextReports);
+      setScoreNotice(
+        status.verified
+          ? `Score saved and verified: ${game.away} ${status.official.awayScore} - ${status.official.homeScore} ${game.home}.`
+          : "Score saved. Waiting for the other coach or a closer matching report."
+      );
+    } else {
+      setScoreNotice("Could not save the score report.");
     }
   }
 
@@ -3386,7 +3759,7 @@ export default function App() {
           <div>
             <h1 style={styles.title}>Youth Sports Scheduler</h1>
             <div style={styles.subtitle}>
-              Editable setup, date-specific court selection, fairness-based scheduling, admin date grid, public publishing, and CSV export.
+              Editable setup, date-specific court selection, fairness-based scheduling, admin date grid, public publishing, coach score reporting, standings, and CSV export.
             </div>
           </div>
           <div style={styles.row}>
@@ -3854,7 +4227,7 @@ export default function App() {
                 {result && !isPublicMode ? (
                   <button
                     style={styles.button}
-                    onClick={() => exportCsv("filtered_schedule.csv", [["Division", "Date", "Time", "Court", "Home", "Away"], ...filteredSchedule.map((g) => [g.division, g.date, formatTimeDisplay(g.time), g.court, g.home, g.away])])}
+                    onClick={() => exportCsv("filtered_schedule.csv", [["Division", "Date", "Time", "Court", "Home", "Away", "Score"], ...filteredSchedule.map((g) => [g.division, g.date, formatTimeDisplay(g.time), g.court, g.home, g.away, getGameScoreDisplay(g, scoreReports)])])}
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                       <Download size={16} /> Export View
@@ -3967,6 +4340,7 @@ export default function App() {
                                           <div>{cellGame.away} @ {cellGame.home}</div>
                                           {cellGame.locked ? <span style={{ ...styles.badge, alignSelf: 'flex-start' }}>Locked</span> : null}
                                         </div>
+                                        <div style={{ marginTop: 6, fontSize: 12, color: '#475569' }}>{getGameScoreDisplay(cellGame, scoreReports)}</div>
                                       </div>
                                     ) : (
                                       <span style={{ color: '#94a3b8' }}>Open</span>
@@ -4009,6 +4383,156 @@ export default function App() {
                   </div>
                 </div>
 
+                {isPublicMode ? (
+                  <div style={{ display: "grid", gap: 16, marginBottom: 20 }}>
+                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Coach Score Reporting</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "220px 260px 1fr 120px 120px auto", gap: 12, alignItems: "end" }}>
+                        <div>
+                          <label style={styles.smallLabel}>Coach email</label>
+                          <input style={styles.input} value={scoreReporterEmail} onChange={(e) => setScoreReporterEmail(e.target.value)} placeholder="coach@example.com" />
+                        </div>
+                        <div>
+                          <label style={styles.smallLabel}>Reporting team</label>
+                          <select style={styles.select} value={scoreReporterTeam} onChange={(e) => setScoreReporterTeam(e.target.value)}>
+                            <option value="">Select team</option>
+                            {allScheduleTeams.map((team) => <option key={team} value={team}>{team}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={styles.smallLabel}>Game</label>
+                          <select style={styles.select} value={scoreGameId} onChange={(e) => setScoreGameId(e.target.value)} disabled={!scoreReportableGames.length}>
+                            <option value="">{scoreReportableGames.length ? "Select game" : "Choose team first"}</option>
+                            {scoreReportableGames.map((game) => (
+                              <option key={getGameScoreKey(game)} value={getGameScoreKey(game)}>
+                                {`${game.date} • ${formatTimeDisplay(game.time)} • ${game.away} @ ${game.home}`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={styles.smallLabel}>Your score</label>
+                          <input style={styles.input} inputMode="numeric" value={scoreForInput} onChange={(e) => setScoreForInput(e.target.value.replace(/[^0-9]/g, ""))} />
+                        </div>
+                        <div>
+                          <label style={styles.smallLabel}>Opponent score</label>
+                          <input style={styles.input} inputMode="numeric" value={scoreAgainstInput} onChange={(e) => setScoreAgainstInput(e.target.value.replace(/[^0-9]/g, ""))} />
+                        </div>
+                        <button style={styles.primaryButton} onClick={submitScoreReport}>Submit score</button>
+                      </div>
+                      <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>
+                        Both coaches should report each game. Scores become official when reports match exactly, are within one point on each side, or agree on point differential.
+                      </div>
+                      {scoreNotice ? (
+                        <div style={{ marginTop: 10, border: "1px solid #dbeafe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 10, padding: 10, fontSize: 13, fontWeight: 600 }}>
+                          {scoreNotice}
+                        </div>
+                      ) : null}
+                      {selectedScoreGame ? (
+                        <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>
+                          Current status: <strong style={{ color: "#0f172a" }}>{getOfficialScoreFromReports(selectedScoreGame, scoreReports).officialLabel}</strong> — {getOfficialScoreFromReports(selectedScoreGame, scoreReports).reportSummary}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Division Standings</div>
+                      <div style={{ display: "grid", gap: 14 }}>
+                        {(scheduleDivisionFilter === "all" ? DIVISIONS : [scheduleDivisionFilter]).map((division) => {
+                          const rows = divisionStandings[division] || [];
+                          return (
+                            <div key={division} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
+                              <div style={{ padding: "10px 12px", fontWeight: 700, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{division}</div>
+                              <div style={{ overflowX: "auto" }}>
+                                <table style={styles.table}>
+                                  <thead>
+                                    <tr>
+                                      <th style={styles.th}>Team</th>
+                                      <th style={styles.th}>W</th>
+                                      <th style={styles.th}>L</th>
+                                      <th style={styles.th}>T</th>
+                                      <th style={styles.th}>PF</th>
+                                      <th style={styles.th}>PA</th>
+                                      <th style={styles.th}>PD</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {rows.map((row) => (
+                                      <tr key={row.team}>
+                                        <td style={styles.td}>{row.team}</td>
+                                        <td style={styles.td}>{row.wins}</td>
+                                        <td style={styles.td}>{row.losses}</td>
+                                        <td style={styles.td}>{row.ties}</td>
+                                        <td style={styles.td}>{row.pointsFor}</td>
+                                        <td style={styles.td}>{row.pointsAgainst}</td>
+                                        <td style={styles.td}>{row.pointDiff}</td>
+                                      </tr>
+                                    ))}
+                                    {!rows.length ? (
+                                      <tr><td style={styles.td} colSpan={7}>No verified scores yet.</td></tr>
+                                    ) : null}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 20, border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 12, marginBottom: 14 }}>
+                      <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                        <div style={{ fontSize: 12, color: "#64748b" }}>Reports submitted</div>
+                        <div style={{ fontSize: 24, fontWeight: 700 }}>{scoreReports.length}</div>
+                      </div>
+                      <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                        <div style={{ fontSize: 12, color: "#64748b" }}>Verified games</div>
+                        <div style={{ fontSize: 24, fontWeight: 700 }}>{result.schedule.filter((game) => getOfficialScoreFromReports(game, scoreReports).verified).length}</div>
+                      </div>
+                      <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                        <div style={{ fontSize: 12, color: "#64748b" }}>Waiting on opponent</div>
+                        <div style={{ fontSize: 24, fontWeight: 700 }}>{result.schedule.filter((game) => getOfficialScoreFromReports(game, scoreReports).status === "awaiting_opponent").length}</div>
+                      </div>
+                      <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                        <div style={{ fontSize: 12, color: "#64748b" }}>Needs review</div>
+                        <div style={{ fontSize: 24, fontWeight: 700 }}>{result.schedule.filter((game) => getOfficialScoreFromReports(game, scoreReports).status === "mismatch").length}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: 700, marginBottom: 10 }}>Score report log</div>
+                    <div style={{ ...styles.tableWrap, maxHeight: 320 }}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={styles.th}>Submitted</th>
+                            <th style={styles.th}>Coach email</th>
+                            <th style={styles.th}>Team</th>
+                            <th style={styles.th}>Game</th>
+                            <th style={styles.th}>Reported score</th>
+                            <th style={styles.th}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {scoreLogRows.map(({ report, game, status }) => (
+                            <tr key={report.id}>
+                              <td style={styles.td}>{new Date(report.submittedAt || "").toLocaleString()}</td>
+                              <td style={styles.td}>{report.reporterEmail}</td>
+                              <td style={styles.td}>{report.reportingTeam}</td>
+                              <td style={styles.td}>{game ? `${game.date} • ${formatTimeDisplay(game.time)} • ${game.away} @ ${game.home}` : `${report.date} • ${formatTimeDisplay(report.time)} • ${report.away} @ ${report.home}`}</td>
+                              <td style={styles.td}>{`${report.teamScore}-${report.opponentScore}`}</td>
+                              <td style={styles.td}>{status?.verified ? `Verified (${status.officialLabel})` : status?.status === "awaiting_opponent" ? "Waiting on other coach" : status?.status === "mismatch" ? "Needs review" : "Pending"}</td>
+                            </tr>
+                          ))}
+                          {!scoreLogRows.length ? (
+                            <tr><td style={styles.td} colSpan={6}>No score reports yet.</td></tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 <div style={styles.tableWrap}>
                   <table style={styles.table}>
                     <thead>
@@ -4019,6 +4543,7 @@ export default function App() {
                         <th style={styles.th}>Court</th>
                         <th style={styles.th}>Home</th>
                         <th style={styles.th}>Away</th>
+                        <th style={styles.th}>Score</th>
                         {!isPublicMode ? <th style={styles.th}>Lock</th> : null}
                       </tr>
                     </thead>
@@ -4031,6 +4556,7 @@ export default function App() {
                           <td style={styles.td}>{game.court}</td>
                           <td style={styles.td}>{game.home}</td>
                           <td style={styles.td}>{game.away}</td>
+                          <td style={styles.td}>{getGameScoreDisplay(game, scoreReports)}</td>
                           {!isPublicMode ? (
                             <td style={styles.td}>
                               <button
