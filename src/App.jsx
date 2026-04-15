@@ -80,11 +80,17 @@ function getAssociationCode(entry) {
   return String(entry.association || "").trim().toUpperCase();
 }
 
-function formatTeamNumber(num, totalTeamsInDivision) {
+function formatTeamNumber(num, division, totalTeamsInDivision) {
   const n = Number(num || 1);
   const safeNum = Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
   const total = Number(totalTeamsInDivision || 0);
 
+  // Boys always use 2-digit team numbers: 01, 02, 03...
+  if (!String(division || "").includes("Girls")) {
+    return String(safeNum).padStart(2, "0");
+  }
+
+  // Girls use 1 digit unless the division has 10+ teams, then 2 digits
   if (total >= 10) {
     return String(safeNum).padStart(2, "0");
   }
@@ -104,7 +110,7 @@ function buildFormattedTeamName(division, entry, fallbackIndex, totalTeamsInDivi
           : String(fallbackIndex)
       )
     : String(fallbackIndex);
-  const teamNumber = formatTeamNumber(rawTeamNumber, totalTeamsInDivision);
+  const teamNumber = formatTeamNumber(rawTeamNumber, division, totalTeamsInDivision);
   const coach = sanitizeCoachLastName(entry?.coachLastName);
 
   return coach
