@@ -4351,7 +4351,7 @@ export default function App() {
     }
   }
 
- async async function sendScoreConfirmationEmail(
+ async function sendScoreConfirmationEmail(
   game,
   report,
   approvalMode = false,
