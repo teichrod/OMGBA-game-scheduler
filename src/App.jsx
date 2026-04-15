@@ -4314,32 +4314,43 @@ export default function App() {
     }
   }
 
-  async function sendScoreConfirmationEmail(game, report, approvalMode = false) {
-    try {
-      const response = await fetch("/api/score-confirmation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          gameId: getGameScoreKey(game),
-          division: game.division,
-          date: game.date,
-          time: game.time,
-          court: game.court,
-          home: game.home,
-          away: game.away,
-          reporterEmail: report.reporterEmail,
-          reportingTeam: report.reportingTeam,
-          teamScore: report.teamScore,
-          opponentScore: report.opponentScore,
-          approvalMode,
-          submittedAt: report.submittedAt,
-        }),
-      });
-      return response.ok;
-    } catch (error) {
-      return false;
-    }
+ async function sendScoreConfirmationEmail(
+  game,
+  report,
+  approvalMode = false,
+  verification = null,
+  extraEmails = []
+) {
+  try {
+    const response = await fetch("/api/score-confirmation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gameId: getGameScoreKey(game),
+        division: game.division,
+        date: game.date,
+        time: game.time,
+        court: game.court,
+        home: game.home,
+        away: game.away,
+        reporterEmail: report.reporterEmail,
+        reportingTeam: report.reportingTeam,
+        teamScore: report.teamScore,
+        opponentScore: report.opponentScore,
+        approvalMode,
+        submittedAt: report.submittedAt,
+        notifyEmails: extraEmails,
+        verified: Boolean(verification?.verified && verification?.official),
+        officialHomeScore: verification?.official?.homeScore ?? null,
+        officialAwayScore: verification?.official?.awayScore ?? null,
+        verificationReason: verification?.reportSummary || "",
+      }),
+    });
+    return response.ok;
+  } catch (error) {
+    return false;
   }
+}
 
   async function submitScoreReport() {
     if (!result) return;
@@ -4444,7 +4455,12 @@ export default function App() {
       setScoreForInput("");
       setScoreAgainstInput("");
       setScoreApproveExisting(false);
-      const emailSent = await sendScoreConfirmationEmail(game, nextReport, nextReport.approvalMode);
+      const emailSent = await sendScoreConfirmationEmail(
+  game,
+  nextReport,
+  nextReport.approvalMode,
+  status
+);
       const emailNote = emailSent
         ? " Confirmation email sent."
         : " Confirmation email could not be sent because email delivery is not configured yet.";
