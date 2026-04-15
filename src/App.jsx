@@ -4813,7 +4813,7 @@ export default function App() {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "36px 76px 56px 110px 190px 1fr",
+                                  gridTemplateColumns: "36px 66px 56px 90px 140px 1fr",
                                   gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
