@@ -503,56 +503,6 @@ function buildTeamNamesFromConfig(config) {
   return names;
 }
 
-function normalizeTeamName(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function getTeamBaseName(value) {
-  return normalizeTeamName(value).split("-")[0];
-}
-
-function getTeamDetailByFormattedName(config, teamName) {
-  const normalizedTarget = normalizeTeamName(teamName);
-  const targetBase = getTeamBaseName(teamName);
-
-  let baseMatch = null;
-
-  for (const division of DIVISIONS) {
-    const count = Number(config?.divisions?.[division] || 0);
-    const details = syncDivisionTeamDetails(config?.divisionTeamDetails?.[division], count);
-
-    for (let i = 0; i < count; i += 1) {
-      const formatted = buildFormattedTeamName(division, details[i], i + 1, count);
-      const normalizedFormatted = normalizeTeamName(formatted);
-      const formattedBase = getTeamBaseName(formatted);
-
-      if (normalizedFormatted === normalizedTarget) {
-        return {
-          division,
-          index: i,
-          entry: details[i],
-          formattedName: formatted,
-        };
-      }
-
-      if (!baseMatch && formattedBase === targetBase) {
-        baseMatch = {
-          division,
-          index: i,
-          entry: details[i],
-          formattedName: formatted,
-        };
-      }
-    }
-  }
-
-  return baseMatch;
-}
-function getCoachEmailForTeam(config, teamName) {
-  const detail = getTeamDetailByFormattedName(config, teamName);
-  return String(detail?.entry?.coachEmail || "").trim().toLowerCase();
-}
-
 function normalizeConfig(config) {
   const initial = createInitialState();
   const next = {
@@ -585,6 +535,60 @@ function normalizeConfig(config) {
     next.fifthBoysDoubleheaderDate = '';
   }
   return next;
+}
+
+function normalizeTeamName(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getTeamBaseName(value) {
+  return normalizeTeamName(value).split("-")[0];
+}
+
+function getTeamDetailByFormattedName(config, teamName, divisionHint = "") {
+  const normalizedTarget = normalizeTeamName(teamName);
+  const targetBase = getTeamBaseName(teamName);
+  const normalizedDivision = String(divisionHint || "").trim();
+
+  let baseMatch = null;
+
+  const divisionsToSearch = normalizedDivision ? [normalizedDivision] : DIVISIONS;
+
+  for (const division of divisionsToSearch) {
+    const count = Number(config?.divisions?.[division] || 0);
+    const details = syncDivisionTeamDetails(config?.divisionTeamDetails?.[division], count);
+
+    for (let i = 0; i < count; i += 1) {
+      const formatted = buildFormattedTeamName(division, details[i], i + 1, count);
+      const normalizedFormatted = normalizeTeamName(formatted);
+      const formattedBase = getTeamBaseName(formatted);
+
+      if (normalizedFormatted === normalizedTarget) {
+        return {
+          division,
+          index: i,
+          entry: details[i],
+          formattedName: formatted,
+        };
+      }
+
+      if (!baseMatch && formattedBase === targetBase) {
+        baseMatch = {
+          division,
+          index: i,
+          entry: details[i],
+          formattedName: formatted,
+        };
+      }
+    }
+  }
+
+  return baseMatch;
+}
+
+function getCoachEmailForTeam(config, teamName, divisionHint = "") {
+  const detail = getTeamDetailByFormattedName(config, teamName, divisionHint);
+  return String(detail?.entry?.coachEmail || "").trim().toLowerCase();
 }
 
 function getConflictNamesForTeam(config, teamName) {
@@ -4349,14 +4353,14 @@ export default function App() {
   async function loadPublishedSchedule() {
     const published = await loadPublishedPayload();
     if (published?.result) {
-    setResult(published.result);
-setPublishedMeta(published.meta || null);
-setScoreReports(Array.isArray(published.scoreReports) ? published.scoreReports : []);
-if (published.config) {
-  setConfig(normalizeConfig(published.config));
-}
-setActiveTab("schedule");
-setPublishNotice("Published schedule loaded.");
+      setResult(published.result);
+      setPublishedMeta(published.meta || null);
+      setScoreReports(Array.isArray(published.scoreReports) ? published.scoreReports : []);
+      if (published.config) {
+        setConfig(normalizeConfig(published.config));
+      }
+      setActiveTab("schedule");
+      setPublishNotice("Published schedule loaded.");
     } else {
       setPublishNotice("No published schedule found yet.");
     }
@@ -4374,75 +4378,76 @@ setPublishNotice("Published schedule loaded.");
     }
   }
 
- 
-  async function sendScoreConfirmationEmail(
-    game,
-    report,
-    approvalMode = false,
-    verification = null,
-    extraEmails = []
-  ) {
-    try {
-      const homeCoachEmail = getCoachEmailForTeam(config, game.home);
-      const awayCoachEmail = getCoachEmailForTeam(config, game.away);
+ async function sendScoreConfirmationEmail(
+  game,
+  report,
+  approvalMode = false,
+  verification = null,
+  extraEmails = []
+) {
+  try {
+    const published = await loadPublishedPayload();
+    const lookupConfig = normalizeConfig(published?.config || config);
+    const homeCoachEmail = getCoachEmailForTeam(lookupConfig, game.home, game.division);
+    const awayCoachEmail = getCoachEmailForTeam(lookupConfig, game.away, game.division);
 
-      const response = await fetch("/api/score-confirmation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          gameId: getGameScoreKey(game),
-          division: game.division,
-          date: game.date,
-          time: game.time,
-          court: game.court || "",
-          home: game.home,
-          away: game.away,
-          homeCoachEmail,
-          awayCoachEmail,
-          reporterEmail: report.reporterEmail,
-          reportingTeam: report.reportingTeam,
-          teamScore: report.teamScore,
-          opponentScore: report.opponentScore,
-          approvalMode,
-          approvalOfReportId: report.approvalOfReportId || "",
-          submittedAt: report.submittedAt,
-          notifyEmails: extraEmails,
-          verified: Boolean(verification?.verified && verification?.official),
-          officialHomeScore: verification?.official?.homeScore ?? null,
-          officialAwayScore: verification?.official?.awayScore ?? null,
-          verificationReason: verification?.reportSummary || "",
-        }),
-      });
-      return response.ok;
-    } catch (error) {
-      return false;
-    }
+    const response = await fetch("/api/score-confirmation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gameId: getGameScoreKey(game),
+        division: game.division,
+        date: game.date,
+        time: game.time,
+        court: game.court,
+        home: game.home,
+        away: game.away,
+        homeCoachEmail,
+        awayCoachEmail,
+        reporterEmail: report.reporterEmail,
+        reportingTeam: report.reportingTeam,
+        teamScore: report.teamScore,
+        opponentScore: report.opponentScore,
+        approvalMode,
+        submittedAt: report.submittedAt,
+        notifyEmails: extraEmails,
+        verified: Boolean(verification?.verified && verification?.official),
+        officialHomeScore: verification?.official?.homeScore ?? null,
+        officialAwayScore: verification?.official?.awayScore ?? null,
+        verificationReason: verification?.reportSummary || "",
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    return {
+      ok: response.ok,
+      error: data?.error || "",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unknown request error",
+    };
   }
-
+}
 
   async function submitScoreReport() {
     if (!result) return;
+
     const reporterEmail = String(scoreReporterEmail || "").trim().toLowerCase();
     if (!reporterEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reporterEmail)) {
       setScoreNotice("Enter a valid coach email.");
       return;
     }
+
     if (!scoreReporterDivision) {
       setScoreNotice("Choose a division first.");
       return;
     }
+
     if (!scoreReporterTeam) {
       setScoreNotice("Choose a reporting team first.");
-      return;
-    }
-
-    const expectedReporterEmail = getCoachEmailForTeam(config, scoreReporterTeam);
-    if (!expectedReporterEmail) {
-      setScoreNotice("That team does not have a coach email configured yet. Ask the admin to add it in Setup.");
-      return;
-    }
-    if (reporterEmail !== expectedReporterEmail) {
-      setScoreNotice(`That email does not match the saved coach email for ${scoreReporterTeam}.`);
       return;
     }
 
@@ -4451,12 +4456,33 @@ setPublishNotice("Published schedule loaded.");
       setScoreNotice("Choose a game to report.");
       return;
     }
+
     if (game.division !== scoreReporterDivision) {
       setScoreNotice("That game does not belong to the selected division.");
       return;
     }
+
     if (game.home !== scoreReporterTeam && game.away !== scoreReporterTeam) {
       setScoreNotice("That game does not belong to the selected team.");
+      return;
+    }
+
+    const published = await loadPublishedPayload();
+    const lookupConfig = normalizeConfig(published?.config || config);
+
+    const expectedReporterEmail = getCoachEmailForTeam(
+      lookupConfig,
+      scoreReporterTeam,
+      scoreReporterDivision
+    );
+
+    if (!expectedReporterEmail) {
+      setScoreNotice("That team does not have a coach email configured yet. Ask the admin to add it in Setup.");
+      return;
+    }
+
+    if (reporterEmail !== expectedReporterEmail) {
+      setScoreNotice(`That email does not match the saved coach email for ${scoreReporterTeam}.`);
       return;
     }
 
@@ -4480,7 +4506,6 @@ setPublishNotice("Published schedule loaded.");
       }
     }
 
-    const published = await loadPublishedPayload();
     const payloadResult = published?.result || result;
     const existingReports = Array.isArray(published?.scoreReports) ? published.scoreReports : [];
     const nextReport = {
@@ -4513,37 +4538,44 @@ setPublishNotice("Published schedule loaded.");
     const status = getOfficialScoreFromReports(game, nextReports);
     if (status.verified && status.official) {
       const verifiedAt = new Date().toISOString();
-      nextReports = nextReports.map((report) => report.gameId === nextReport.gameId ? {
-        ...report,
-        verifiedFinal: true,
-        verifiedAt,
-        officialHomeScore: status.official.homeScore,
-        officialAwayScore: status.official.awayScore,
-        verificationReason: status.reportSummary || "Verified",
-      } : report);
+      nextReports = nextReports.map((report) =>
+        report.gameId === nextReport.gameId
+          ? {
+              ...report,
+              verifiedFinal: true,
+              verifiedAt,
+              officialHomeScore: status.official.homeScore,
+              officialAwayScore: status.official.awayScore,
+              verificationReason: status.reportSummary || "Verified",
+            }
+          : report
+      );
     }
 
-   const ok = await savePublishedPayload({
-  result: payloadResult,
-  meta: published?.meta || publishedMeta || null,
-  scoreReports: nextReports,
-  config: normalizeConfig(published?.config || config),
-});
+    const ok = await savePublishedPayload({
+      result: payloadResult,
+      meta: published?.meta || publishedMeta || null,
+      scoreReports: nextReports,
+      config: lookupConfig,
+    });
 
     if (ok) {
       setScoreReports(nextReports);
       setScoreForInput("");
       setScoreAgainstInput("");
       setScoreApproveExisting(false);
-      const emailSent = await sendScoreConfirmationEmail(
-  game,
-  nextReport,
-  nextReport.approvalMode,
-  status
-);
-      const emailNote = emailSent
+
+      const emailResult = await sendScoreConfirmationEmail(
+        game,
+        nextReport,
+        nextReport.approvalMode,
+        status
+      );
+
+      const emailNote = emailResult?.ok
         ? " Confirmation email sent."
-        : " Confirmation email could not be sent because email delivery is not configured yet.";
+        : ` Confirmation email failed${emailResult?.error ? `: ${emailResult.error}` : "."}`;
+
       setScoreNotice(
         status.verified
           ? `Score saved and verified: ${game.away} ${status.official.awayScore} - ${status.official.homeScore} ${game.home}.${emailNote}`
@@ -4818,7 +4850,7 @@ setPublishNotice("Published schedule loaded.");
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "40px 90px 60px 140px 180px 1fr",
+                              gridTemplateColumns: "40px 90px 60px 140px 240px 1fr",
                               gap: 6,
                               padding: "0 4px",
                               fontSize: 12,
@@ -4831,7 +4863,7 @@ setPublishNotice("Published schedule loaded.");
                             <div>Assoc.</div>
                             <div>No.</div>
                             <div>Coach</div>
-                            <div>Email</div>
+			    <div>Email</div>
                             <div>Preview</div>
                           </div>
 
@@ -4851,7 +4883,7 @@ setPublishNotice("Published schedule loaded.");
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "40px 90px 60px 140px 180px 1fr",
+                                  gridTemplateColumns: "40px 90px 60px 140px 240px 1fr",
                                   gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
