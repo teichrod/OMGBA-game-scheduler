@@ -328,7 +328,7 @@ const styles = {
   },
   grid2: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
+    gridTemplateColumns: "minmax(380px, 460px) minmax(0, 1fr)",
     gap: 24,
     alignItems: "start",
   },
@@ -4912,7 +4912,7 @@ export default function App() {
 
               <Card>
                 <SectionTitle>Divisions, Teams, and Team Naming</SectionTitle>
-                <div style={{ display: "grid", gap: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
                   {DIVISIONS.map((division) => {
                     const count = Number(config.divisions[division]);
                     const targetGames = Number(config.divisionGames[division]);
@@ -4924,55 +4924,71 @@ export default function App() {
                     return (
                       <div
                         key={division}
-                        style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, display: "grid", gap: 12 }}
+                        style={{
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 12,
+                          padding: 10,
+                          display: "grid",
+                          gap: 10,
+                          background: "#fcfdff",
+                        }}
                       >
                         <div
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "minmax(0, 1fr) 90px 110px auto",
-                            gap: 12,
+                            gridTemplateColumns: "minmax(0, 1fr) 74px 96px auto",
+                            gap: 8,
                             alignItems: "center",
                           }}
                         >
                           <div>
                             <div style={{ fontWeight: 700 }}>{division}</div>
-                            <div style={{ fontSize: 12, color: "#64748b" }}>
-                              Code format: ASSOC + {genderCode} + {gradeCode} + team number + coach
+                            <div style={{ fontSize: 11, color: "#64748b" }}>
+                              Code: ASSOC + {genderCode} + {gradeCode} + team + coach
                             </div>
-                            <div style={{ fontSize: 12, color: "#64748b" }}>
-                              {odd ? "Odd team count: one DH per team allowed (except special 5th Boys rule)" : "Even team count"}
+                            <div style={{ fontSize: 11, color: "#64748b" }}>
+                              {odd ? "Odd team count • DHs allowed by rule" : "Even team count"}
                             </div>
                           </div>
 
-                          <select style={styles.select} value={String(count)} onChange={(e) => setDivisionCount(division, e.target.value)}>
+                          <select
+                            style={{ ...styles.select, padding: "8px 10px" }}
+                            value={String(count)}
+                            onChange={(e) => setDivisionCount(division, e.target.value)}
+                          >
                             {TEAM_COUNT_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
                           </select>
 
-                          <select style={styles.select} value={String(targetGames)} onChange={(e) => setDivisionGames(division, e.target.value)}>
+                          <select
+                            style={{ ...styles.select, padding: "8px 10px" }}
+                            value={String(targetGames)}
+                            onChange={(e) => setDivisionGames(division, e.target.value)}
+                          >
                             {GAME_COUNT_OPTIONS.map((value) => <option key={value} value={value}>{value} games</option>)}
                           </select>
 
                           <Badge>{odd ? "Odd" : "Even"}</Badge>
                         </div>
 
-                        <div style={{ display: "grid", gap: 8 }}>
+                        <div style={{ display: "grid", gap: 6 }}>
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "40px 90px 60px 140px 240px 1fr",
+                              gridTemplateColumns: "30px 72px 50px 106px 132px minmax(120px, 1fr)",
                               gap: 6,
                               padding: "0 4px",
-                              fontSize: 12,
+                              fontSize: 11,
                               fontWeight: 700,
                               textTransform: "uppercase",
                               color: "#64748b",
+                              letterSpacing: 0.3,
                             }}
                           >
-                            <div>Team</div>
-                            <div>Assoc.</div>
+                            <div>#</div>
+                            <div>Assoc</div>
                             <div>No.</div>
                             <div>Coach</div>
-			    <div>Email</div>
+                            <div>Email</div>
                             <div>Preview</div>
                           </div>
 
@@ -4992,18 +5008,19 @@ export default function App() {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "40px 90px 60px 140px 240px 1fr",
+                                  gridTemplateColumns: "30px 72px 50px 106px 132px minmax(120px, 1fr)",
                                   gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
-                                  borderRadius: 10,
-                                  padding: "6px 8px",
+                                  borderRadius: 8,
+                                  padding: "5px 6px",
+                                  background: "#ffffff",
                                 }}
                               >
-                                <div style={{ fontWeight: 700, textAlign: "center" }}>{idx + 1}</div>
+                                <div style={{ fontWeight: 700, textAlign: "center", fontSize: 12 }}>{idx + 1}</div>
 
                                 <select
-                                  style={styles.select}
+                                  style={{ ...styles.select, padding: "7px 8px", fontSize: 12 }}
                                   value={entry.association || ""}
                                   onChange={(e) => {
                                     const association = e.target.value;
@@ -5032,7 +5049,7 @@ export default function App() {
                                 </select>
 
                                 <select
-                                  style={{ ...styles.select, textAlign: "center" }}
+                                  style={{ ...styles.select, padding: "7px 8px", textAlign: "center", fontSize: 12 }}
                                   value={String(entry.associationTeamNumber || "1")}
                                   onChange={(e) =>
                                     updateDivisionTeamDetail(division, idx, {
@@ -5054,9 +5071,9 @@ export default function App() {
                                 </select>
 
                                 <input
-                                  style={styles.input}
+                                  style={{ ...styles.input, padding: "7px 8px", fontSize: 12 }}
                                   value={entry.coachLastName || ""}
-                                  placeholder=""
+                                  placeholder="Last name"
                                   onChange={(e) =>
                                     updateDivisionTeamDetail(division, idx, {
                                       coachLastName: e.target.value,
@@ -5065,15 +5082,22 @@ export default function App() {
                                 />
 
                                 <input
-  style={{
-    ...styles.input,
-    maxWidth: 160
-  }}
-  value={entry.coachEmail}
-  ...
-/>
+                                  style={{ ...styles.input, padding: "7px 8px", fontSize: 12 }}
+                                  value={entry.coachEmail || ""}
+                                  placeholder="coach@email.com"
+                                  onChange={(e) =>
+                                    updateDivisionTeamDetail(division, idx, {
+                                      coachEmail: e.target.value.trim().toLowerCase(),
+                                    })
+                                  }
+                                />
 
-                                <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{previewName}</div>
+                                <div
+                                  title={previewName}
+                                  style={{ fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                                >
+                                  {previewName}
+                                </div>
                               </div>
                             );
                           })}
@@ -5082,6 +5106,7 @@ export default function App() {
                     );
                   })}
                 </div>
+
               </Card>
             </div>
 
