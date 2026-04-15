@@ -4959,7 +4959,7 @@ export default function App() {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "40px 90px 60px 140px 240px 1fr",
+                              gridTemplateColumns: "40px 90px 60px 140px 120px 1fr",
                               gap: 6,
                               padding: "0 4px",
                               fontSize: 12,
@@ -4972,7 +4972,7 @@ export default function App() {
                             <div>Assoc.</div>
                             <div>No.</div>
                             <div>Coach</div>
-			    <div>Email</div>
+			    <div>Coach email</div>
                             <div>Preview</div>
                           </div>
 
@@ -4992,7 +4992,7 @@ export default function App() {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "40px 90px 60px 140px 240px 1fr",
+                                  gridTemplateColumns: "40px 90px 60px 140px 120px 1fr",
                                   gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
@@ -5065,7 +5065,7 @@ export default function App() {
                                 />
 
                                 <input
-                                  style={styles.input}
+                                  style={{ ...styles.input, maxWidth: 120 }}
                                   value={entry.coachEmail || ""}
                                   placeholder="coach@email.com"
                                   onChange={(e) =>
@@ -5364,7 +5364,7 @@ export default function App() {
                         <thead>
                           <tr>
                             <th style={styles.th}>Submitted</th>
-                            <th style={{ ...styles.th, width: 160 }}>Coach email</th>
+                            <th style={styles.th}>Coach email</th>
                             <th style={styles.th}>Team</th>
                             <th style={styles.th}>Game</th>
                             <th style={styles.th}>Reported score</th>
