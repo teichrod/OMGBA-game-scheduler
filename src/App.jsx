@@ -3975,6 +3975,95 @@ export default function App() {
     };
   }, [selectedScoreGame, scoreReporterTeam, scoreReports]);
 
+
+  const selectedScoreSubmissionState = useMemo(() => {
+    if (!selectedScoreGame) {
+      return {
+        hasAnyReport: false,
+        alreadyReported: false,
+        canApproveExisting: false,
+        verified: false,
+        lockInputs: false,
+        lockButton: false,
+        buttonLabel: "Submit score",
+      };
+    }
+
+    const status = selectedScoreGameStatus;
+    const approval = selectedScoreApprovalContext;
+    const gameReports = (scoreReports || []).filter(
+      (report) => report.gameId === getGameScoreKey(selectedScoreGame)
+    );
+    const hasAnyReport = gameReports.length > 0;
+    const alreadyReported = Boolean(approval?.alreadyReported);
+    const canApproveExisting = Boolean(approval?.canApprove);
+    const verified = Boolean(status?.verified);
+
+    if (verified) {
+      return {
+        hasAnyReport,
+        alreadyReported,
+        canApproveExisting,
+        verified,
+        lockInputs: true,
+        lockButton: true,
+        buttonLabel: "Score locked",
+      };
+    }
+
+    if (alreadyReported) {
+      return {
+        hasAnyReport,
+        alreadyReported,
+        canApproveExisting,
+        verified,
+        lockInputs: true,
+        lockButton: true,
+        buttonLabel: "Score already submitted",
+      };
+    }
+
+    if (hasAnyReport && canApproveExisting) {
+      return {
+        hasAnyReport,
+        alreadyReported,
+        canApproveExisting,
+        verified,
+        lockInputs: !scoreApproveExisting,
+        lockButton: false,
+        buttonLabel: "Approve existing score",
+      };
+    }
+
+    if (hasAnyReport) {
+      return {
+        hasAnyReport,
+        alreadyReported,
+        canApproveExisting,
+        verified,
+        lockInputs: true,
+        lockButton: true,
+        buttonLabel: "Waiting for approval",
+      };
+    }
+
+    return {
+      hasAnyReport,
+      alreadyReported,
+      canApproveExisting,
+      verified,
+      lockInputs: false,
+      lockButton: false,
+      buttonLabel: "Submit score",
+    };
+  }, [
+    selectedScoreGame,
+    selectedScoreGameStatus,
+    selectedScoreApprovalContext,
+    scoreReports,
+    scoreApproveExisting,
+  ]);
+
   const divisionStandings = useMemo(() => (result ? buildDivisionStandings(result.schedule, scoreReports) : {}), [result, scoreReports]);
 
   const scoreLogRows = useMemo(() => {
@@ -4486,9 +4575,38 @@ export default function App() {
       return;
     }
 
-    const existingStatus = getOfficialScoreFromReports(game, scoreReports);
+    const payloadResult = published?.result || result;
+    const currentGameInPayload = (payloadResult?.schedule || []).find(
+      (entry) => getGameScoreKey(entry) === getGameScoreKey(game)
+    ) || game;
+    const existingReports = Array.isArray(published?.scoreReports) ? published.scoreReports : [];
+    const existingStatus = getOfficialScoreFromReports(currentGameInPayload, existingReports);
     if (existingStatus?.verified) {
       setScoreNotice("That score has already been verified and is locked.");
+      return;
+    }
+
+    const existingReportsForGame = existingReports.filter(
+      (report) => report.gameId === getGameScoreKey(currentGameInPayload)
+    );
+
+    const ownExistingReport = existingReportsForGame.find(
+      (report) =>
+        report.reportingTeam === scoreReporterTeam &&
+        String(report.reporterEmail || "").trim().toLowerCase() === reporterEmail
+    );
+
+    if (ownExistingReport) {
+      setScoreNotice("You already submitted a score for this game. It is locked pending verification.");
+      return;
+    }
+
+    const opponentExistingReport = existingReportsForGame.find(
+      (report) => report.reportingTeam !== scoreReporterTeam
+    );
+
+    if (opponentExistingReport && !scoreApproveExisting) {
+      setScoreNotice("A score has already been reported for this game. Use Approve existing score.");
       return;
     }
 
@@ -4506,8 +4624,6 @@ export default function App() {
       }
     }
 
-    const payloadResult = published?.result || result;
-    const existingReports = Array.isArray(published?.scoreReports) ? published.scoreReports : [];
     const nextReport = {
       id: createRowId("score"),
       gameId: getGameScoreKey(game),
@@ -4526,14 +4642,7 @@ export default function App() {
       submittedAt: new Date().toISOString(),
     };
 
-    let nextReports = existingReports.filter(
-      (report) => !(
-        report.gameId === nextReport.gameId &&
-        report.reportingTeam === nextReport.reportingTeam &&
-        String(report.reporterEmail || "").trim().toLowerCase() === reporterEmail
-      )
-    );
-    nextReports.push(nextReport);
+    let nextReports = [...existingReports, nextReport];
 
     const status = getOfficialScoreFromReports(game, nextReports);
     if (status.verified && status.official) {
@@ -5467,7 +5576,7 @@ export default function App() {
                       value={scoreApproveExisting && selectedScoreApprovalContext.approvalScores ? String(selectedScoreApprovalContext.approvalScores.teamScore) : scoreForInput}
                       onChange={(e) => setScoreForInput(e.target.value.replace(/[^0-9]/g, ""))}
                       placeholder="0"
-                      disabled={Boolean(selectedScoreGameStatus?.verified) || (scoreApproveExisting && selectedScoreApprovalContext.canApprove)}
+                      disabled={selectedScoreSubmissionState.lockInputs || (scoreApproveExisting && selectedScoreApprovalContext.canApprove)}
                     />
                   </div>
                   <div>
@@ -5479,16 +5588,16 @@ export default function App() {
                       value={scoreApproveExisting && selectedScoreApprovalContext.approvalScores ? String(selectedScoreApprovalContext.approvalScores.opponentScore) : scoreAgainstInput}
                       onChange={(e) => setScoreAgainstInput(e.target.value.replace(/[^0-9]/g, ""))}
                       placeholder="0"
-                      disabled={Boolean(selectedScoreGameStatus?.verified) || (scoreApproveExisting && selectedScoreApprovalContext.canApprove)}
+                      disabled={selectedScoreSubmissionState.lockInputs || (scoreApproveExisting && selectedScoreApprovalContext.canApprove)}
                     />
                   </div>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <button
-                      style={{ ...styles.primaryButton, width: "100%", minHeight: 52, fontSize: 16, opacity: selectedScoreGameStatus?.verified ? 0.6 : 1, cursor: selectedScoreGameStatus?.verified ? "not-allowed" : "pointer" }}
+                      style={{ ...styles.primaryButton, width: "100%", minHeight: 52, fontSize: 16, opacity: selectedScoreSubmissionState.lockButton ? 0.6 : 1, cursor: selectedScoreSubmissionState.lockButton ? "not-allowed" : "pointer" }}
                       onClick={submitScoreReport}
-                      disabled={Boolean(selectedScoreGameStatus?.verified)}
+                      disabled={selectedScoreSubmissionState.lockButton}
                     >
-                      {selectedScoreGameStatus?.verified ? "Score locked" : scoreApproveExisting && selectedScoreApprovalContext.canApprove ? "Approve existing score" : "Submit score"}
+                      {selectedScoreSubmissionState.buttonLabel}
                     </button>
                   </div>
                 </div>

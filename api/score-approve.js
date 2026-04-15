@@ -182,14 +182,15 @@ export default async function handler(req, res) {
     }
 
     const schedule = Array.isArray(published.result.schedule) ? published.result.schedule : [];
-    const game = schedule.find((entry) => entry.gameId === data.gameId);
+    const game = schedule.find((entry) => entry.gameId === data.gameId || (`${entry.date}|${entry.time}|${entry.court}|${entry.home}|${entry.away}` === data.gameId));
 
     if (!game) {
       return res.status(404).send(htmlPage("That game was not found."));
     }
 
+    const gameId = game.gameId || `${game.date}|${game.time}|${game.court}|${game.home}|${game.away}`;
     const existingReports = Array.isArray(published.scoreReports) ? published.scoreReports : [];
-    const currentStatus = getOfficialScoreFromReports(game, existingReports);
+    const currentStatus = getOfficialScoreFromReports({ ...game, gameId }, existingReports);
 
     if (currentStatus.verified) {
       return res.status(200).send(htmlPage("This score was already verified."));
@@ -216,7 +217,7 @@ export default async function handler(req, res) {
 
     const duplicateReport = existingReports.find(
       (report) =>
-        report.gameId === data.gameId &&
+        report.gameId === gameId &&
         report.reportingTeam === data.recipientTeam &&
         normalizeEmail(report.reporterEmail) === recipientEmail
     );
@@ -227,7 +228,7 @@ export default async function handler(req, res) {
 
     const nextReport = {
       id: createRowId("score"),
-      gameId: data.gameId,
+      gameId,
       division: data.division,
       date: data.date,
       time: data.time,
@@ -247,11 +248,11 @@ export default async function handler(req, res) {
 
     let nextReports = [...existingReports, nextReport];
 
-    const status = getOfficialScoreFromReports(game, nextReports);
+    const status = getOfficialScoreFromReports({ ...game, gameId }, nextReports);
     if (status.verified && status.official) {
       const verifiedAt = new Date().toISOString();
       nextReports = nextReports.map((report) =>
-        report.gameId === data.gameId
+        report.gameId === gameId
           ? {
               ...report,
               verifiedFinal: true,
