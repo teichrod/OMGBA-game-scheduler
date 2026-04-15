@@ -4323,14 +4323,14 @@ export default function App() {
   async function loadPublishedSchedule() {
     const published = await loadPublishedPayload();
     if (published?.result) {
-      setResult(published.result);
-      setPublishedMeta(published.meta || null);
-      setScoreReports(Array.isArray(published.scoreReports) ? published.scoreReports : []);
-      if (published.config) {
-        setConfig(normalizeConfig(published.config));
-      }
-      setActiveTab("schedule");
-      setPublishNotice("Published schedule loaded.");
+    setResult(published.result);
+setPublishedMeta(published.meta || null);
+setScoreReports(Array.isArray(published.scoreReports) ? published.scoreReports : []);
+if (published.config) {
+  setConfig(normalizeConfig(published.config));
+}
+setActiveTab("schedule");
+setPublishNotice("Published schedule loaded.");
     } else {
       setPublishNotice("No published schedule found yet.");
     }
