@@ -6,9 +6,6 @@ function requiredEnv(name) {
   return String(value).trim();
 }
 
-console.log("Sending score email to:", uniqueRecipients);
-console.log("From sender:", fromEmail, fromName);
-console.log("Subject:", buildSubject(body));
 function safe(value) {
   return value == null ? "" : String(value);
 }
