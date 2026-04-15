@@ -1,21 +1,23 @@
-// api/score-confirmation.js
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+function getRequiredEnv(name) {
+  const value = process.env[name];
+  if (!value || !String(value).trim()) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return String(value).trim();
+}
 
 function safe(value) {
   return value == null ? "" : String(value);
 }
 
 function buildSubject(body) {
-  if (body.verified) {
-    return `Verified score: ${body.away} ${body.officialAwayScore} - ${body.officialHomeScore} ${body.home}`;
-  }
-  return `Score reported: ${body.away} at ${body.home} (${body.date} ${body.time})`;
+  return `Score reported: ${safe(body.away)} at ${safe(body.home)} (${safe(body.date)} ${safe(body.time)})`;
 }
 
 function buildText(body) {
-  const lines = [
+  return [
     `Division: ${safe(body.division)}`,
     `Date: ${safe(body.date)}`,
     `Time: ${safe(body.time)}`,
@@ -27,20 +29,7 @@ function buildText(body) {
     `Reported score: ${safe(body.reportingTeam)} ${safe(body.teamScore)} - Opponent ${safe(body.opponentScore)}`,
     `Approval mode: ${body.approvalMode ? "Yes" : "No"}`,
     `Submitted: ${safe(body.submittedAt)}`,
-  ];
-
-  if (body.verified) {
-    lines.push(
-      ``,
-      `Official score verified.`,
-      `${safe(body.away)} ${safe(body.officialAwayScore)} - ${safe(body.officialHomeScore)} ${safe(body.home)}`,
-      `Reason: ${safe(body.verificationReason)}`
-    );
-  } else {
-    lines.push(``, `This score is not official yet. Waiting for matching/close confirmation.`);
-  }
-
-  return lines.join("\n");
+  ].join("\n");
 }
 
 export default async function handler(req, res) {
@@ -50,13 +39,14 @@ export default async function handler(req, res) {
   }
 
   try {
+    const apiKey = getRequiredEnv("RESEND_API_KEY");
+    const from = getRequiredEnv("SCORE_EMAIL_FROM");
+    const fallbackTo = String(process.env.SCORE_EMAIL_TO || "").trim().toLowerCase();
+
+    const resend = new Resend(apiKey);
     const body = req.body || {};
 
-    const recipients = [
-      body.reporterEmail,
-      process.env.SCORE_EMAIL_TO || "",
-      ...(Array.isArray(body.notifyEmails) ? body.notifyEmails : []),
-    ]
+    const recipients = [body.reporterEmail, fallbackTo]
       .map((x) => String(x || "").trim().toLowerCase())
       .filter(Boolean);
 
@@ -66,24 +56,41 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "No recipients configured" });
     }
 
-    const subject = buildSubject(body);
-    const text = buildText(body);
-
-    const { error } = await resend.emails.send({
-      from: process.env.SCORE_EMAIL_FROM,
+    const payload = {
+      from,
       to: uniqueRecipients,
-      subject,
-      text,
+      subject: buildSubject(body),
+      text: buildText(body),
+    };
+
+    console.log("score-confirmation send attempt", {
+      from,
+      to: uniqueRecipients,
+      subject: payload.subject,
+      hasApiKey: Boolean(apiKey),
     });
 
+    const { data, error } = await resend.emails.send(payload);
+
     if (error) {
-      return res.status(500).json({ error: error.message || "Email send failed" });
+      console.error("Resend returned error:", error);
+      return res.status(500).json({
+        error: error.message || "Resend send failed",
+        details: error,
+      });
     }
 
-    return res.status(200).json({ ok: true });
+    console.log("Resend send success:", data);
+
+    return res.status(200).json({
+      ok: true,
+      id: data?.id || null,
+    });
   } catch (error) {
+    console.error("score-confirmation handler failed:", error);
+
     return res.status(500).json({
-      error: error instanceof Error ? error.message : "Unexpected error",
+      error: error instanceof Error ? error.message : "Unexpected server error",
     });
   }
 }
