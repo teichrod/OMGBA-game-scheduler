@@ -1,5 +1,10 @@
 import { Resend } from "resend";
 
+console.log("env check", {
+  hasApiKey: Boolean(process.env.RESEND_API_KEY),
+  apiKeyPrefix: process.env.RESEND_API_KEY?.slice(0, 3),
+  from: process.env.SCORE_EMAIL_FROM,
+});
 function getRequiredEnv(name) {
   const value = process.env[name];
   if (!value || !String(value).trim()) {
