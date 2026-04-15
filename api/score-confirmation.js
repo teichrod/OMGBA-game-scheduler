@@ -1,3 +1,7 @@
+// score-confirmation.js (Brevo + approval)
+
+import crypto from "crypto";
+
 function requiredEnv(name) {
   const value = process.env[name];
   if (!value || !String(value).trim()) {
@@ -25,78 +29,88 @@ function buildText(body) {
     `Reported by: ${safe(body.reportingTeam)}`,
     `Reporter email: ${safe(body.reporterEmail)}`,
     `Reported score: ${safe(body.reportingTeam)} ${safe(body.teamScore)} - Opponent ${safe(body.opponentScore)}`,
-    `Approval mode: ${body.approvalMode ? "Yes" : "No"}`,
     `Submitted: ${safe(body.submittedAt)}`,
   ].join("\n");
 }
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+function createApprovalToken(payload, secret) {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(encoded)
+    .digest("base64url");
+  return `${encoded}.${signature}`;
+}
 
+export default async function handler(req, res) {
   try {
     const apiKey = requiredEnv("BREVO_API_KEY");
     const fromEmail = requiredEnv("SCORE_EMAIL_FROM");
-    const fromName = String(process.env.SCORE_EMAIL_FROM_NAME || "Scheduler").trim();
-    const fallbackTo = String(process.env.SCORE_EMAIL_TO || "").trim().toLowerCase();
+    const fromName = process.env.SCORE_EMAIL_FROM_NAME || "Scheduler";
+    const appBaseUrl = requiredEnv("APP_BASE_URL");
+    const secret = requiredEnv("SCORE_APPROVAL_SECRET");
 
     const body = req.body || {};
 
-    const recipients = [body.reporterEmail, fallbackTo]
-      .map((x) => String(x || "").trim().toLowerCase())
+    const reporterEmail = (body.reporterEmail || "").toLowerCase();
+    const homeCoachEmail = (body.homeCoachEmail || "").toLowerCase();
+    const awayCoachEmail = (body.awayCoachEmail || "").toLowerCase();
+
+    const opponentEmail =
+      reporterEmail === homeCoachEmail ? awayCoachEmail :
+      reporterEmail === awayCoachEmail ? homeCoachEmail : "";
+
+    const recipients = [homeCoachEmail, awayCoachEmail]
       .filter(Boolean);
 
-    const uniqueRecipients = [...new Set(recipients)];
+    const token = opponentEmail
+      ? createApprovalToken({
+          gameId: body.gameId,
+          reportingTeam: body.reportingTeam,
+          reporterEmail,
+          opponentEmail,
+          teamScore: body.teamScore,
+          opponentScore: body.opponentScore,
+          submittedAt: body.submittedAt,
+        }, secret)
+      : "";
 
-    if (!uniqueRecipients.length) {
-      return res.status(400).json({ error: "No recipients configured" });
-    }
+    const approveUrl = token
+      ? `${appBaseUrl}/api/score-approve?token=${encodeURIComponent(token)}`
+      : "";
 
-    const payload = {
-      sender: {
-        email: fromEmail,
-        name: fromName,
-      },
-      to: uniqueRecipients.map((email) => ({ email })),
-      subject: buildSubject(body),
-      textContent: buildText(body),
-    };
+    const html = `
+      <div style="font-family:Arial;">
+        <h3>Score Reported</h3>
+        <p>${body.away} at ${body.home}</p>
+        <p><b>${body.reportingTeam}</b> reported: ${body.teamScore}-${body.opponentScore}</p>
+        ${approveUrl ? `<a href="${approveUrl}" style="padding:10px 16px;background:#2563eb;color:#fff;border-radius:6px;text-decoration:none;">Approve Score</a>` : ""}
+      </div>
+    `;
 
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
       headers: {
-        "accept": "application/json",
-        "content-type": "application/json",
         "api-key": apiKey,
+        "content-type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        sender: { email: fromEmail, name: fromName },
+        to: recipients.map(email => ({ email })),
+        subject: buildSubject(body),
+        htmlContent: html,
+        textContent: buildText(body),
+      }),
     });
 
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      console.error("Brevo returned error:", {
-        status: response.status,
-        data,
-      });
-
-      return res.status(500).json({
-        error: data?.message || `Brevo send failed with status ${response.status}`,
-        details: data,
-      });
+      return res.status(500).json({ error: data });
     }
 
-    return res.status(200).json({
-      ok: true,
-      id: data?.messageId || null,
-    });
-  } catch (error) {
-    console.error("score-confirmation handler failed:", error);
-
-    return res.status(500).json({
-      error: error instanceof Error ? error.message : "Unexpected server error",
-    });
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 }
