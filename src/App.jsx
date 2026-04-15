@@ -4523,11 +4523,12 @@ setPublishNotice("Published schedule loaded.");
       } : report);
     }
 
-    const ok = await savePublishedPayload({
-      result: payloadResult,
-      meta: published?.meta || publishedMeta || null,
-      scoreReports: nextReports,
-    });
+   const ok = await savePublishedPayload({
+  result: payloadResult,
+  meta: published?.meta || publishedMeta || null,
+  scoreReports: nextReports,
+  config: normalizeConfig(published?.config || config),
+});
 
     if (ok) {
       setScoreReports(nextReports);
