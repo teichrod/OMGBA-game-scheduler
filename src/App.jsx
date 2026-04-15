@@ -5364,7 +5364,7 @@ export default function App() {
                         <thead>
                           <tr>
                             <th style={styles.th}>Submitted</th>
-                            <th style={styles.th, width: 160}>Coach email</th>
+                            <th style={{ ...styles.th, width: 160 }}>Coach email</th>
                             <th style={styles.th}>Team</th>
                             <th style={styles.th}>Game</th>
                             <th style={styles.th}>Reported score</th>
