@@ -4791,7 +4791,7 @@ export default function App() {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "40px 90px 60px 140px 240px 1fr",
+                              gridTemplateColumns: "40px 90px 60px 140px 180px 1fr",
                               gap: 6,
                               padding: "0 4px",
                               fontSize: 12,
@@ -4824,7 +4824,7 @@ export default function App() {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "40px 90px 60px 140px 240px 1fr",
+                                  gridTemplateColumns: "40px 90px 60px 140px 180px 1fr",
                                   gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
