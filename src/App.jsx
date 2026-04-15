@@ -3825,6 +3825,9 @@ export default function App() {
         setResult(published.result);
         setPublishedMeta(published.meta || null);
         setScoreReports(Array.isArray(published.scoreReports) ? published.scoreReports : []);
+if (published.config) {
+  setConfig(normalizeConfig(published.config));
+}
       } else {
         setResult(null);
         setPublishedMeta(null);
@@ -4491,11 +4494,12 @@ export default function App() {
       } : report);
     }
 
-    const ok = await savePublishedPayload({
-      result: payloadResult,
-      meta: published?.meta || publishedMeta || null,
-      scoreReports: nextReports,
-    });
+   const ok = await savePublishedPayload({
+  result,
+  meta,
+  scoreReports: retainedReports,
+  config,
+});
 
     if (ok) {
       setScoreReports(nextReports);
@@ -4780,7 +4784,7 @@ export default function App() {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "36px 76px 56px 110px 1fr",
+                              gridTemplateColumns: "36px 66px 56px 90px 140px 1fr",
                               gap: 6,
                               padding: "0 4px",
                               fontSize: 12,
