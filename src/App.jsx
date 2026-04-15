@@ -4784,7 +4784,7 @@ if (published.config) {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "36px 66px 56px 50px 140px 1fr",
+                              gridTemplateColumns: "36px 66px 56px 70px 140px 1fr",
                               gap: 6,
                               padding: "0 4px",
                               fontSize: 12,
@@ -4817,7 +4817,7 @@ if (published.config) {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "36px 66px 56px 90px 140px 1fr",
+                                  gridTemplateColumns: "36px 66px 56px 90px 120px 1fr",
                                   gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
