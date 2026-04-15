@@ -122,23 +122,16 @@ function buildDivisionTeamDetails(count) {
 }
 
 function syncDivisionTeamDetails(existingDetails, count) {
-  const next = Array.isArray(existingDetails)
-    ? existingDetails.map((entry) => ({
-        association: entry?.association || "",
-        associationTeamNumber: String(entry?.associationTeamNumber || "1"),
-        coachLastName: entry?.coachLastName || "",
-        coachEmail: String(entry?.coachEmail || "").trim().toLowerCase(),
-      }))
-    : [];
+  const next = Array.isArray(existingDetails) ? [...existingDetails] : [];
   const target = Number(count) || 0;
 
   while (next.length < target) {
     next.push({
-      association: "",
-      associationTeamNumber: "1",
-      coachLastName: "",
-      coachEmail: "",
-    });
+  association: "",
+  associationTeamNumber: "1",
+  coachLastName: "",
+  coachEmail: "",
+});
   }
 
   return next.slice(0, target);
@@ -515,13 +508,13 @@ function getTeamDetailByFormattedName(config, teamName) {
     const count = Number(config?.divisions?.[division] || 0);
     const details = syncDivisionTeamDetails(config?.divisionTeamDetails?.[division], count);
     for (let i = 0; i < count; i += 1) {
-      const formattedName = buildFormattedTeamName(division, details[i], i + 1, count);
-      if (formattedName === teamName) {
+      const formatted = buildFormattedTeamName(division, details[i], i + 1, count);
+      if (formatted === teamName) {
         return {
           division,
           index: i,
           entry: details[i],
-          formattedName,
+          formattedName: formatted,
         };
       }
     }
@@ -530,9 +523,8 @@ function getTeamDetailByFormattedName(config, teamName) {
 }
 
 function getCoachEmailForTeam(config, teamName) {
-  return String(getTeamDetailByFormattedName(config, teamName)?.entry?.coachEmail || "")
-    .trim()
-    .toLowerCase();
+  const detail = getTeamDetailByFormattedName(config, teamName);
+  return String(detail?.entry?.coachEmail || "").trim().toLowerCase();
 }
 
 function normalizeConfig(config) {
@@ -3825,9 +3817,9 @@ export default function App() {
         setResult(published.result);
         setPublishedMeta(published.meta || null);
         setScoreReports(Array.isArray(published.scoreReports) ? published.scoreReports : []);
-if (published.config) {
-  setConfig(normalizeConfig(published.config));
-}
+        if (published.config) {
+          setConfig(normalizeConfig(published.config));
+        }
       } else {
         setResult(null);
         setPublishedMeta(null);
@@ -4316,7 +4308,12 @@ if (published.config) {
       totalGames: result.schedule.length,
       verifiedGames: result.schedule.filter((game) => getOfficialScoreFromReports(game, retainedReports).verified).length,
     };
-    const ok = await savePublishedPayload({ result, meta, scoreReports: retainedReports });
+    const ok = await savePublishedPayload({
+      result,
+      meta,
+      scoreReports: retainedReports,
+      config: normalizeConfig(config),
+    });
     if (ok) {
       setPublishedMeta(meta);
       setScoreReports(retainedReports);
@@ -4332,6 +4329,9 @@ if (published.config) {
       setResult(published.result);
       setPublishedMeta(published.meta || null);
       setScoreReports(Array.isArray(published.scoreReports) ? published.scoreReports : []);
+      if (published.config) {
+        setConfig(normalizeConfig(published.config));
+      }
       setActiveTab("schedule");
       setPublishNotice("Published schedule loaded.");
     } else {
@@ -4351,46 +4351,58 @@ if (published.config) {
     }
   }
 
-  async function sendScoreConfirmationEmail(game, report, approvalMode = false) {
-    try {
-      const homeCoachEmail = getCoachEmailForTeam(config, game.home);
-      const awayCoachEmail = getCoachEmailForTeam(config, game.away);
+ async async function sendScoreConfirmationEmail(
+  game,
+  report,
+  approvalMode = false,
+  verification = null,
+  extraEmails = []
+) {
+  try {
+    const homeCoachEmail = getCoachEmailForTeam(config, game.home);
+    const awayCoachEmail = getCoachEmailForTeam(config, game.away);
 
-      const response = await fetch("/api/score-confirmation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          gameId: getGameScoreKey(game),
-          division: game.division,
-          date: game.date,
-          time: game.time,
-          court: game.court,
-          home: game.home,
-          away: game.away,
-          homeCoachEmail,
-          awayCoachEmail,
-          reporterEmail: report.reporterEmail,
-          reportingTeam: report.reportingTeam,
-          teamScore: report.teamScore,
-          opponentScore: report.opponentScore,
-          approvalMode,
-          approvalOfReportId: report.approvalOfReportId || "",
-          submittedAt: report.submittedAt,
-        }),
-      });
+    const response = await fetch("/api/score-confirmation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gameId: getGameScoreKey(game),
+        division: game.division,
+        date: game.date,
+        time: game.time,
+        court: game.court,
+        home: game.home,
+        away: game.away,
+        homeCoachEmail,
+        awayCoachEmail,
+        reporterEmail: report.reporterEmail,
+        reportingTeam: report.reportingTeam,
+        teamScore: report.teamScore,
+        opponentScore: report.opponentScore,
+        approvalMode,
+        approvalOfReportId: report.approvalOfReportId || "",
+        submittedAt: report.submittedAt,
+        notifyEmails: extraEmails,
+        verified: Boolean(verification?.verified && verification?.official),
+        officialHomeScore: verification?.official?.homeScore ?? null,
+        officialAwayScore: verification?.official?.awayScore ?? null,
+        verificationReason: verification?.reportSummary || "",
+      }),
+    });
 
-      const data = await response.json().catch(() => ({}));
-      return {
-        ok: response.ok,
-        error: data?.error || "",
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : "Unknown request error",
-      };
-    }
+    const data = await response.json().catch(() => ({}));
+
+    return {
+      ok: response.ok,
+      error: data?.error || "",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unknown request error",
+    };
   }
+}
 
   async function submitScoreReport() {
     if (!result) return;
@@ -4407,16 +4419,6 @@ if (published.config) {
       setScoreNotice("Choose a reporting team first.");
       return;
     }
-
-    const expectedReporterEmail = getCoachEmailForTeam(config, scoreReporterTeam);
-    if (!expectedReporterEmail) {
-      setScoreNotice("That team does not have a coach email configured yet. Ask the admin to add it in Setup.");
-      return;
-    }
-    if (reporterEmail !== expectedReporterEmail) {
-      setScoreNotice(`That email does not match the saved coach email for ${scoreReporterTeam}.`);
-      return;
-    }
     const game = selectedScoreGame;
     if (!game) {
       setScoreNotice("Choose a game to report.");
@@ -4428,6 +4430,16 @@ if (published.config) {
     }
     if (game.home !== scoreReporterTeam && game.away !== scoreReporterTeam) {
       setScoreNotice("That game does not belong to the selected team.");
+      return;
+    }
+
+    const expectedReporterEmail = getCoachEmailForTeam(config, scoreReporterTeam);
+    if (!expectedReporterEmail) {
+      setScoreNotice("That team does not have a coach email configured yet. Ask the admin to add it in Setup.");
+      return;
+    }
+    if (reporterEmail !== expectedReporterEmail) {
+      setScoreNotice(`That email does not match the saved coach email for ${scoreReporterTeam}.`);
       return;
     }
 
@@ -4494,19 +4506,24 @@ if (published.config) {
       } : report);
     }
 
-   const ok = await savePublishedPayload({
-  result,
-  meta,
-  scoreReports: retainedReports,
-  config,
-});
+    const ok = await savePublishedPayload({
+      result: payloadResult,
+      meta: published?.meta || publishedMeta || null,
+      scoreReports: nextReports,
+      config: normalizeConfig(published?.config || config),
+    });
 
     if (ok) {
       setScoreReports(nextReports);
       setScoreForInput("");
       setScoreAgainstInput("");
       setScoreApproveExisting(false);
-      const emailResult = await sendScoreConfirmationEmail(game, nextReport, nextReport.approvalMode);
+      const emailResult = await sendScoreConfirmationEmail(
+        game,
+        nextReport,
+        nextReport.approvalMode,
+        status
+      );
       const emailNote = emailResult.ok
         ? " Confirmation email sent."
         : ` Confirmation email failed${emailResult.error ? `: ${emailResult.error}` : "."}`;
@@ -4784,7 +4801,7 @@ if (published.config) {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "36px 66px 56px 70px 140px 1fr",
+                              gridTemplateColumns: "36px 76px 56px 110px 1fr",
                               gap: 6,
                               padding: "0 4px",
                               fontSize: 12,
@@ -4797,7 +4814,7 @@ if (published.config) {
                             <div>Assoc.</div>
                             <div>No.</div>
                             <div>Coach</div>
-                            <div>Email</div>
+			    <div>Email</div>
                             <div>Preview</div>
                           </div>
 
@@ -4817,7 +4834,7 @@ if (published.config) {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "36px 66px 56px 90px 120px 1fr",
+                                  gridTemplateColumns: "36px 76px 56px 110px 190px 1fr",
                                   gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
@@ -4885,17 +4902,6 @@ if (published.config) {
                                   onChange={(e) =>
                                     updateDivisionTeamDetail(division, idx, {
                                       coachLastName: e.target.value,
-                                    })
-                                  }
-                                />
-
-                                <input
-                                  style={styles.input}
-                                  value={entry.coachEmail || ""}
-                                  placeholder="coach@email.com"
-                                  onChange={(e) =>
-                                    updateDivisionTeamDetail(division, idx, {
-                                      coachEmail: e.target.value.trim().toLowerCase(),
                                     })
                                   }
                                 />
