@@ -5065,15 +5065,13 @@ export default function App() {
                                 />
 
                                 <input
-                                  style={styles.input}
-                                  value={entry.coachEmail || ""}
-                                  placeholder="coach@email.com"
-                                  onChange={(e) =>
-                                    updateDivisionTeamDetail(division, idx, {
-                                      coachEmail: e.target.value.trim().toLowerCase(),
-                                    })
-                                  }
-                                />
+  style={{
+    ...styles.input,
+    maxWidth: 160
+  }}
+  value={entry.coachEmail}
+  ...
+/>
 
                                 <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{previewName}</div>
                               </div>
