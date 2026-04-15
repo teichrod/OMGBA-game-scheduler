@@ -1,11 +1,4 @@
-import { Resend } from "resend";
-
-console.log("env check", {
-  hasApiKey: Boolean(process.env.RESEND_API_KEY),
-  apiKeyPrefix: process.env.RESEND_API_KEY?.slice(0, 3),
-  from: process.env.SCORE_EMAIL_FROM,
-});
-function getRequiredEnv(name) {
+function requiredEnv(name) {
   const value = process.env[name];
   if (!value || !String(value).trim()) {
     throw new Error(`Missing required environment variable: ${name}`);
@@ -44,11 +37,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const apiKey = getRequiredEnv("RESEND_API_KEY");
-    const from = getRequiredEnv("SCORE_EMAIL_FROM");
+    const apiKey = requiredEnv("BREVO_API_KEY");
+    const fromEmail = requiredEnv("SCORE_EMAIL_FROM");
+    const fromName = String(process.env.SCORE_EMAIL_FROM_NAME || "Scheduler").trim();
     const fallbackTo = String(process.env.SCORE_EMAIL_TO || "").trim().toLowerCase();
 
-    const resend = new Resend(apiKey);
     const body = req.body || {};
 
     const recipients = [body.reporterEmail, fallbackTo]
@@ -62,34 +55,42 @@ export default async function handler(req, res) {
     }
 
     const payload = {
-      from,
-      to: uniqueRecipients,
+      sender: {
+        email: fromEmail,
+        name: fromName,
+      },
+      to: uniqueRecipients.map((email) => ({ email })),
       subject: buildSubject(body),
-      text: buildText(body),
+      textContent: buildText(body),
     };
 
-    console.log("score-confirmation send attempt", {
-      from,
-      to: uniqueRecipients,
-      subject: payload.subject,
-      hasApiKey: Boolean(apiKey),
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "api-key": apiKey,
+      },
+      body: JSON.stringify(payload),
     });
 
-    const { data, error } = await resend.emails.send(payload);
+    const data = await response.json().catch(() => ({}));
 
-    if (error) {
-      console.error("Resend returned error:", error);
+    if (!response.ok) {
+      console.error("Brevo returned error:", {
+        status: response.status,
+        data,
+      });
+
       return res.status(500).json({
-        error: error.message || "Resend send failed",
-        details: error,
+        error: data?.message || `Brevo send failed with status ${response.status}`,
+        details: data,
       });
     }
 
-    console.log("Resend send success:", data);
-
     return res.status(200).json({
       ok: true,
-      id: data?.id || null,
+      id: data?.messageId || null,
     });
   } catch (error) {
     console.error("score-confirmation handler failed:", error);
