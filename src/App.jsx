@@ -503,14 +503,40 @@ function buildTeamNamesFromConfig(config) {
   return names;
 }
 
+function normalizeTeamName(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getTeamBaseName(value) {
+  return normalizeTeamName(value).split("-")[0];
+}
+
 function getTeamDetailByFormattedName(config, teamName) {
+  const normalizedTarget = normalizeTeamName(teamName);
+  const targetBase = getTeamBaseName(teamName);
+
+  let baseMatch = null;
+
   for (const division of DIVISIONS) {
     const count = Number(config?.divisions?.[division] || 0);
     const details = syncDivisionTeamDetails(config?.divisionTeamDetails?.[division], count);
+
     for (let i = 0; i < count; i += 1) {
       const formatted = buildFormattedTeamName(division, details[i], i + 1, count);
-      if (formatted === teamName) {
+      const normalizedFormatted = normalizeTeamName(formatted);
+      const formattedBase = getTeamBaseName(formatted);
+
+      if (normalizedFormatted === normalizedTarget) {
         return {
+          division,
+          index: i,
+          entry: details[i],
+          formattedName: formatted,
+        };
+      }
+
+      if (!baseMatch && formattedBase === targetBase) {
+        baseMatch = {
           division,
           index: i,
           entry: details[i],
@@ -519,9 +545,9 @@ function getTeamDetailByFormattedName(config, teamName) {
       }
     }
   }
-  return null;
-}
 
+  return baseMatch;
+}
 function getCoachEmailForTeam(config, teamName) {
   const detail = getTeamDetailByFormattedName(config, teamName);
   return String(detail?.entry?.coachEmail || "").trim().toLowerCase();
