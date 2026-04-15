@@ -154,81 +154,85 @@ function getOfficialScoreFromReports(game, reports) {
   };
 }
 
-function htmlPage(message) {
-  return `
-    <!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>Score Approval</title>
-      </head>
-      <body style="font-family: Arial, sans-serif; padding: 24px; color: #0f172a;">
-        <h2>Score Approval</h2>
-        <p>${message}</p>
-        <p><a href="/">Open scheduler</a></p>
-      </body>
-    </html>
-  `;
+function buildPublicRedirectUrl(status, data, extraMessage = "") {
+  const appBaseUrl = process.env.APP_BASE_URL;
+  if (!appBaseUrl) throw new Error("Missing APP_BASE_URL");
+
+  const url = new URL(appBaseUrl);
+  url.searchParams.set("view", "public");
+
+  if (data?.recipientTeam) {
+    url.searchParams.set("team", data.recipientTeam);
+  }
+
+  url.searchParams.set("approval", status);
+
+  if (extraMessage) {
+    url.searchParams.set("message", extraMessage);
+  }
+
+  return url.toString();
 }
 
 export default async function handler(req, res) {
+  let data = null;
+
   try {
     const token = req.query.token;
-    const data = verifyToken(token);
+    data = verifyToken(token);
 
     const published = await loadPublishedPayload();
     if (!published?.result?.schedule) {
-      return res.status(404).send(htmlPage("No published schedule was found."));
+      return res.redirect(buildPublicRedirectUrl("error", data, "No published schedule was found."));
     }
 
     const schedule = Array.isArray(published.result.schedule) ? published.result.schedule : [];
-    const game = schedule.find((entry) => entry.gameId === data.gameId || (`${entry.date}|${entry.time}|${entry.court}|${entry.home}|${entry.away}` === data.gameId));
+    const game = schedule.find((entry) => entry.gameId === data.gameId);
 
     if (!game) {
-      return res.status(404).send(htmlPage("That game was not found."));
+      return res.redirect(buildPublicRedirectUrl("error", data, "That game was not found."));
     }
 
-    const gameId = game.gameId || `${game.date}|${game.time}|${game.court}|${game.home}|${game.away}`;
     const existingReports = Array.isArray(published.scoreReports) ? published.scoreReports : [];
-    const currentStatus = getOfficialScoreFromReports({ ...game, gameId }, existingReports);
+    const currentStatus = getOfficialScoreFromReports(game, existingReports);
 
     if (currentStatus.verified) {
-      return res.status(200).send(htmlPage("This score was already verified."));
+      return res.redirect(buildPublicRedirectUrl("already-verified", data, "This score was already verified."));
     }
 
     const recipientEmail = normalizeEmail(data.recipientEmail);
     const reporterEmail = normalizeEmail(data.reporterEmail);
 
     if (!recipientEmail) {
-      return res.status(400).send(htmlPage("Approval token is missing the recipient email."));
+      return res.redirect(buildPublicRedirectUrl("error", data, "Approval token is missing the recipient email."));
     }
 
     if (recipientEmail === reporterEmail) {
-      return res.status(403).send(htmlPage("The reporting coach cannot approve their own score."));
+      return res.redirect(buildPublicRedirectUrl("error", data, "The reporting coach cannot approve their own score."));
     }
 
     if (data.recipientTeam !== game.home && data.recipientTeam !== game.away) {
-      return res.status(400).send(htmlPage("Approval token has an invalid team."));
+      return res.redirect(buildPublicRedirectUrl("error", data, "Approval token has an invalid team."));
     }
 
     if (data.recipientTeam === data.reportingTeam) {
-      return res.status(403).send(htmlPage("The reporting coach cannot approve their own score."));
+      return res.redirect(buildPublicRedirectUrl("error", data, "The reporting coach cannot approve their own score."));
     }
 
     const duplicateReport = existingReports.find(
       (report) =>
-        report.gameId === gameId &&
+        report.gameId === data.gameId &&
         report.reportingTeam === data.recipientTeam &&
         normalizeEmail(report.reporterEmail) === recipientEmail
     );
 
     if (duplicateReport) {
-      return res.status(200).send(htmlPage("You already approved this score."));
+      return res.redirect(buildPublicRedirectUrl("already-approved", data, "You already approved this score."));
     }
 
     const nextReport = {
       id: createRowId("score"),
-      gameId,
+      gameId: data.gameId,
       division: data.division,
       date: data.date,
       time: data.time,
@@ -242,17 +246,17 @@ export default async function handler(req, res) {
       opponentScore:
         data.recipientTeam === data.home ? Number(data.teamScore) : Number(data.opponentScore),
       approvalMode: true,
-      approvalOfReportId: "",
+      approvalOfReportId: data.reportId || "",
       submittedAt: new Date().toISOString(),
     };
 
     let nextReports = [...existingReports, nextReport];
 
-    const status = getOfficialScoreFromReports({ ...game, gameId }, nextReports);
+    const status = getOfficialScoreFromReports(game, nextReports);
     if (status.verified && status.official) {
       const verifiedAt = new Date().toISOString();
       nextReports = nextReports.map((report) =>
-        report.gameId === gameId
+        report.gameId === data.gameId
           ? {
               ...report,
               verifiedFinal: true,
@@ -272,13 +276,22 @@ export default async function handler(req, res) {
       config: published.config || null,
     });
 
-    const finalMessage =
-      status.verified && status.official
-        ? `Score approved and verified: ${game.away} ${status.official.awayScore} - ${status.official.homeScore} ${game.home}.`
-        : "Approval was saved, but the score is still waiting for matching verification.";
+    if (status.verified && status.official) {
+      return res.redirect(
+        buildPublicRedirectUrl(
+          "success",
+          data,
+          `Score approved and verified: ${game.away} ${status.official.awayScore} - ${status.official.homeScore} ${game.home}.`
+        )
+      );
+    }
 
-    return res.status(200).send(htmlPage(finalMessage));
+    return res.redirect(
+      buildPublicRedirectUrl("saved", data, "Approval was saved, but the score is still waiting for matching verification.")
+    );
   } catch (e) {
-    return res.status(500).send(htmlPage(`Could not approve score: ${e.message}`));
+    return res.redirect(
+      buildPublicRedirectUrl("error", data, e?.message || "Could not approve score.")
+    );
   }
 }
