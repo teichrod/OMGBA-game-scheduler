@@ -5346,9 +5346,9 @@ export default function App() {
       <div style={styles.container}>
         <div style={styles.headerRow}>
           <div>
-            <h1 style={styles.title}>Youth Sports Scheduler</h1>
+            <h1 style={styles.title}>LeagueFlow</h1>
             <div style={styles.subtitle}>
-              Editable setup, date-specific court selection, fairness-based scheduling, admin date grid, public publishing, coach score reporting, standings, and CSV export.
+              NWML - League Management Portal
             </div>
           </div>
           <div style={styles.row}>
