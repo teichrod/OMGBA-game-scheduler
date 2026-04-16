@@ -4005,6 +4005,53 @@ function buildDivisionStandings(schedule, scoreReports) {
   );
 }
 
+
+function getStandingsSortValue(row, key) {
+  switch (key) {
+    case "team":
+      return String(row.team || "");
+    case "wins":
+      return Number(row.wins || 0);
+    case "losses":
+      return Number(row.losses || 0);
+    case "ties":
+      return Number(row.ties || 0);
+    case "winPct":
+      return Number(row.winPct || 0);
+    case "pointsFor":
+      return Number(row.pointsFor || 0);
+    case "pointsAgainst":
+      return Number(row.pointsAgainst || 0);
+    case "pointDiff":
+      return Number(row.pointDiff || 0);
+    case "sos":
+      return Number(row.sos || 0);
+    case "performanceRating":
+      return Number(row.performanceRating || 0);
+    default:
+      return 0;
+  }
+}
+
+function compareStandingsRows(a, b, sortKey = "winPct", sortDirection = "desc") {
+  const direction = sortDirection === "asc" ? 1 : -1;
+  const aValue = getStandingsSortValue(a, sortKey);
+  const bValue = getStandingsSortValue(b, sortKey);
+
+  if (sortKey === "team") {
+    const cmp = String(aValue).localeCompare(String(bValue), undefined, { numeric: true });
+    if (cmp !== 0) return cmp * direction;
+  } else if (bValue !== aValue) {
+    return (aValue - bValue) * direction;
+  }
+
+  if ((b.winPct || 0) !== (a.winPct || 0)) return (b.winPct || 0) - (a.winPct || 0);
+  if ((b.performanceRating || 0) !== (a.performanceRating || 0)) return (b.performanceRating || 0) - (a.performanceRating || 0);
+  if ((b.pointDiff || 0) !== (a.pointDiff || 0)) return (b.pointDiff || 0) - (a.pointDiff || 0);
+  if ((b.pointsFor || 0) !== (a.pointsFor || 0)) return (b.pointsFor || 0) - (a.pointsFor || 0);
+  return String(a.team || "").localeCompare(String(b.team || ""), undefined, { numeric: true });
+}
+
 function getScheduleGridForDate(config, result, date) {
   const enabledTimes = config.timeSlots.filter((entry) => entry.enabled).map((entry) => entry.time);
   const courts = getEnabledCourtsForDate(config, date);
@@ -4041,6 +4088,7 @@ export default function App() {
   const [savedSetups, setSavedSetups] = useState([]);
   const [selectedSavedSetup, setSelectedSavedSetup] = useState("");
   const [showCoreRules, setShowCoreRules] = useState(true);
+  const [standingsSort, setStandingsSort] = useState({ key: "winPct", direction: "desc" });
   const [dateDebugExpanded, setDateDebugExpanded] = useState(true);
   const [scoreReports, setScoreReports] = useState([]);
   const [scoreNotice, setScoreNotice] = useState("");
@@ -5195,6 +5243,43 @@ export default function App() {
     }
   }
 
+  function handleStandingsSort(nextKey) {
+    setStandingsSort((current) => {
+      if (current.key === nextKey) {
+        return {
+          key: nextKey,
+          direction: current.direction === "desc" ? "asc" : "desc",
+        };
+      }
+
+      return {
+        key: nextKey,
+        direction: nextKey === "team" ? "asc" : "desc",
+      };
+    });
+  }
+
+  function getSortedStandingsRows(rows) {
+    return [...(rows || [])].sort((a, b) =>
+      compareStandingsRows(a, b, standingsSort.key, standingsSort.direction)
+    );
+  }
+
+  function renderStandingsHeader(label, key, align = "center") {
+    const isActive = standingsSort.key === key;
+    const arrow = isActive ? (standingsSort.direction === "desc" ? " ▼" : " ▲") : "";
+    return (
+      <th
+        style={{ ...styles.th, textAlign: align, cursor: "pointer", userSelect: "none" }}
+        onClick={() => handleStandingsSort(key)}
+        title={`Sort by ${label}`}
+      >
+        {label}{arrow}
+      </th>
+    );
+  }
+
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
@@ -6009,6 +6094,7 @@ export default function App() {
               <div style={{ display: "grid", gap: 14 }}>
                 {(scheduleDivisionFilter === "all" ? DIVISIONS : [scheduleDivisionFilter]).map((division) => {
                   const rows = divisionStandings[division] || [];
+                  const sortedRows = getSortedStandingsRows(rows);
                   return (
                     <div key={division} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
                       <div style={{ padding: "10px 12px", fontWeight: 700, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{division}</div>
@@ -6016,33 +6102,33 @@ export default function App() {
                         <table style={styles.table}>
                           <thead>
                             <tr>
-                              <th style={styles.th}>Team</th>
-                              <th style={{ ...styles.th, textAlign: "center" }}>W</th>
-                              <th style={{ ...styles.th, textAlign: "center" }}>L</th>
-                              <th style={{ ...styles.th, textAlign: "center" }}>T</th>
-                              <th style={{ ...styles.th, textAlign: "center" }}>PF</th>
-                              <th style={{ ...styles.th, textAlign: "center" }}>PA</th>
-                              <th style={{ ...styles.th, textAlign: "center" }}>PD</th>
-                              <th style={{ ...styles.th, textAlign: "center" }}>SOS</th>
-                              <th style={{ ...styles.th, textAlign: "center" }}>PR</th>
+                              {renderStandingsHeader("Team", "team", "left")}
+                              {renderStandingsHeader("W", "wins")}
+                              {renderStandingsHeader("L", "losses")}
+                              {renderStandingsHeader("T", "ties")}
+                              {renderStandingsHeader("Win %", "winPct")}
+                              {renderStandingsHeader("PF", "pointsFor")}
+                              {renderStandingsHeader("PA", "pointsAgainst")}
+                              {renderStandingsHeader("PD", "pointDiff")}
+                              {renderStandingsHeader("SOS", "sos")}
+                              {renderStandingsHeader("PR", "performanceRating")}
                             </tr>
                           </thead>
                           <tbody>
-                            {rows.map((row) => (
+                            {sortedRows.map((row) => (
                               <tr key={row.team}>
-                                <td style={{ ...styles.td, textAlign: "left" }}>{row.team}</td>
-                                <td style={{ ...styles.td, textAlign: "center" }}>{row.wins}</td>
-                                <td style={{ ...styles.td, textAlign: "center" }}>{row.losses}</td>
-                                <td style={{ ...styles.td, textAlign: "center" }}>{row.ties}</td>
-                                <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsFor}</td>
-                                <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsAgainst}</td>
-                                <td style={{ ...styles.td, textAlign: "center" }}>{row.pointDiff}</td>
-                                <td style={{ ...styles.td, textAlign: "center" }}>{(row.sos || 0).toFixed(3)}</td>
-                                <td style={{ ...styles.td, textAlign: "center", fontWeight: 700 }}>{(row.performanceRating || 0).toFixed(1)}</td>
+                                <th style={{ ...styles.th, textAlign: "center" }}>W</th>
+				<th style={{ ...styles.th, textAlign: "center" }}>L</th>
+				<th style={{ ...styles.th, textAlign: "center" }}>Win %</th>
+				<th style={{ ...styles.th, textAlign: "center" }}>PF</th>
+				<th style={{ ...styles.th, textAlign: "center" }}>PA</th>
+				<th style={{ ...styles.th, textAlign: "center" }}>PD</th>
+				<th style={{ ...styles.th, textAlign: "center" }}>SOS</th>
+				<th style={{ ...styles.th, textAlign: "center" }}>PR</th>
                               </tr>
                             ))}
                             {!rows.length ? (
-                              <tr><td style={styles.td} colSpan={9}>No verified scores yet.</td></tr>
+                              <tr><td style={styles.td} colSpan={10}>No verified scores yet.</td></tr>
                             ) : null}
                           </tbody>
                         </table>
