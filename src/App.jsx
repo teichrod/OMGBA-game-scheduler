@@ -3896,6 +3896,41 @@ function getGameScoreDisplay(game, scoreReports) {
   return "—";
 }
 
+function getPublishedScheduleOutcomeParts(game, scoreReports) {
+  const status = getOfficialScoreFromReports(game, scoreReports);
+  if (!(status?.verified && status?.official)) {
+    return {
+      verified: false,
+      homeColor: "#0f172a",
+      awayColor: "#0f172a",
+      homeScoreText: "—",
+      awayScoreText: "—",
+    };
+  }
+
+  const homeScore = Number(status.official.homeScore);
+  const awayScore = Number(status.official.awayScore);
+
+  let homeColor = "#0f172a";
+  let awayColor = "#0f172a";
+
+  if (homeScore > awayScore) {
+    homeColor = "#166534";
+    awayColor = "#b91c1c";
+  } else if (awayScore > homeScore) {
+    awayColor = "#166534";
+    homeColor = "#b91c1c";
+  }
+
+  return {
+    verified: true,
+    homeColor,
+    awayColor,
+    homeScoreText: String(homeScore),
+    awayScoreText: String(awayScore),
+  };
+}
+
 function buildDivisionStandings(schedule, scoreReports) {
   const standingsByDivision = {};
   const divisionGames = {};
@@ -6033,15 +6068,27 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredSchedule.map((game, idx) => (
+                      {filteredSchedule.map((game, idx) => {
+                        const outcomeParts = getPublishedScheduleOutcomeParts(game, scoreReports);
+                        return (
                         <tr key={`${game.date}-${game.time}-${game.court}-${idx}`}>
                           <td style={styles.td}>{game.division}</td>
                           <td style={styles.td}>{game.date}</td>
                           <td style={styles.td}>{formatTimeDisplay(game.time)}</td>
                           <td style={styles.td}>{game.court}</td>
-                          <td style={styles.td}>{game.home}</td>
-                          <td style={styles.td}>{game.away}</td>
-                          <td style={styles.td}>{getGameScoreDisplay(game, scoreReports)}</td>
+                          <td style={{ ...styles.td, color: outcomeParts.verified ? outcomeParts.homeColor : styles.td.color }}>{game.home}</td>
+                          <td style={{ ...styles.td, color: outcomeParts.verified ? outcomeParts.awayColor : styles.td.color }}>{game.away}</td>
+                          <td style={styles.td}>
+                            {outcomeParts.verified ? (
+                              <span>
+                                <span style={{ color: outcomeParts.awayColor, fontWeight: 700 }}>{outcomeParts.awayScoreText}</span>
+                                <span>{" - "}</span>
+                                <span style={{ color: outcomeParts.homeColor, fontWeight: 700 }}>{outcomeParts.homeScoreText}</span>
+                              </span>
+                            ) : (
+                              getGameScoreDisplay(game, scoreReports)
+                            )}
+                          </td>
                           {!isPublicMode ? (
                             <td style={styles.td}>
                               {(() => {
@@ -6078,7 +6125,8 @@ export default function App() {
                             </td>
                           ) : null}
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
