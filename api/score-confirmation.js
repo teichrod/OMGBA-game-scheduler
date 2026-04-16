@@ -72,11 +72,18 @@ export default async function handler(req, res) {
       uniqueRecipients.push(entry);
     }
 
-    if (!uniqueRecipients.length) {
-      return res.status(400).json({ error: "No coach emails were available for this game." });
+    const reminderOnly = Boolean(body.reminderOnly);
+    const reminderTeam = String(body.reminderTeam || "").trim();
+
+    const selectedRecipients = reminderOnly
+      ? uniqueRecipients.filter((entry) => entry.team && entry.team === reminderTeam)
+      : uniqueRecipients;
+
+    if (!selectedRecipients.length) {
+      return res.status(400).json({ error: reminderOnly ? "No reminder recipient was available for this game." : "No coach emails were available for this game." });
     }
 
-    const emailJobs = uniqueRecipients.map(async (recipient) => {
+    const emailJobs = selectedRecipients.map(async (recipient) => {
       const recipientEmail = recipient.email;
       const recipientTeam = recipient.team;
 
@@ -91,6 +98,7 @@ export default async function handler(req, res) {
         !body.verified;
 
       let approveSection = `<p>This email is for score notification only.</p>`;
+      const emailHeading = reminderOnly ? "Score Approval Reminder" : "Score Reported";
 
       if (canApprove) {
         const tokenPayload = {
@@ -125,11 +133,16 @@ export default async function handler(req, res) {
         ? `<p><strong>Verified final score:</strong> ${body.away} ${body.officialAwayScore} - ${body.officialHomeScore} ${body.home}</p>`
         : `<p><strong>Reported score:</strong> ${body.teamScore} - ${body.opponentScore} from ${reportingTeam}</p>`;
 
+      const reminderText = reminderOnly
+        ? `<p>This is a reminder that a score was reported and is still waiting for ${recipientTeam || "the other coach"} to approve it.</p>`
+        : "";
+
       const html = `
-        <h2>Score Reported</h2>
+        <h2>${emailHeading}</h2>
         <p><strong>${body.away}</strong> @ <strong>${body.home}</strong></p>
         <p>${body.date} at ${body.time}${body.court ? `, ${body.court}` : ""}</p>
         ${finalText}
+        ${reminderText}
         ${body.verificationReason ? `<p>${body.verificationReason}</p>` : ""}
         ${approveSection}
       `;
@@ -143,7 +156,7 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           sender: { email: senderEmail },
           to: [{ email: recipientEmail }],
-          subject: body.verified ? "Score Verified" : "Score Reported",
+          subject: body.verified ? "Score Verified" : reminderOnly ? "Score Approval Reminder" : "Score Reported",
           htmlContent: html,
         }),
       });

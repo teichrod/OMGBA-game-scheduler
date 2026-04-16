@@ -4703,7 +4703,8 @@ export default function App() {
   report,
   approvalMode = false,
   verification = null,
-  extraEmails = []
+  extraEmails = [],
+  options = {}
 ) {
   try {
     const published = await loadPublishedPayload();
@@ -4737,6 +4738,9 @@ export default function App() {
         officialHomeScore: verification?.official?.homeScore ?? null,
         officialAwayScore: verification?.official?.awayScore ?? null,
         verificationReason: verification?.reportSummary || "",
+        reminderOnly: Boolean(options?.reminderOnly),
+        reminderTeam: options?.reminderTeam || "",
+        reportId: report?.id || "",
       }),
     });
 
@@ -4753,6 +4757,200 @@ export default function App() {
     };
   }
 }
+
+  async function sendPendingApprovalReminder(game) {
+    if (!game) return;
+
+    const published = await loadPublishedPayload();
+    const payloadResult = published?.result || result;
+    const currentGameInPayload = (payloadResult?.schedule || []).find(
+      (entry) => getGameScoreKey(entry) === getGameScoreKey(game)
+    ) || game;
+    const existingReports = Array.isArray(published?.scoreReports) ? published.scoreReports : [];
+    const status = getOfficialScoreFromReports(currentGameInPayload, existingReports);
+
+    if (status?.verified) {
+      setScoreNotice("That score is already verified.");
+      return;
+    }
+
+    if (status?.status !== "awaiting_opponent") {
+      setScoreNotice("Reminder emails can only be sent when one coach is still missing.");
+      return;
+    }
+
+    const pendingTeam = !status.homeReport ? currentGameInPayload.home : (!status.awayReport ? currentGameInPayload.away : "");
+    const existingReport = status.homeReport || status.awayReport;
+
+    if (!pendingTeam || !existingReport) {
+      setScoreNotice("Could not determine which coach still needs to approve this score.");
+      return;
+    }
+
+    const emailResult = await sendScoreConfirmationEmail(
+      currentGameInPayload,
+      existingReport,
+      Boolean(existingReport.approvalMode),
+      status,
+      [],
+      { reminderOnly: true, reminderTeam: pendingTeam }
+    );
+
+    if (emailResult?.ok) {
+      setScoreNotice(`Reminder email sent to ${pendingTeam}.`);
+    } else {
+      setScoreNotice(`Reminder email failed${emailResult?.error ? `: ${emailResult.error}` : "."}`);
+    }
+  }
+
+
+  function getAdminSuggestedOfficialScore(game, reports) {
+    const status = getOfficialScoreFromReports(game, reports);
+    if (status?.verified && status?.official) {
+      return {
+        homeScore: Number(status.official.homeScore),
+        awayScore: Number(status.official.awayScore),
+        reason: status.reportSummary || "Admin edited verified score.",
+      };
+    }
+
+    const latest = getLatestGameReportsByTeam(game, reports || []);
+    const normalizedHome = latest.homeReport ? normalizeScoreReportForGame(game, latest.homeReport) : null;
+    const normalizedAway = latest.awayReport ? normalizeScoreReportForGame(game, latest.awayReport) : null;
+    const normalized = normalizedHome || normalizedAway;
+
+    return {
+      homeScore: normalized ? Number(normalized.homeScore) : 0,
+      awayScore: normalized ? Number(normalized.awayScore) : 0,
+      reason: status?.verified ? (status.reportSummary || "Admin edited verified score.") : "Admin verified score.",
+    };
+  }
+
+  async function adminVerifyOrEditScore(game, options = {}) {
+    if (!game || isPublicMode) return;
+
+    const published = await loadPublishedPayload();
+    const payloadResult = published?.result || result;
+    const currentGameInPayload = (payloadResult?.schedule || []).find(
+      (entry) => getGameScoreKey(entry) === getGameScoreKey(game)
+    ) || game;
+    const existingReports = Array.isArray(published?.scoreReports) ? published.scoreReports : [];
+    const status = getOfficialScoreFromReports(currentGameInPayload, existingReports);
+    const suggested = getAdminSuggestedOfficialScore(currentGameInPayload, existingReports);
+
+    const homeLabel = currentGameInPayload.home;
+    const awayLabel = currentGameInPayload.away;
+    const promptPrefix = options?.editOnly || status?.verified
+      ? "Enter the corrected final score for this verified game."
+      : "Enter the official final score to verify this game as admin.";
+
+    const homeInput = typeof window === "undefined"
+      ? String(suggested.homeScore)
+      : window.prompt(`${promptPrefix}\n\nHome team: ${homeLabel}`, String(suggested.homeScore));
+    if (homeInput === null) return;
+
+    const awayInput = typeof window === "undefined"
+      ? String(suggested.awayScore)
+      : window.prompt(`${promptPrefix}\n\nAway team: ${awayLabel}`, String(suggested.awayScore));
+    if (awayInput === null) return;
+
+    const officialHomeScore = parseNumericScore(homeInput);
+    const officialAwayScore = parseNumericScore(awayInput);
+    if (officialHomeScore === null || officialAwayScore === null) {
+      setScoreNotice("Enter non-negative whole-number scores for the admin override.");
+      return;
+    }
+
+    const defaultReason = status?.verified
+      ? "Admin edited verified score."
+      : "Admin verified score.";
+    const reasonInput = typeof window === "undefined"
+      ? defaultReason
+      : window.prompt("Optional verification note", suggested.reason || defaultReason);
+    if (reasonInput === null) return;
+    const verificationReason = String(reasonInput || defaultReason).trim() || defaultReason;
+
+    const adminReport = {
+      id: createRowId("score"),
+      gameId: getGameScoreKey(currentGameInPayload),
+      division: currentGameInPayload.division,
+      date: currentGameInPayload.date,
+      time: currentGameInPayload.time,
+      court: currentGameInPayload.court,
+      home: currentGameInPayload.home,
+      away: currentGameInPayload.away,
+      reportingTeam: "__ADMIN_OVERRIDE__",
+      reporterEmail: "admin-override@local",
+      teamScore: officialHomeScore,
+      opponentScore: officialAwayScore,
+      approvalMode: false,
+      approvalOfReportId: "",
+      submittedAt: new Date().toISOString(),
+      verifiedFinal: true,
+      verifiedAt: new Date().toISOString(),
+      officialHomeScore,
+      officialAwayScore,
+      verificationReason,
+      adminOverride: true,
+    };
+
+    const nextReports = existingReports
+      .filter((report) => !(report.gameId === adminReport.gameId && report.adminOverride))
+      .map((report) =>
+        report.gameId === adminReport.gameId
+          ? {
+              ...report,
+              verifiedFinal: true,
+              verifiedAt: adminReport.verifiedAt,
+              officialHomeScore,
+              officialAwayScore,
+              verificationReason,
+            }
+          : report
+      );
+    nextReports.push(adminReport);
+
+    const lookupConfig = normalizeConfig(published?.config || config);
+    const coachDirectory = getPublishedCoachDirectory(published, lookupConfig);
+
+    const ok = await savePublishedPayload({
+      result: payloadResult,
+      meta: published?.meta || publishedMeta || null,
+      scoreReports: nextReports,
+      config: lookupConfig,
+      coachDirectory,
+    });
+
+    if (!ok) {
+      setScoreNotice("Could not save the admin verified score.");
+      return;
+    }
+
+    setScoreReports(nextReports);
+
+    const verificationStatus = {
+      verified: true,
+      official: { homeScore: officialHomeScore, awayScore: officialAwayScore },
+      reportSummary: verificationReason,
+    };
+
+    const emailResult = await sendScoreConfirmationEmail(
+      currentGameInPayload,
+      adminReport,
+      false,
+      verificationStatus
+    );
+
+    const emailNote = emailResult?.ok
+      ? " Notification email sent."
+      : ` Notification email failed${emailResult?.error ? `: ${emailResult.error}` : "."}`;
+
+    setScoreNotice(
+      status?.verified
+        ? `Verified score updated by admin: ${currentGameInPayload.away} ${officialAwayScore} - ${officialHomeScore} ${currentGameInPayload.home}.${emailNote}`
+        : `Score verified by admin: ${currentGameInPayload.away} ${officialAwayScore} - ${officialHomeScore} ${currentGameInPayload.home}.${emailNote}`
+    );
+  }
 
   async function submitScoreReport() {
     if (!result) return;
@@ -5595,7 +5793,7 @@ export default function App() {
                         <div style={{ fontSize: 24, fontWeight: 700 }}>{result.schedule.filter((game) => getOfficialScoreFromReports(game, scoreReports).status === "mismatch").length}</div>
                       </div>
                     </div>
-                    <div style={{ fontWeight: 700, marginBottom: 10 }}>Score report log</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}><div style={{ fontWeight: 700 }}>Score report log</div><div style={{ fontSize: 12, color: "#64748b" }}>Admins can verify or edit scores from the schedule grid below.</div></div>
                     <div style={{ ...styles.tableWrap, maxHeight: 320 }}>
                       <table style={styles.table}>
                         <thead>
@@ -5606,6 +5804,7 @@ export default function App() {
                             <th style={styles.th}>Game</th>
                             <th style={styles.th}>Reported score</th>
                             <th style={styles.th}>Status</th>
+                            <th style={styles.th}>Action</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -5617,10 +5816,23 @@ export default function App() {
                               <td style={styles.td}>{game ? `${game.date} • ${formatTimeDisplay(game.time)} • ${game.away} @ ${game.home}` : `${report.date} • ${formatTimeDisplay(report.time)} • ${report.away} @ ${report.home}`}</td>
                               <td style={styles.td}>{`${report.teamScore}-${report.opponentScore}`}</td>
                               <td style={styles.td}>{status?.verified ? `Verified (${status.officialLabel})` : status?.status === "awaiting_opponent" ? "Waiting on other coach" : status?.status === "mismatch" ? "Needs review" : "Pending"}</td>
+                              <td style={styles.td}>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  {status?.status === "awaiting_opponent" && game ? (
+                                    <button style={styles.button} onClick={() => sendPendingApprovalReminder(game)}>Send reminder</button>
+                                  ) : null}
+                                  {game ? (
+                                    <button style={styles.button} onClick={() => adminVerifyOrEditScore(game, { editOnly: Boolean(status?.verified) })}>
+                                      {status?.verified ? "Edit verified" : "Admin verify"}
+                                    </button>
+                                  ) : null}
+                                  {!game ? "—" : null}
+                                </div>
+                              </td>
                             </tr>
                           ))}
                           {!scoreLogRows.length ? (
-                            <tr><td style={styles.td} colSpan={6}>No score reports yet.</td></tr>
+                            <tr><td style={styles.td} colSpan={7}>No score reports yet.</td></tr>
                           ) : null}
                         </tbody>
                       </table>
@@ -5639,7 +5851,9 @@ export default function App() {
                         <th style={styles.th}>Home</th>
                         <th style={styles.th}>Away</th>
                         <th style={styles.th}>Score</th>
+                        {!isPublicMode ? <th style={styles.th}>Score admin</th> : null}
                         {!isPublicMode ? <th style={styles.th}>Lock</th> : null}
+                        {!isPublicMode ? <th style={styles.th}>Reminder</th> : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -5654,12 +5868,37 @@ export default function App() {
                           <td style={styles.td}>{getGameScoreDisplay(game, scoreReports)}</td>
                           {!isPublicMode ? (
                             <td style={styles.td}>
+                              {(() => {
+                                const status = getOfficialScoreFromReports(game, scoreReports);
+                                return (
+                                  <button
+                                    style={status?.verified ? styles.successButton : styles.button}
+                                    onClick={() => adminVerifyOrEditScore(game, { editOnly: Boolean(status?.verified) })}
+                                  >
+                                    {status?.verified ? "Edit verified" : "Admin verify"}
+                                  </button>
+                                );
+                              })()}
+                            </td>
+                          ) : null}
+                          {!isPublicMode ? (
+                            <td style={styles.td}>
                               <button
                                 style={game.locked ? styles.successButton : styles.button}
                                 onClick={() => toggleGameLocked(game)}
                               >
                                 {game.locked ? 'Locked' : 'Lock'}
                               </button>
+                            </td>
+                          ) : null}
+                          {!isPublicMode ? (
+                            <td style={styles.td}>
+                              {(() => {
+                                const status = getOfficialScoreFromReports(game, scoreReports);
+                                return status?.status === "awaiting_opponent" && (status.homeReport || status.awayReport) ? (
+                                  <button style={styles.button} onClick={() => sendPendingApprovalReminder(game)}>Send reminder</button>
+                                ) : "—";
+                              })()}
                             </td>
                           ) : null}
                         </tr>
