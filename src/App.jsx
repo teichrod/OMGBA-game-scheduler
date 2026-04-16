@@ -4007,6 +4007,7 @@ export default function App() {
   const [scoreGameId, setScoreGameId] = useState("");
   const [scoreForInput, setScoreForInput] = useState("");
   const [scoreAgainstInput, setScoreAgainstInput] = useState("");
+  const [scoreForfeitTeam, setScoreForfeitTeam] = useState("");
   const [scoreApproveExisting, setScoreApproveExisting] = useState(false);
 
   useEffect(() => {
@@ -4289,6 +4290,7 @@ export default function App() {
 
   useEffect(() => {
     setScoreApproveExisting(false);
+    setScoreForfeitTeam("");
   }, [scoreReporterDivision, scoreReporterTeam, scoreGameId]);
 
   const filteredSchedule = useMemo(() => {
@@ -5044,9 +5046,28 @@ export default function App() {
       return;
     }
 
+    const isForfeit = Boolean(scoreForfeitTeam) && (scoreForfeitTeam === game.home || scoreForfeitTeam === game.away);
+
     let teamScore = null;
     let opponentScore = null;
-    if (scoreApproveExisting && selectedScoreApprovalContext.canApprove && selectedScoreApprovalContext.approvalScores) {
+    let verificationOverride = null;
+
+    if (isForfeit) {
+      const forfeitingTeam = scoreForfeitTeam;
+      const winningTeam = forfeitingTeam === game.home ? game.away : game.home;
+      const officialHomeScore = forfeitingTeam === game.home ? 0 : 15;
+      const officialAwayScore = forfeitingTeam === game.away ? 0 : 15;
+      teamScore = scoreReporterTeam === game.home ? officialHomeScore : officialAwayScore;
+      opponentScore = scoreReporterTeam === game.home ? officialAwayScore : officialHomeScore;
+      verificationOverride = {
+        verified: true,
+        official: {
+          homeScore: officialHomeScore,
+          awayScore: officialAwayScore,
+        },
+        reportSummary: `Forfeit by ${forfeitingTeam}; ${winningTeam} awarded a 15-0 win.`,
+      };
+    } else if (scoreApproveExisting && selectedScoreApprovalContext.canApprove && selectedScoreApprovalContext.approvalScores) {
       teamScore = selectedScoreApprovalContext.approvalScores.teamScore;
       opponentScore = selectedScoreApprovalContext.approvalScores.opponentScore;
     } else {
@@ -5074,11 +5095,12 @@ export default function App() {
       approvalMode: Boolean(scoreApproveExisting && selectedScoreApprovalContext.canApprove),
       approvalOfReportId: scoreApproveExisting ? (selectedScoreApprovalContext.opponentReport?.id || "") : "",
       submittedAt: new Date().toISOString(),
+      forfeitTeam: isForfeit ? scoreForfeitTeam : "",
     };
 
     let nextReports = [...existingReports, nextReport];
 
-    const status = getOfficialScoreFromReports(game, nextReports);
+    const status = verificationOverride || getOfficialScoreFromReports(game, nextReports);
     if (status.verified && status.official) {
       const verifiedAt = new Date().toISOString();
       nextReports = nextReports.map((report) =>
@@ -6046,7 +6068,15 @@ export default function App() {
                   </div>
                   {selectedScoreApprovalContext.canApprove ? (
                     <label style={{ gridColumn: "1 / -1", display: "flex", gap: 10, alignItems: "center", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: 12, fontSize: 14 }}>
-                      <input type="checkbox" checked={scoreApproveExisting} onChange={(e) => setScoreApproveExisting(e.target.checked)} />
+                      <input
+                        type="checkbox"
+                        checked={scoreApproveExisting}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setScoreApproveExisting(checked);
+                          if (checked) setScoreForfeitTeam("");
+                        }}
+                      />
                       <span>
                         Approve the existing report from <strong>{selectedScoreApprovalContext.opponentReport?.reportingTeam}</strong>
                         {selectedScoreApprovalContext.approvalScores ? ` (${selectedScoreApprovalContext.approvalScores.teamScore}-${selectedScoreApprovalContext.approvalScores.opponentScore} from your team perspective)` : ""}
@@ -6056,26 +6086,75 @@ export default function App() {
                   <div>
                     <label style={styles.smallLabel}>Your score</label>
                     <input
-                      style={{ ...styles.input, minHeight: 56, fontSize: 22, textAlign: "center", fontWeight: 700, background: scoreApproveExisting ? "#f8fafc" : "white" }}
+                      style={{ ...styles.input, minHeight: 56, fontSize: 22, textAlign: "center", fontWeight: 700, background: scoreApproveExisting || scoreForfeitTeam ? "#f8fafc" : "white" }}
                       inputMode="numeric"
                       pattern="[0-9]*"
-                      value={scoreApproveExisting && selectedScoreApprovalContext.approvalScores ? String(selectedScoreApprovalContext.approvalScores.teamScore) : scoreForInput}
+                      value={
+                        scoreForfeitTeam
+                          ? (selectedScoreGame
+                              ? String(
+                                  scoreReporterTeam === selectedScoreGame.home
+                                    ? (scoreForfeitTeam === selectedScoreGame.home ? 0 : 15)
+                                    : (scoreForfeitTeam === selectedScoreGame.away ? 0 : 15)
+                                )
+                              : "")
+                          : scoreApproveExisting && selectedScoreApprovalContext.approvalScores
+                            ? String(selectedScoreApprovalContext.approvalScores.teamScore)
+                            : scoreForInput
+                      }
                       onChange={(e) => setScoreForInput(e.target.value.replace(/[^0-9]/g, ""))}
                       placeholder="0"
-                      disabled={selectedScoreSubmissionState.lockInputs || (scoreApproveExisting && selectedScoreApprovalContext.canApprove)}
+                      disabled={selectedScoreSubmissionState.lockInputs || Boolean(scoreForfeitTeam) || (scoreApproveExisting && selectedScoreApprovalContext.canApprove)}
                     />
                   </div>
                   <div>
                     <label style={styles.smallLabel}>Opponent score</label>
                     <input
-                      style={{ ...styles.input, minHeight: 56, fontSize: 22, textAlign: "center", fontWeight: 700, background: scoreApproveExisting ? "#f8fafc" : "white" }}
+                      style={{ ...styles.input, minHeight: 56, fontSize: 22, textAlign: "center", fontWeight: 700, background: scoreApproveExisting || scoreForfeitTeam ? "#f8fafc" : "white" }}
                       inputMode="numeric"
                       pattern="[0-9]*"
-                      value={scoreApproveExisting && selectedScoreApprovalContext.approvalScores ? String(selectedScoreApprovalContext.approvalScores.opponentScore) : scoreAgainstInput}
+                      value={
+                        scoreForfeitTeam
+                          ? (selectedScoreGame
+                              ? String(
+                                  scoreReporterTeam === selectedScoreGame.home
+                                    ? (scoreForfeitTeam === selectedScoreGame.home ? 15 : 0)
+                                    : (scoreForfeitTeam === selectedScoreGame.away ? 15 : 0)
+                                )
+                              : "")
+                          : scoreApproveExisting && selectedScoreApprovalContext.approvalScores
+                            ? String(selectedScoreApprovalContext.approvalScores.opponentScore)
+                            : scoreAgainstInput
+                      }
                       onChange={(e) => setScoreAgainstInput(e.target.value.replace(/[^0-9]/g, ""))}
                       placeholder="0"
-                      disabled={selectedScoreSubmissionState.lockInputs || (scoreApproveExisting && selectedScoreApprovalContext.canApprove)}
+                      disabled={selectedScoreSubmissionState.lockInputs || Boolean(scoreForfeitTeam) || (scoreApproveExisting && selectedScoreApprovalContext.canApprove)}
                     />
+                  </div>
+                  <div>
+                    <label style={styles.smallLabel}>Forfeit</label>
+                    <select
+                      style={{ ...styles.select, minHeight: 56, fontSize: 16 }}
+                      value={scoreForfeitTeam}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setScoreForfeitTeam(value);
+                        if (value) {
+                          setScoreApproveExisting(false);
+                          setScoreForInput("");
+                          setScoreAgainstInput("");
+                        }
+                      }}
+                      disabled={selectedScoreSubmissionState.lockInputs || !selectedScoreGame}
+                    >
+                      <option value="">No forfeit</option>
+                      {selectedScoreGame ? (
+                        <>
+                          <option value={selectedScoreGame.home}>{selectedScoreGame.home} forfeited</option>
+                          <option value={selectedScoreGame.away}>{selectedScoreGame.away} forfeited</option>
+                        </>
+                      ) : null}
+                    </select>
                   </div>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <button
@@ -6083,7 +6162,7 @@ export default function App() {
                       onClick={submitScoreReport}
                       disabled={selectedScoreSubmissionState.lockButton}
                     >
-                      {selectedScoreSubmissionState.buttonLabel}
+                      {scoreForfeitTeam && !selectedScoreSubmissionState.lockButton ? "Report forfeit" : selectedScoreSubmissionState.buttonLabel}
                     </button>
                   </div>
                 </div>
@@ -6096,6 +6175,7 @@ export default function App() {
                   <div style={{ fontSize: 13, color: "#475569" }}>
                     Current status: <strong style={{ color: "#0f172a" }}>{selectedScoreGameStatus.officialLabel}</strong> — {selectedScoreGameStatus.reportSummary}
                     {selectedScoreGameStatus.verified ? " Verified scores are locked and can no longer be edited by coaches." : ""}
+                    {!selectedScoreGameStatus.verified ? " A forfeit auto-verifies at 15-0 and does not need approval." : ""}
                   </div>
                 ) : null}
               </div>
