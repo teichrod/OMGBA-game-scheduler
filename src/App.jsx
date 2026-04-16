@@ -3931,6 +3931,19 @@ function getPublishedScheduleOutcomeParts(game, scoreReports) {
   };
 }
 
+function getMarginCategoryValue(pointDiff) {
+  const diff = Number(pointDiff || 0);
+  if (diff >= 30) return 4;
+  if (diff >= 20) return 3;
+  if (diff >= 10) return 2;
+  if (diff >= 1) return 1;
+  if (diff <= -30) return -4;
+  if (diff <= -20) return -3;
+  if (diff <= -10) return -2;
+  if (diff <= -1) return -1;
+  return 0;
+}
+
 function buildDivisionStandings(schedule, scoreReports) {
   const standingsByDivision = {};
   const divisionGames = {};
@@ -3951,11 +3964,11 @@ function buildDivisionStandings(schedule, scoreReports) {
           pointsAgainst: 0,
           pointDiff: 0,
           gamesPlayed: 0,
-          adjustedMarginTotal: 0,
+          marginCategoryTotal: 0,
           opponents: [],
           winPct: 0,
           sos: 0,
-          avgAdjustedMargin: 0,
+          avgMarginCategory: 0,
           performanceRating: 0,
         };
       }
@@ -3970,8 +3983,8 @@ function buildDivisionStandings(schedule, scoreReports) {
     const awayScore = scoreStatus.official.awayScore;
     const rawHomeMargin = homeScore - awayScore;
     const rawAwayMargin = awayScore - homeScore;
-    const homeAdjustedMargin = Math.max(-15, Math.min(15, rawHomeMargin));
-    const awayAdjustedMargin = Math.max(-15, Math.min(15, rawAwayMargin));
+    const homeMarginCategory = getMarginCategoryValue(rawHomeMargin);
+    const awayMarginCategory = getMarginCategoryValue(rawAwayMargin);
 
     homeRow.gamesPlayed += 1;
     awayRow.gamesPlayed += 1;
@@ -3981,8 +3994,8 @@ function buildDivisionStandings(schedule, scoreReports) {
     awayRow.pointsAgainst += homeScore;
     homeRow.pointDiff = homeRow.pointsFor - homeRow.pointsAgainst;
     awayRow.pointDiff = awayRow.pointsFor - awayRow.pointsAgainst;
-    homeRow.adjustedMarginTotal += homeAdjustedMargin;
-    awayRow.adjustedMarginTotal += awayAdjustedMargin;
+    homeRow.marginCategoryTotal += homeMarginCategory;
+    awayRow.marginCategoryTotal += awayMarginCategory;
     homeRow.opponents.push(game.away);
     awayRow.opponents.push(game.home);
     divisionGames[game.division].push({
@@ -4020,8 +4033,8 @@ function buildDivisionStandings(schedule, scoreReports) {
         row.sos = opponentWinPcts.length
           ? opponentWinPcts.reduce((sum, value) => sum + value, 0) / opponentWinPcts.length
           : 0;
-        row.avgAdjustedMargin = row.gamesPlayed > 0 ? row.adjustedMarginTotal / row.gamesPlayed : 0;
-        row.performanceRating = (row.winPct * 100) + (row.sos * 50) + (row.avgAdjustedMargin * 2);
+        row.avgMarginCategory = row.gamesPlayed > 0 ? row.marginCategoryTotal / row.gamesPlayed : 0;
+        row.performanceRating = (row.winPct * 100) + (row.sos * 50) + (row.avgMarginCategory * 10);
       }
 
       return [
@@ -5313,7 +5326,7 @@ export default function App() {
       PA: "Points Against",
       PD: "Point Differential",
       SOS: "Strength of Schedule (average opponent win percentage)",
-      PR: "Performance Rating (Win% × 100 + SOS × 50 + Avg adjusted margin × 2)",
+      PR: "Performance Rating (Win% × 100 + SOS × 50 + Avg margin category × 10)",
     };
     const tooltip = tooltipMap[label] || label;
     return (
@@ -5835,7 +5848,7 @@ export default function App() {
               </div>
             </div>
             <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>
-              SOS = average opponent win percentage. PR = Performance Rating = (Win% × 100) + (SOS × 50) + (Avg adjusted margin × 2), with each game's margin capped at 15.
+              SOS = average opponent win percentage. PR = Performance Rating = (Win% × 100) + (SOS × 50) + (Avg margin category × 10), where each game's margin category is 30+ = 4, 20-29 = 3, 10-19 = 2, 1-9 = 1 (and negatives mirror those values).
             </div>
             {!result ? (
               <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>
@@ -5896,7 +5909,7 @@ export default function App() {
                       <table style={styles.table}>
                         <thead>
                           <tr>
-                            <th style={styles.th}>Time</th>
+                            <th style={{ ...styles.th, textAlign: "center" }}>Time</th>
                             {adminScheduleCourts.map((court) => <th key={court.name} style={styles.th}>{court.name}</th>)}
                           </tr>
                         </thead>
@@ -6055,16 +6068,16 @@ export default function App() {
                   <table style={styles.table}>
                     <thead>
                       <tr>
-                        <th style={styles.th}>Division</th>
-                        <th style={styles.th}>Date</th>
-                        <th style={styles.th}>Time</th>
-                        <th style={styles.th}>Court</th>
-                        <th style={styles.th}>Home</th>
-                        <th style={styles.th}>Away</th>
-                        <th style={styles.th}>Score</th>
-                        {!isPublicMode ? <th style={styles.th}>Score admin</th> : null}
-                        {!isPublicMode ? <th style={styles.th}>Lock</th> : null}
-                        {!isPublicMode ? <th style={styles.th}>Reminder</th> : null}
+                        <th style={{ ...styles.th, textAlign: "center" }}>Division</th>
+                        <th style={{ ...styles.th, textAlign: "center" }}>Date</th>
+                        <th style={{ ...styles.th, textAlign: "center" }}>Time</th>
+                        <th style={{ ...styles.th, textAlign: "center" }}>Court</th>
+                        <th style={{ ...styles.th, textAlign: "center" }}>Home</th>
+                        <th style={{ ...styles.th, textAlign: "center" }}>Away</th>
+                        <th style={{ ...styles.th, textAlign: "center" }}>Score</th>
+                        {!isPublicMode ? <th style={{ ...styles.th, textAlign: "center" }}>Score admin</th> : null}
+                        {!isPublicMode ? <th style={{ ...styles.th, textAlign: "center" }}>Lock</th> : null}
+                        {!isPublicMode ? <th style={{ ...styles.th, textAlign: "center" }}>Reminder</th> : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -6072,25 +6085,25 @@ export default function App() {
                         const outcomeParts = getPublishedScheduleOutcomeParts(game, scoreReports);
                         return (
                         <tr key={`${game.date}-${game.time}-${game.court}-${idx}`}>
-                          <td style={styles.td}>{game.division}</td>
-                          <td style={styles.td}>{game.date}</td>
-                          <td style={styles.td}>{formatTimeDisplay(game.time)}</td>
-                          <td style={styles.td}>{game.court}</td>
-                          <td style={{ ...styles.td, color: outcomeParts.verified ? outcomeParts.homeColor : styles.td.color }}>{game.home}</td>
-                          <td style={{ ...styles.td, color: outcomeParts.verified ? outcomeParts.awayColor : styles.td.color }}>{game.away}</td>
-                          <td style={styles.td}>
+                          <td style={{ ...styles.td, textAlign: "center" }}>{game.division}</td>
+                          <td style={{ ...styles.td, textAlign: "center" }}>{game.date}</td>
+                          <td style={{ ...styles.td, textAlign: "center" }}>{formatTimeDisplay(game.time)}</td>
+                          <td style={{ ...styles.td, textAlign: "center" }}>{game.court}</td>
+                          <td style={{ ...styles.td, textAlign: "center", color: outcomeParts.verified ? outcomeParts.homeColor : "#0f172a" }}>{game.home}</td>
+                          <td style={{ ...styles.td, textAlign: "center", color: outcomeParts.verified ? outcomeParts.awayColor : "#0f172a" }}>{game.away}</td>
+                          <td style={{ ...styles.td, textAlign: "center" }}>
                             {outcomeParts.verified ? (
                               <span>
-                                <span style={{ color: outcomeParts.awayColor, fontWeight: 700 }}>{outcomeParts.awayScoreText}</span>
-                                <span>{" - "}</span>
                                 <span style={{ color: outcomeParts.homeColor, fontWeight: 700 }}>{outcomeParts.homeScoreText}</span>
+                                <span>{" - "}</span>
+                                <span style={{ color: outcomeParts.awayColor, fontWeight: 700 }}>{outcomeParts.awayScoreText}</span>
                               </span>
                             ) : (
                               getGameScoreDisplay(game, scoreReports)
                             )}
                           </td>
                           {!isPublicMode ? (
-                            <td style={styles.td}>
+                            <td style={{ ...styles.td, textAlign: "center" }}>
                               {(() => {
                                 const status = getOfficialScoreFromReports(game, scoreReports);
                                 return (
@@ -6105,7 +6118,7 @@ export default function App() {
                             </td>
                           ) : null}
                           {!isPublicMode ? (
-                            <td style={styles.td}>
+                            <td style={{ ...styles.td, textAlign: "center" }}>
                               <button
                                 style={game.locked ? styles.successButton : styles.button}
                                 onClick={() => toggleGameLocked(game)}
@@ -6115,7 +6128,7 @@ export default function App() {
                             </td>
                           ) : null}
                           {!isPublicMode ? (
-                            <td style={styles.td}>
+                            <td style={{ ...styles.td, textAlign: "center" }}>
                               {(() => {
                                 const status = getOfficialScoreFromReports(game, scoreReports);
                                 return status?.status === "awaiting_opponent" && (status.homeReport || status.awayReport) ? (
@@ -6402,12 +6415,12 @@ export default function App() {
                     <thead>
                       <tr>
                         <th style={styles.th}>Team</th>
-                        <th style={styles.th}>Division</th>
+                        <th style={{ ...styles.th, textAlign: "center" }}>Division</th>
                         <th style={styles.th}>Games</th>
                         <th style={styles.th}>Target</th>
                         <th style={styles.th}>Early</th>
-                        <th style={styles.th}>Home</th>
-                        <th style={styles.th}>Away</th>
+                        <th style={{ ...styles.th, textAlign: "center" }}>Home</th>
+                        <th style={{ ...styles.th, textAlign: "center" }}>Away</th>
                         <th style={styles.th}>DH</th>
                         <th style={styles.th}>Morning</th>
                         <th style={styles.th}>Afternoon</th>
@@ -6452,7 +6465,7 @@ export default function App() {
                 <table style={styles.table}>
                   <thead>
                     <tr>
-                      <th style={styles.th}>Division</th>
+                      <th style={{ ...styles.th, textAlign: "center" }}>Division</th>
                       <th style={styles.th}>Teams</th>
                       <th style={styles.th}>Target Games</th>
                       <th style={styles.th}>Max Unique Opponents</th>
@@ -6498,7 +6511,7 @@ export default function App() {
                           <table style={styles.table}>
                             <thead>
                               <tr>
-                                <th style={styles.th}>Division</th>
+                                <th style={{ ...styles.th, textAlign: "center" }}>Division</th>
                                 <th style={styles.th}>Pair</th>
                                 <th style={styles.th}>Meetings</th>
                                 <th style={styles.th}>Allowed</th>
