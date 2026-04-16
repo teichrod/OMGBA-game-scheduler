@@ -5268,11 +5268,24 @@ export default function App() {
   function renderStandingsHeader(label, key, align = "center") {
     const isActive = standingsSort.key === key;
     const arrow = isActive ? (standingsSort.direction === "desc" ? " ▼" : " ▲") : "";
+    const tooltipMap = {
+      Team: "Team name",
+      W: "Wins",
+      L: "Losses",
+      T: "Ties",
+      "Win %": "Win Percentage",
+      PF: "Points For",
+      PA: "Points Against",
+      PD: "Point Differential",
+      SOS: "Strength of Schedule (average opponent win percentage)",
+      PR: "Performance Rating (Win% × 100 + SOS × 50 + Avg adjusted margin × 2)",
+    };
+    const tooltip = tooltipMap[label] || label;
     return (
       <th
         style={{ ...styles.th, textAlign: align, cursor: "pointer", userSelect: "none" }}
         onClick={() => handleStandingsSort(key)}
-        title={`Sort by ${label}`}
+        title={`${tooltip} — click to sort`}
       >
         {label}{arrow}
       </th>
@@ -6117,14 +6130,16 @@ export default function App() {
                           <tbody>
                             {sortedRows.map((row) => (
                               <tr key={row.team}>
-                                <th style={{ ...styles.th, textAlign: "center" }}>W</th>
-				<th style={{ ...styles.th, textAlign: "center" }}>L</th>
-				<th style={{ ...styles.th, textAlign: "center" }}>Win %</th>
-				<th style={{ ...styles.th, textAlign: "center" }}>PF</th>
-				<th style={{ ...styles.th, textAlign: "center" }}>PA</th>
-				<th style={{ ...styles.th, textAlign: "center" }}>PD</th>
-				<th style={{ ...styles.th, textAlign: "center" }}>SOS</th>
-				<th style={{ ...styles.th, textAlign: "center" }}>PR</th>
+                                <td style={{ ...styles.td, textAlign: "left" }}>{row.team}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.wins}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.losses}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.ties}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{(row.winPct || 0).toFixed(3)}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsFor}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsAgainst}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.pointDiff}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{(row.sos || 0).toFixed(3)}</td>
+                                <td style={{ ...styles.td, textAlign: "center", fontWeight: 700 }}>{(row.performanceRating || 0).toFixed(1)}</td>
                               </tr>
                             ))}
                             {!rows.length ? (
