@@ -1,5 +1,9 @@
 import crypto from "crypto";
 
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function signToken(payload) {
   const secret = process.env.SCORE_APPROVAL_SECRET;
   if (!secret) {
@@ -32,12 +36,17 @@ export default async function handler(req, res) {
     if (!senderEmail) throw new Error("Missing SCORE_EMAIL_FROM");
 
     const body = req.body || {};
+    const coachDirectory = body.coachDirectory && typeof body.coachDirectory === "object" ? body.coachDirectory : {};
+    const homeCoachEmail = normalizeEmail(body.homeCoachEmail || coachDirectory?.[body.home]);
+    const awayCoachEmail = normalizeEmail(body.awayCoachEmail || coachDirectory?.[body.away]);
+    const reporterEmail = normalizeEmail(body.reporterEmail);
+    const reportingTeam = String(body.reportingTeam || "").trim();
 
     const allRecipients = [
-      { email: String(body.homeCoachEmail || "").trim().toLowerCase(), team: body.home },
-      { email: String(body.awayCoachEmail || "").trim().toLowerCase(), team: body.away },
+      { email: homeCoachEmail, team: body.home },
+      { email: awayCoachEmail, team: body.away },
       ...((Array.isArray(body.notifyEmails) ? body.notifyEmails : [])
-        .map((email) => ({ email: String(email || "").trim().toLowerCase(), team: null }))),
+        .map((email) => ({ email: normalizeEmail(email), team: null }))),
     ].filter((entry) => entry.email);
 
     const uniqueRecipients = [];
@@ -48,8 +57,9 @@ export default async function handler(req, res) {
       uniqueRecipients.push(entry);
     }
 
-    const reporterEmail = String(body.reporterEmail || "").trim().toLowerCase();
-    const reportingTeam = String(body.reportingTeam || "").trim();
+    if (!uniqueRecipients.length) {
+      return res.status(400).json({ error: "No coach emails were available for this game." });
+    }
 
     const emailJobs = uniqueRecipients.map(async (recipient) => {
       const recipientEmail = recipient.email;
@@ -65,9 +75,7 @@ export default async function handler(req, res) {
         recipientTeam !== reportingTeam &&
         !body.verified;
 
-      let approveSection = `
-        <p>This email is for score notification only.</p>
-      `;
+      let approveSection = `<p>This email is for score notification only.</p>`;
 
       if (canApprove) {
         const tokenPayload = {
@@ -85,6 +93,7 @@ export default async function handler(req, res) {
           submittedAt: body.submittedAt,
           recipientEmail,
           recipientTeam,
+          reportId: body.reportId || "",
           issuedAt: new Date().toISOString(),
         };
 

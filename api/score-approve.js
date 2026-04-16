@@ -174,6 +174,10 @@ function buildPublicRedirectUrl(status, data, extraMessage = "") {
   return url.toString();
 }
 
+function getExpectedCoachEmail(published, teamName) {
+  return normalizeEmail(published?.coachDirectory?.[teamName] || "");
+}
+
 export default async function handler(req, res) {
   let data = null;
 
@@ -202,6 +206,7 @@ export default async function handler(req, res) {
 
     const recipientEmail = normalizeEmail(data.recipientEmail);
     const reporterEmail = normalizeEmail(data.reporterEmail);
+    const expectedRecipientEmail = getExpectedCoachEmail(published, data.recipientTeam);
 
     if (!recipientEmail) {
       return res.redirect(buildPublicRedirectUrl("error", data, "Approval token is missing the recipient email."));
@@ -217,6 +222,10 @@ export default async function handler(req, res) {
 
     if (data.recipientTeam === data.reportingTeam) {
       return res.redirect(buildPublicRedirectUrl("error", data, "The reporting coach cannot approve their own score."));
+    }
+
+    if (expectedRecipientEmail && expectedRecipientEmail !== recipientEmail) {
+      return res.redirect(buildPublicRedirectUrl("error", data, "This approval link no longer matches the current coach email on file."));
     }
 
     const duplicateReport = existingReports.find(
@@ -274,6 +283,7 @@ export default async function handler(req, res) {
       meta: published.meta || null,
       scoreReports: nextReports,
       config: published.config || null,
+      coachDirectory: published.coachDirectory || null,
     });
 
     if (status.verified && status.official) {

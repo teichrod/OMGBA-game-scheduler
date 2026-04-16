@@ -84,12 +84,10 @@ function formatTeamNumber(num, division) {
   const n = Number(num || 1);
   const safeNum = Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
 
-  // Boys always use 2-digit team numbers: 01, 02, 03...
   if (!String(division || "").includes("Girls")) {
     return String(safeNum).padStart(2, "0");
   }
 
-  // Girls use natural numbers: 1, 2, 3 ... 10, 11, 12
   return String(safeNum);
 }
 
@@ -105,9 +103,9 @@ function buildFormattedTeamName(division, entry, fallbackIndex, totalTeamsInDivi
           : String(fallbackIndex)
       )
     : String(fallbackIndex);
-  
-  const coach = sanitizeCoachLastName(entry?.coachLastName);
   const teamNumber = formatTeamNumber(rawTeamNumber, division);
+  const coach = sanitizeCoachLastName(entry?.coachLastName);
+
   return coach
     ? `${assoc}${gender}${grade}${teamNumber}-${coach}`
     : `${assoc}${gender}${grade}${teamNumber}`;
@@ -590,6 +588,66 @@ function getTeamDetailByFormattedName(config, teamName, divisionHint = "") {
 function getCoachEmailForTeam(config, teamName, divisionHint = "") {
   const detail = getTeamDetailByFormattedName(config, teamName, divisionHint);
   return String(detail?.entry?.coachEmail || "").trim().toLowerCase();
+}
+
+function buildCoachDirectoryFromConfig(config) {
+  const directory = {};
+  for (const division of DIVISIONS) {
+    const count = Number(config?.divisions?.[division] || 0);
+    const details = syncDivisionTeamDetails(config?.divisionTeamDetails?.[division], count);
+    for (let i = 0; i < count; i += 1) {
+      const teamName = buildFormattedTeamName(division, details[i], i + 1, count);
+      const email = String(details[i]?.coachEmail || "").trim().toLowerCase();
+      if (teamName && email) {
+        directory[teamName] = email;
+      }
+    }
+  }
+  return directory;
+}
+
+function applyCoachDirectoryToConfig(config, coachDirectory) {
+  const normalizedConfig = normalizeConfig(config);
+  const directory = coachDirectory && typeof coachDirectory === "object" ? coachDirectory : {};
+  return {
+    ...normalizedConfig,
+    divisionTeamDetails: Object.fromEntries(
+      DIVISIONS.map((division) => {
+        const count = Number(normalizedConfig?.divisions?.[division] || 0);
+        const details = syncDivisionTeamDetails(normalizedConfig?.divisionTeamDetails?.[division], count).map((entry, idx) => {
+          const teamName = buildFormattedTeamName(division, entry, idx + 1, count);
+          const nextEmail = String(directory?.[teamName] || entry?.coachEmail || "").trim().toLowerCase();
+          return {
+            ...entry,
+            coachEmail: nextEmail,
+          };
+        });
+        return [division, details];
+      })
+    ),
+  };
+}
+
+function getCoachEmailForTeamFromDirectory(coachDirectory, config, teamName, divisionHint = "") {
+  const direct = String(coachDirectory?.[teamName] || "").trim().toLowerCase();
+  if (direct) return direct;
+
+  const detail = getTeamDetailByFormattedName(config, teamName, divisionHint);
+  const formattedName = detail?.formattedName || "";
+  const byFormattedName = String(coachDirectory?.[formattedName] || "").trim().toLowerCase();
+  if (byFormattedName) return byFormattedName;
+
+  return getCoachEmailForTeam(config, teamName, divisionHint);
+}
+
+function getPublishedCoachDirectory(published, fallbackConfig) {
+  const fromPublished = published?.coachDirectory && typeof published.coachDirectory === "object"
+    ? published.coachDirectory
+    : null;
+  if (fromPublished && Object.keys(fromPublished).length) {
+    return fromPublished;
+  }
+  return buildCoachDirectoryFromConfig(normalizeConfig(published?.config || fallbackConfig));
 }
 
 function getConflictNamesForTeam(config, teamName) {
@@ -4418,6 +4476,8 @@ export default function App() {
 
   async function publishSchedule() {
     if (!result) return;
+    const normalizedConfig = normalizeConfig(config);
+    const coachDirectory = buildCoachDirectoryFromConfig(normalizedConfig);
     const scheduleGameIds = new Set(result.schedule.map((game) => getGameScoreKey(game)));
     const retainedReports = (Array.isArray(scoreReports) ? scoreReports : []).filter((report) => scheduleGameIds.has(report.gameId));
     const meta = {
@@ -4429,7 +4489,8 @@ export default function App() {
       result,
       meta,
       scoreReports: retainedReports,
-      config: normalizeConfig(config),
+      config: normalizedConfig,
+      coachDirectory,
     });
     if (ok) {
       setPublishedMeta(meta);
@@ -4440,14 +4501,43 @@ export default function App() {
     }
   }
 
+  async function updatePublishedCoachEmails() {
+    const published = await loadPublishedPayload();
+    if (!published?.result) {
+      setPublishNotice("Publish the schedule once before updating coach emails only.");
+      return;
+    }
+
+    const normalizedConfig = normalizeConfig(config);
+    const coachDirectory = buildCoachDirectoryFromConfig(normalizedConfig);
+    const mergedPublishedConfig = applyCoachDirectoryToConfig(
+      published?.config || normalizedConfig,
+      coachDirectory
+    );
+
+    const ok = await savePublishedPayload({
+      result: published.result,
+      meta: published.meta || null,
+      scoreReports: Array.isArray(published.scoreReports) ? published.scoreReports : [],
+      config: mergedPublishedConfig,
+      coachDirectory,
+    });
+
+    if (ok) {
+      setPublishNotice("Published coach emails updated.");
+    } else {
+      setPublishNotice("Could not update published coach emails.");
+    }
+  }
+
   async function loadPublishedSchedule() {
     const published = await loadPublishedPayload();
     if (published?.result) {
       setResult(published.result);
       setPublishedMeta(published.meta || null);
       setScoreReports(Array.isArray(published.scoreReports) ? published.scoreReports : []);
-      if (published.config) {
-        setConfig(normalizeConfig(published.config));
+      if (published.config || published.coachDirectory) {
+        setConfig(applyCoachDirectoryToConfig(published.config || config, getPublishedCoachDirectory(published, config)));
       }
       setActiveTab("schedule");
       setPublishNotice("Published schedule loaded.");
@@ -4478,8 +4568,9 @@ export default function App() {
   try {
     const published = await loadPublishedPayload();
     const lookupConfig = normalizeConfig(published?.config || config);
-    const homeCoachEmail = getCoachEmailForTeam(lookupConfig, game.home, game.division);
-    const awayCoachEmail = getCoachEmailForTeam(lookupConfig, game.away, game.division);
+    const coachDirectory = getPublishedCoachDirectory(published, lookupConfig);
+    const homeCoachEmail = getCoachEmailForTeamFromDirectory(coachDirectory, lookupConfig, game.home, game.division);
+    const awayCoachEmail = getCoachEmailForTeamFromDirectory(coachDirectory, lookupConfig, game.away, game.division);
 
     const response = await fetch("/api/score-confirmation", {
       method: "POST",
@@ -4494,6 +4585,7 @@ export default function App() {
         away: game.away,
         homeCoachEmail,
         awayCoachEmail,
+        coachDirectory,
         reporterEmail: report.reporterEmail,
         reportingTeam: report.reportingTeam,
         teamScore: report.teamScore,
@@ -4559,8 +4651,10 @@ export default function App() {
 
     const published = await loadPublishedPayload();
     const lookupConfig = normalizeConfig(published?.config || config);
+    const coachDirectory = getPublishedCoachDirectory(published, lookupConfig);
 
-    const expectedReporterEmail = getCoachEmailForTeam(
+    const expectedReporterEmail = getCoachEmailForTeamFromDirectory(
+      coachDirectory,
       lookupConfig,
       scoreReporterTeam,
       scoreReporterDivision
@@ -4667,6 +4761,7 @@ export default function App() {
       meta: published?.meta || publishedMeta || null,
       scoreReports: nextReports,
       config: lookupConfig,
+      coachDirectory,
     });
 
     if (ok) {
@@ -4717,6 +4812,7 @@ export default function App() {
                 </button>
                 {lockedGameCount ? <span style={styles.badge}>{lockedGameCount} locked game{lockedGameCount === 1 ? "" : "s"}</span> : null}
                 <button style={styles.successButton} onClick={publishSchedule} disabled={!result}>Publish Schedule</button>
+                <button style={styles.button} onClick={updatePublishedCoachEmails}>Update Coach Emails Only</button>
                 <button style={styles.button} onClick={loadPublishedSchedule}>Load Published</button>
                 <button style={styles.dangerButton} onClick={clearPublishedSchedule}>Clear Published</button>
               </>
