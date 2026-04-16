@@ -3898,9 +3898,11 @@ function getGameScoreDisplay(game, scoreReports) {
 
 function buildDivisionStandings(schedule, scoreReports) {
   const standingsByDivision = {};
+  const divisionGames = {};
 
   for (const game of Array.isArray(schedule) ? schedule : []) {
     if (!standingsByDivision[game.division]) standingsByDivision[game.division] = {};
+    if (!divisionGames[game.division]) divisionGames[game.division] = [];
     const divisionMap = standingsByDivision[game.division];
 
     for (const team of [game.home, game.away]) {
@@ -3914,6 +3916,12 @@ function buildDivisionStandings(schedule, scoreReports) {
           pointsAgainst: 0,
           pointDiff: 0,
           gamesPlayed: 0,
+          adjustedMarginTotal: 0,
+          opponents: [],
+          winPct: 0,
+          sos: 0,
+          avgAdjustedMargin: 0,
+          performanceRating: 0,
         };
       }
     }
@@ -3925,6 +3933,10 @@ function buildDivisionStandings(schedule, scoreReports) {
     const awayRow = divisionMap[game.away];
     const homeScore = scoreStatus.official.homeScore;
     const awayScore = scoreStatus.official.awayScore;
+    const rawHomeMargin = homeScore - awayScore;
+    const rawAwayMargin = awayScore - homeScore;
+    const homeAdjustedMargin = Math.max(-15, Math.min(15, rawHomeMargin));
+    const awayAdjustedMargin = Math.max(-15, Math.min(15, rawAwayMargin));
 
     homeRow.gamesPlayed += 1;
     awayRow.gamesPlayed += 1;
@@ -3934,6 +3946,16 @@ function buildDivisionStandings(schedule, scoreReports) {
     awayRow.pointsAgainst += homeScore;
     homeRow.pointDiff = homeRow.pointsFor - homeRow.pointsAgainst;
     awayRow.pointDiff = awayRow.pointsFor - awayRow.pointsAgainst;
+    homeRow.adjustedMarginTotal += homeAdjustedMargin;
+    awayRow.adjustedMarginTotal += awayAdjustedMargin;
+    homeRow.opponents.push(game.away);
+    awayRow.opponents.push(game.home);
+    divisionGames[game.division].push({
+      home: game.home,
+      away: game.away,
+      homeScore,
+      awayScore,
+    });
 
     if (homeScore > awayScore) {
       homeRow.wins += 1;
@@ -3948,17 +3970,38 @@ function buildDivisionStandings(schedule, scoreReports) {
   }
 
   return Object.fromEntries(
-    Object.entries(standingsByDivision).map(([division, rows]) => [
-      division,
-      Object.values(rows).sort((a, b) => {
-        if (b.wins !== a.wins) return b.wins - a.wins;
-        if (b.ties !== a.ties) return b.ties - a.ties;
-        if (a.losses !== b.losses) return a.losses - b.losses;
-        if (b.pointDiff !== a.pointDiff) return b.pointDiff - a.pointDiff;
-        if (b.pointsFor !== a.pointsFor) return b.pointsFor - a.pointsFor;
-        return a.team.localeCompare(b.team, undefined, { numeric: true });
-      }),
-    ])
+    Object.entries(standingsByDivision).map(([division, rows]) => {
+      const rowValues = Object.values(rows);
+      const rowMap = Object.fromEntries(rowValues.map((row) => [row.team, row]));
+
+      for (const row of rowValues) {
+        const totalResults = row.wins + row.losses + row.ties;
+        row.winPct = totalResults > 0 ? (row.wins + row.ties * 0.5) / totalResults : 0;
+      }
+
+      for (const row of rowValues) {
+        const opponentWinPcts = (row.opponents || [])
+          .map((teamName) => rowMap[teamName]?.winPct || 0);
+        row.sos = opponentWinPcts.length
+          ? opponentWinPcts.reduce((sum, value) => sum + value, 0) / opponentWinPcts.length
+          : 0;
+        row.avgAdjustedMargin = row.gamesPlayed > 0 ? row.adjustedMarginTotal / row.gamesPlayed : 0;
+        row.performanceRating = (row.winPct * 100) + (row.sos * 50) + (row.avgAdjustedMargin * 2);
+      }
+
+      return [
+        division,
+        rowValues.sort((a, b) => {
+          if (b.wins !== a.wins) return b.wins - a.wins;
+          if (b.ties !== a.ties) return b.ties - a.ties;
+          if (a.losses !== b.losses) return a.losses - b.losses;
+          if (b.performanceRating !== a.performanceRating) return b.performanceRating - a.performanceRating;
+          if (b.pointDiff !== a.pointDiff) return b.pointDiff - a.pointDiff;
+          if (b.pointsFor !== a.pointsFor) return b.pointsFor - a.pointsFor;
+          return a.team.localeCompare(b.team, undefined, { numeric: true });
+        }),
+      ];
+    })
   );
 }
 
@@ -5658,6 +5701,9 @@ export default function App() {
                 ) : null}
               </div>
             </div>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>
+              SOS = average opponent win percentage. PR = Performance Rating = (Win% × 100) + (SOS × 50) + (Avg adjusted margin × 2), with each game's margin capped at 15.
+            </div>
             {!result ? (
               <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>
                 {isPublicMode ? "No published schedule found yet." : "Generate a schedule to see schedule views here."}
@@ -5971,28 +6017,32 @@ export default function App() {
                           <thead>
                             <tr>
                               <th style={styles.th}>Team</th>
-                              <th style={styles.th}>W</th>
-                              <th style={styles.th}>L</th>
-                              <th style={styles.th}>T</th>
-                              <th style={styles.th}>PF</th>
-                              <th style={styles.th}>PA</th>
-                              <th style={styles.th}>PD</th>
+                              <th style={{ ...styles.th, textAlign: "center" }}>W</th>
+                              <th style={{ ...styles.th, textAlign: "center" }}>L</th>
+                              <th style={{ ...styles.th, textAlign: "center" }}>T</th>
+                              <th style={{ ...styles.th, textAlign: "center" }}>PF</th>
+                              <th style={{ ...styles.th, textAlign: "center" }}>PA</th>
+                              <th style={{ ...styles.th, textAlign: "center" }}>PD</th>
+                              <th style={{ ...styles.th, textAlign: "center" }}>SOS</th>
+                              <th style={{ ...styles.th, textAlign: "center" }}>PR</th>
                             </tr>
                           </thead>
                           <tbody>
                             {rows.map((row) => (
                               <tr key={row.team}>
                                 <td style={{ ...styles.td, textAlign: "left" }}>{row.team}</td>
-                                <td style={styles.td}>{row.wins}</td>
-                                <td style={styles.td}>{row.losses}</td>
-                                <td style={styles.td}>{row.ties}</td>
-                                <td style={styles.td}>{row.pointsFor}</td>
-                                <td style={styles.td}>{row.pointsAgainst}</td>
-                                <td style={styles.td}>{row.pointDiff}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.wins}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.losses}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.ties}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsFor}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsAgainst}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{row.pointDiff}</td>
+                                <td style={{ ...styles.td, textAlign: "center" }}>{(row.sos || 0).toFixed(3)}</td>
+                                <td style={{ ...styles.td, textAlign: "center", fontWeight: 700 }}>{(row.performanceRating || 0).toFixed(1)}</td>
                               </tr>
                             ))}
                             {!rows.length ? (
-                              <tr><td style={styles.td} colSpan={7}>No verified scores yet.</td></tr>
+                              <tr><td style={styles.td} colSpan={9}>No verified scores yet.</td></tr>
                             ) : null}
                           </tbody>
                         </table>
