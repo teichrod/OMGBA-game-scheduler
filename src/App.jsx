@@ -3997,6 +3997,7 @@ export default function App() {
   const [savedSetupName, setSavedSetupName] = useState("");
   const [savedSetups, setSavedSetups] = useState([]);
   const [selectedSavedSetup, setSelectedSavedSetup] = useState("");
+  const [showCoreRules, setShowCoreRules] = useState(true);
   const [dateDebugExpanded, setDateDebugExpanded] = useState(true);
   const [scoreReports, setScoreReports] = useState([]);
   const [scoreNotice, setScoreNotice] = useState("");
@@ -5206,72 +5207,6 @@ export default function App() {
           <div style={styles.grid2}>
             <div style={{ display: "grid", gap: 24, alignContent: "start", alignSelf: "start" }}>
               <Card>
-                <SectionTitle icon={Settings}>Core Rules</SectionTitle>
-                <div style={{ display: "grid", gap: 16 }}>
-                  <div>
-                    <label style={styles.smallLabel}>Season year</label>
-                    <select style={styles.select} value={String(config.seasonYear)} onChange={(e) => changeSeasonYear(e.target.value)}>
-                      {SEASON_YEAR_OPTIONS.map((year) => (
-                        <option key={year} value={String(year)}>
-                          {year}-{String(year + 1).slice(-2)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={styles.smallLabel}>5th Boys doubleheader Saturday</label>
-                    <select
-                      style={styles.select}
-                      value={config.fifthBoysDoubleheaderDate || "none"}
-                      onChange={(e) =>
-                        setConfig((prev) => ({
-                          ...prev,
-                          fifthBoysDoubleheaderDate: e.target.value === "none" ? "" : e.target.value,
-                        }))
-                      }
-                    >
-                      <option value="none">None</option>
-                      {decemberSaturdayOptions.map((entry) => (
-                        <option key={entry.date} value={entry.date}>{entry.date}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={styles.smallLabel}>Max 8:00 games per team</label>
-                    <select
-                      style={styles.select}
-                      value={String(config.maxEarlyGames)}
-                      onChange={(e) => setConfig((prev) => ({ ...prev, maxEarlyGames: Number(e.target.value) }))}
-                    >
-                      {MAX_EARLY_OPTIONS.map((value) => (
-                        <option key={value} value={value}>{value}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={styles.smallLabel}>Minimum games per week (excluding 5th Boys DH date)</label>
-                    <select
-                      style={styles.select}
-                      value={String(config.minGamesPerWeek || 0)}
-                      onChange={(e) => setConfig((prev) => ({ ...prev, minGamesPerWeek: Number(e.target.value) }))}
-                    >
-                      {MIN_GAMES_PER_WEEK_OPTIONS.map((value) => (
-                        <option key={value} value={value}>{value}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <label style={{ display: "flex", gap: 10, alignItems: "center", border: "1px solid #e2e8f0", padding: 12, borderRadius: 12 }}>
-                    <input
-                      type="checkbox"
-                      checked={config.globalAllowDoubleheaders}
-                      onChange={(e) => setConfig((prev) => ({ ...prev, globalAllowDoubleheaders: e.target.checked }))}
-                    />
-                    <span style={{ fontWeight: 600, fontSize: 14 }}>Allow doubleheaders for all divisions</span>
-                  </label>
-                </div>
-              </Card>
-
-              <Card>
                 <SectionTitle>Save / Load Setup</SectionTitle>
                 <div style={{ display: "grid", gap: 12 }}>
                   <div>
@@ -5312,6 +5247,81 @@ export default function App() {
                     Saves your admin configuration in this browser: season year, Saturdays, courts, start times, division team counts, game counts, rule settings, coaching conflicts.
                   </div>
                 </div>
+              </Card>
+
+              <Card>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                  <SectionTitle icon={Settings}>Core Rules</SectionTitle>
+                  <button style={styles.button} onClick={() => setShowCoreRules((prev) => !prev)}>
+                    {showCoreRules ? "Hide" : "Show"}
+                  </button>
+                </div>
+                {showCoreRules ? (
+                  <div style={{ display: "grid", gap: 16 }}>
+                    <div>
+                      <label style={styles.smallLabel}>Season year</label>
+                      <select style={styles.select} value={String(config.seasonYear)} onChange={(e) => changeSeasonYear(e.target.value)}>
+                        {SEASON_YEAR_OPTIONS.map((year) => (
+                          <option key={year} value={String(year)}>
+                            {year}-{String(year + 1).slice(-2)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={styles.smallLabel}>5th Boys doubleheader Saturday</label>
+                      <select
+                        style={styles.select}
+                        value={config.fifthBoysDoubleheaderDate || "none"}
+                        onChange={(e) =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            fifthBoysDoubleheaderDate: e.target.value === "none" ? "" : e.target.value,
+                          }))
+                        }
+                      >
+                        <option value="none">None</option>
+                        {decemberSaturdayOptions.map((entry) => (
+                          <option key={entry.date} value={entry.date}>{entry.date}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={styles.smallLabel}>Max 8:00 games per team</label>
+                      <select
+                        style={styles.select}
+                        value={String(config.maxEarlyGames)}
+                        onChange={(e) => setConfig((prev) => ({ ...prev, maxEarlyGames: Number(e.target.value) }))}
+                      >
+                        {MAX_EARLY_OPTIONS.map((value) => (
+                          <option key={value} value={value}>{value}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={styles.smallLabel}>Minimum games per week (excluding 5th Boys DH date)</label>
+                      <select
+                        style={styles.select}
+                        value={String(config.minGamesPerWeek || 0)}
+                        onChange={(e) => setConfig((prev) => ({ ...prev, minGamesPerWeek: Number(e.target.value) }))}
+                      >
+                        {MIN_GAMES_PER_WEEK_OPTIONS.map((value) => (
+                          <option key={value} value={value}>{value}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <label style={{ display: "flex", gap: 10, alignItems: "center", border: "1px solid #e2e8f0", padding: 12, borderRadius: 12 }}>
+                      <input
+                        type="checkbox"
+                        checked={config.globalAllowDoubleheaders}
+                        onChange={(e) => setConfig((prev) => ({ ...prev, globalAllowDoubleheaders: e.target.checked }))}
+                      />
+                      <span style={{ fontWeight: 600, fontSize: 14 }}>Allow doubleheaders for all divisions</span>
+                    </label>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13, color: "#64748b" }}>Core Rules are hidden.</div>
+                )}
               </Card>
 
               <Card>
