@@ -590,20 +590,125 @@ function getCoachEmailForTeam(config, teamName, divisionHint = "") {
   return String(detail?.entry?.coachEmail || "").trim().toLowerCase();
 }
 
-function buildCoachDirectoryFromConfig(config) {
+function normalizeCoachInfoEntry(value) {
+  if (value && typeof value === "object") {
+    return {
+      coachEmail: String(value.coachEmail || value.email || "").trim().toLowerCase(),
+      coachLastName: sanitizeCoachLastName(value.coachLastName || value.lastName || ""),
+    };
+  }
+  return {
+    coachEmail: String(value || "").trim().toLowerCase(),
+    coachLastName: "",
+  };
+}
+
+function buildCoachDirectoryFromConfig(sourceConfig, keyConfig = sourceConfig) {
+  const sourceNormalized = normalizeConfig(sourceConfig);
+  const keyNormalized = normalizeConfig(keyConfig || sourceConfig);
   const directory = {};
   for (const division of DIVISIONS) {
-    const count = Number(config?.divisions?.[division] || 0);
-    const details = syncDivisionTeamDetails(config?.divisionTeamDetails?.[division], count);
+    const sourceCount = Number(sourceNormalized?.divisions?.[division] || 0);
+    const keyCount = Number(keyNormalized?.divisions?.[division] || 0);
+    const count = Math.min(sourceCount, keyCount);
+    const sourceDetails = syncDivisionTeamDetails(sourceNormalized?.divisionTeamDetails?.[division], sourceCount);
+    const keyDetails = syncDivisionTeamDetails(keyNormalized?.divisionTeamDetails?.[division], keyCount);
     for (let i = 0; i < count; i += 1) {
-      const teamName = buildFormattedTeamName(division, details[i], i + 1, count);
-      const email = String(details[i]?.coachEmail || "").trim().toLowerCase();
-      if (teamName && email) {
-        directory[teamName] = email;
+      const teamName = buildFormattedTeamName(division, keyDetails[i], i + 1, keyCount);
+      if (!teamName) continue;
+      const coachEmail = String(sourceDetails[i]?.coachEmail || "").trim().toLowerCase();
+      const coachLastName = sanitizeCoachLastName(sourceDetails[i]?.coachLastName || "");
+      if (coachEmail || coachLastName) {
+        directory[teamName] = {
+          coachEmail,
+          coachLastName,
+        };
       }
     }
   }
   return directory;
+}
+
+function buildPublishedTeamRenameMap(sourceConfig, publishedConfig) {
+  const nextConfig = normalizeConfig(sourceConfig);
+  const priorConfig = normalizeConfig(publishedConfig || sourceConfig);
+  const renameMap = {};
+
+  for (const division of DIVISIONS) {
+    const nextCount = Number(nextConfig?.divisions?.[division] || 0);
+    const priorCount = Number(priorConfig?.divisions?.[division] || 0);
+    const count = Math.min(nextCount, priorCount);
+    const nextDetails = syncDivisionTeamDetails(nextConfig?.divisionTeamDetails?.[division], nextCount);
+    const priorDetails = syncDivisionTeamDetails(priorConfig?.divisionTeamDetails?.[division], priorCount);
+
+    for (let i = 0; i < count; i += 1) {
+      const oldName = buildFormattedTeamName(division, priorDetails[i], i + 1, priorCount);
+      const newName = buildFormattedTeamName(division, nextDetails[i], i + 1, nextCount);
+      if (oldName && newName && oldName !== newName) {
+        renameMap[oldName] = newName;
+      }
+    }
+  }
+
+  return renameMap;
+}
+
+function remapPublishedScheduleTeams(schedule, renameMap) {
+  return (Array.isArray(schedule) ? schedule : []).map((game) => ({
+    ...game,
+    home: renameMap?.[game.home] || game.home,
+    away: renameMap?.[game.away] || game.away,
+  }));
+}
+
+function remapPublishedScoreReports(scoreReports, renameMap) {
+  const updatedReports = (Array.isArray(scoreReports) ? scoreReports : []).map((report) => {
+    const nextHome = renameMap?.[report.home] || report.home;
+    const nextAway = renameMap?.[report.away] || report.away;
+    const nextReportingTeam = renameMap?.[report.reportingTeam] || report.reportingTeam;
+    const nextApprovalOfReportId = report.approvalOfReportId || "";
+    return {
+      ...report,
+      gameId: [report.date, report.time, report.court, nextHome, nextAway].join("|"),
+      home: nextHome,
+      away: nextAway,
+      reportingTeam: nextReportingTeam,
+      approvalOfReportId: nextApprovalOfReportId,
+    };
+  });
+
+  const officialByGame = new Map();
+  for (const report of updatedReports) {
+    if (report?.verifiedFinal && report?.gameId) {
+      officialByGame.set(report.gameId, {
+        verifiedAt: report.verifiedAt,
+        officialHomeScore: report.officialHomeScore,
+        officialAwayScore: report.officialAwayScore,
+        verificationReason: report.verificationReason,
+      });
+    }
+  }
+
+  return updatedReports.map((report) => {
+    const official = officialByGame.get(report.gameId);
+    if (!official) return report;
+    return {
+      ...report,
+      verifiedFinal: true,
+      verifiedAt: official.verifiedAt,
+      officialHomeScore: official.officialHomeScore,
+      officialAwayScore: official.officialAwayScore,
+      verificationReason: official.verificationReason,
+    };
+  });
+}
+
+function remapCoachConflicts(conflicts, renameMap) {
+  return (Array.isArray(conflicts) ? conflicts : []).map((entry) => ({
+    ...entry,
+    teamA: renameMap?.[entry?.teamA] || entry?.teamA || "",
+    teamB: renameMap?.[entry?.teamB] || entry?.teamB || "",
+  }));
 }
 
 function applyCoachDirectoryToConfig(config, coachDirectory) {
@@ -616,10 +721,11 @@ function applyCoachDirectoryToConfig(config, coachDirectory) {
         const count = Number(normalizedConfig?.divisions?.[division] || 0);
         const details = syncDivisionTeamDetails(normalizedConfig?.divisionTeamDetails?.[division], count).map((entry, idx) => {
           const teamName = buildFormattedTeamName(division, entry, idx + 1, count);
-          const nextEmail = String(directory?.[teamName] || entry?.coachEmail || "").trim().toLowerCase();
+          const info = normalizeCoachInfoEntry(directory?.[teamName]);
           return {
             ...entry,
-            coachEmail: nextEmail,
+            coachEmail: info.coachEmail || String(entry?.coachEmail || "").trim().toLowerCase(),
+            coachLastName: info.coachLastName || sanitizeCoachLastName(entry?.coachLastName || ""),
           };
         });
         return [division, details];
@@ -628,16 +734,23 @@ function applyCoachDirectoryToConfig(config, coachDirectory) {
   };
 }
 
-function getCoachEmailForTeamFromDirectory(coachDirectory, config, teamName, divisionHint = "") {
-  const direct = String(coachDirectory?.[teamName] || "").trim().toLowerCase();
-  if (direct) return direct;
+function getCoachInfoForTeamFromDirectory(coachDirectory, config, teamName, divisionHint = "") {
+  const direct = normalizeCoachInfoEntry(coachDirectory?.[teamName]);
+  if (direct.coachEmail || direct.coachLastName) return direct;
 
   const detail = getTeamDetailByFormattedName(config, teamName, divisionHint);
   const formattedName = detail?.formattedName || "";
-  const byFormattedName = String(coachDirectory?.[formattedName] || "").trim().toLowerCase();
-  if (byFormattedName) return byFormattedName;
+  const byFormattedName = normalizeCoachInfoEntry(coachDirectory?.[formattedName]);
+  if (byFormattedName.coachEmail || byFormattedName.coachLastName) return byFormattedName;
 
-  return getCoachEmailForTeam(config, teamName, divisionHint);
+  return {
+    coachEmail: getCoachEmailForTeam(config, teamName, divisionHint),
+    coachLastName: sanitizeCoachLastName(detail?.entry?.coachLastName || ""),
+  };
+}
+
+function getCoachEmailForTeamFromDirectory(coachDirectory, config, teamName, divisionHint = "") {
+  return getCoachInfoForTeamFromDirectory(coachDirectory, config, teamName, divisionHint).coachEmail;
 }
 
 function getPublishedCoachDirectory(published, fallbackConfig) {
@@ -4501,32 +4614,59 @@ export default function App() {
     }
   }
 
-  async function updatePublishedCoachEmails() {
+  async function updatePublishedCoachInfo() {
     const published = await loadPublishedPayload();
     if (!published?.result) {
-      setPublishNotice("Publish the schedule once before updating coach emails only.");
+      setPublishNotice("Publish the schedule once before updating coach info only.");
       return;
     }
 
     const normalizedConfig = normalizeConfig(config);
+    const publishedConfig = normalizeConfig(published?.config || normalizedConfig);
+    const renameMap = buildPublishedTeamRenameMap(normalizedConfig, publishedConfig);
     const coachDirectory = buildCoachDirectoryFromConfig(normalizedConfig);
-    const mergedPublishedConfig = applyCoachDirectoryToConfig(
-      published?.config || normalizedConfig,
-      coachDirectory
-    );
+    const mergedPublishedConfig = {
+      ...normalizeConfig(normalizedConfig),
+      coachConflicts: remapCoachConflicts(normalizedConfig.coachConflicts, renameMap),
+    };
+    const updatedResult = {
+      ...(published.result || {}),
+      schedule: remapPublishedScheduleTeams(published?.result?.schedule, renameMap),
+      unscheduled: Array.isArray(published?.result?.unscheduled) ? [...published.result.unscheduled] : [],
+      audit: published?.result?.audit || null,
+    };
+    const updatedScoreReports = remapPublishedScoreReports(published?.scoreReports, renameMap);
+    const updatedMeta = published?.meta
+      ? {
+          ...published.meta,
+          publishedAt: published.meta.publishedAt || new Date().toLocaleString(),
+          coachInfoUpdatedAt: new Date().toLocaleString(),
+        }
+      : {
+          publishedAt: new Date().toLocaleString(),
+          coachInfoUpdatedAt: new Date().toLocaleString(),
+          totalGames: Array.isArray(updatedResult.schedule) ? updatedResult.schedule.length : 0,
+          verifiedGames: Array.isArray(updatedResult.schedule)
+            ? updatedResult.schedule.filter((game) => getOfficialScoreFromReports(game, updatedScoreReports).verified).length
+            : 0,
+        };
 
     const ok = await savePublishedPayload({
-      result: published.result,
-      meta: published.meta || null,
-      scoreReports: Array.isArray(published.scoreReports) ? published.scoreReports : [],
+      result: updatedResult,
+      meta: updatedMeta,
+      scoreReports: updatedScoreReports,
       config: mergedPublishedConfig,
       coachDirectory,
     });
 
     if (ok) {
-      setPublishNotice("Published coach emails updated.");
+      setResult(updatedResult);
+      setPublishedMeta(updatedMeta);
+      setScoreReports(updatedScoreReports);
+      setConfig(mergedPublishedConfig);
+      setPublishNotice(Object.keys(renameMap).length ? "Published coach info and team codes updated." : "Published coach info updated.");
     } else {
-      setPublishNotice("Could not update published coach emails.");
+      setPublishNotice("Could not update published coach info.");
     }
   }
 
@@ -4661,7 +4801,7 @@ export default function App() {
     );
 
     if (!expectedReporterEmail) {
-      setScoreNotice("That team does not have a coach email configured yet. Ask the admin to add it in Setup.");
+      setScoreNotice("That team does not have a coach email configured yet. Ask the admin to add it in Setup, then use Update Coach Info Only.");
       return;
     }
 
@@ -4812,7 +4952,7 @@ export default function App() {
                 </button>
                 {lockedGameCount ? <span style={styles.badge}>{lockedGameCount} locked game{lockedGameCount === 1 ? "" : "s"}</span> : null}
                 <button style={styles.successButton} onClick={publishSchedule} disabled={!result}>Publish Schedule</button>
-                <button style={styles.button} onClick={updatePublishedCoachEmails}>Update Coach Emails Only</button>
+                <button style={styles.button} onClick={updatePublishedCoachInfo}>Update Coach Info Only</button>
                 <button style={styles.button} onClick={loadPublishedSchedule}>Load Published</button>
                 <button style={styles.dangerButton} onClick={clearPublishedSchedule}>Clear Published</button>
               </>
@@ -4850,7 +4990,7 @@ export default function App() {
         ) : null}
 
         {isPublicMode ? (
-          <div style={styles.publicBanner}>Public view: browse the schedule, standings, and coach score reporting tabs. Score reports are logged with coach emails, and confirmation emails require a configured backend email route.</div>
+          <div style={styles.publicBanner}>Public view: browse the schedule, standings, and coach score reporting tabs. Score reports are logged with coach info, and confirmation emails require a configured backend email route.</div>
         ) : null}
 
         <div style={styles.tabBar}>

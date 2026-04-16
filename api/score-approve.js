@@ -71,6 +71,19 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeCoachInfoEntry(value) {
+  if (value && typeof value === "object") {
+    return {
+      coachEmail: normalizeEmail(value.coachEmail || value.email),
+      coachLastName: String(value.coachLastName || value.lastName || "").trim(),
+    };
+  }
+  return {
+    coachEmail: normalizeEmail(value),
+    coachLastName: "",
+  };
+}
+
 function createRowId(prefix = "score") {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -175,7 +188,30 @@ function buildPublicRedirectUrl(status, data, extraMessage = "") {
 }
 
 function getExpectedCoachEmail(published, teamName) {
-  return normalizeEmail(published?.coachDirectory?.[teamName] || "");
+  return normalizeCoachInfoEntry(published?.coachDirectory?.[teamName]).coachEmail;
+}
+
+function resolveGameFromToken(schedule, data) {
+  const items = Array.isArray(schedule) ? schedule : [];
+  return (
+    items.find((entry) => entry.gameId === data.gameId) ||
+    items.find(
+      (entry) =>
+        entry.date === data.date &&
+        entry.time === data.time &&
+        entry.court === data.court &&
+        entry.division === data.division
+    ) ||
+    null
+  );
+}
+
+function resolveCurrentTeamName(game, tokenTeamName, tokenHome, tokenAway) {
+  if (!game || !tokenTeamName) return tokenTeamName;
+  if (tokenTeamName === tokenHome) return game.home;
+  if (tokenTeamName === tokenAway) return game.away;
+  if (tokenTeamName === game.home || tokenTeamName === game.away) return tokenTeamName;
+  return tokenTeamName;
 }
 
 export default async function handler(req, res) {
@@ -191,22 +227,24 @@ export default async function handler(req, res) {
     }
 
     const schedule = Array.isArray(published.result.schedule) ? published.result.schedule : [];
-    const game = schedule.find((entry) => entry.gameId === data.gameId);
+    const game = resolveGameFromToken(schedule, data);
 
     if (!game) {
       return res.redirect(buildPublicRedirectUrl("error", data, "That game was not found."));
     }
 
     const existingReports = Array.isArray(published.scoreReports) ? published.scoreReports : [];
+    const resolvedRecipientTeam = resolveCurrentTeamName(game, data.recipientTeam, data.home, data.away);
+    const resolvedReportingTeam = resolveCurrentTeamName(game, data.reportingTeam, data.home, data.away);
     const currentStatus = getOfficialScoreFromReports(game, existingReports);
 
     if (currentStatus.verified) {
-      return res.redirect(buildPublicRedirectUrl("already-verified", data, "This score was already verified."));
+      return res.redirect(buildPublicRedirectUrl("already-verified", { ...data, recipientTeam: resolvedRecipientTeam }, "This score was already verified."));
     }
 
     const recipientEmail = normalizeEmail(data.recipientEmail);
     const reporterEmail = normalizeEmail(data.reporterEmail);
-    const expectedRecipientEmail = getExpectedCoachEmail(published, data.recipientTeam);
+    const expectedRecipientEmail = getExpectedCoachEmail(published, resolvedRecipientTeam);
 
     if (!recipientEmail) {
       return res.redirect(buildPublicRedirectUrl("error", data, "Approval token is missing the recipient email."));
@@ -216,11 +254,11 @@ export default async function handler(req, res) {
       return res.redirect(buildPublicRedirectUrl("error", data, "The reporting coach cannot approve their own score."));
     }
 
-    if (data.recipientTeam !== game.home && data.recipientTeam !== game.away) {
+    if (resolvedRecipientTeam !== game.home && resolvedRecipientTeam !== game.away) {
       return res.redirect(buildPublicRedirectUrl("error", data, "Approval token has an invalid team."));
     }
 
-    if (data.recipientTeam === data.reportingTeam) {
+    if (resolvedRecipientTeam === resolvedReportingTeam) {
       return res.redirect(buildPublicRedirectUrl("error", data, "The reporting coach cannot approve their own score."));
     }
 
@@ -230,30 +268,30 @@ export default async function handler(req, res) {
 
     const duplicateReport = existingReports.find(
       (report) =>
-        report.gameId === data.gameId &&
-        report.reportingTeam === data.recipientTeam &&
+        report.gameId === game.gameId &&
+        report.reportingTeam === resolvedRecipientTeam &&
         normalizeEmail(report.reporterEmail) === recipientEmail
     );
 
     if (duplicateReport) {
-      return res.redirect(buildPublicRedirectUrl("already-approved", data, "You already approved this score."));
+      return res.redirect(buildPublicRedirectUrl("already-approved", { ...data, recipientTeam: resolvedRecipientTeam }, "You already approved this score."));
     }
 
     const nextReport = {
       id: createRowId("score"),
-      gameId: data.gameId,
-      division: data.division,
-      date: data.date,
-      time: data.time,
-      court: data.court,
-      home: data.home,
-      away: data.away,
-      reportingTeam: data.recipientTeam,
+      gameId: game.gameId,
+      division: game.division,
+      date: game.date,
+      time: game.time,
+      court: game.court,
+      home: game.home,
+      away: game.away,
+      reportingTeam: resolvedRecipientTeam,
       reporterEmail: recipientEmail,
       teamScore:
-        data.recipientTeam === data.home ? Number(data.opponentScore) : Number(data.teamScore),
+        resolvedRecipientTeam === game.home ? Number(data.opponentScore) : Number(data.teamScore),
       opponentScore:
-        data.recipientTeam === data.home ? Number(data.teamScore) : Number(data.opponentScore),
+        resolvedRecipientTeam === game.home ? Number(data.teamScore) : Number(data.opponentScore),
       approvalMode: true,
       approvalOfReportId: data.reportId || "",
       submittedAt: new Date().toISOString(),
@@ -265,7 +303,7 @@ export default async function handler(req, res) {
     if (status.verified && status.official) {
       const verifiedAt = new Date().toISOString();
       nextReports = nextReports.map((report) =>
-        report.gameId === data.gameId
+        report.gameId === game.gameId
           ? {
               ...report,
               verifiedFinal: true,
@@ -297,7 +335,7 @@ export default async function handler(req, res) {
     }
 
     return res.redirect(
-      buildPublicRedirectUrl("saved", data, "Approval was saved, but the score is still waiting for matching verification.")
+      buildPublicRedirectUrl("saved", { ...data, recipientTeam: resolvedRecipientTeam }, "Approval was saved, but the score is still waiting for matching verification.")
     );
   } catch (e) {
     return res.redirect(

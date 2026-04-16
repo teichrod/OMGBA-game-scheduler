@@ -4,6 +4,19 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeCoachInfoEntry(value) {
+  if (value && typeof value === "object") {
+    return {
+      coachEmail: normalizeEmail(value.coachEmail || value.email),
+      coachLastName: String(value.coachLastName || value.lastName || "").trim(),
+    };
+  }
+  return {
+    coachEmail: normalizeEmail(value),
+    coachLastName: "",
+  };
+}
+
 function signToken(payload) {
   const secret = process.env.SCORE_APPROVAL_SECRET;
   if (!secret) {
@@ -37,8 +50,10 @@ export default async function handler(req, res) {
 
     const body = req.body || {};
     const coachDirectory = body.coachDirectory && typeof body.coachDirectory === "object" ? body.coachDirectory : {};
-    const homeCoachEmail = normalizeEmail(body.homeCoachEmail || coachDirectory?.[body.home]);
-    const awayCoachEmail = normalizeEmail(body.awayCoachEmail || coachDirectory?.[body.away]);
+    const homeCoachInfo = normalizeCoachInfoEntry(coachDirectory?.[body.home]);
+    const awayCoachInfo = normalizeCoachInfoEntry(coachDirectory?.[body.away]);
+    const homeCoachEmail = normalizeEmail(body.homeCoachEmail || homeCoachInfo.coachEmail);
+    const awayCoachEmail = normalizeEmail(body.awayCoachEmail || awayCoachInfo.coachEmail);
     const reporterEmail = normalizeEmail(body.reporterEmail);
     const reportingTeam = String(body.reportingTeam || "").trim();
 
