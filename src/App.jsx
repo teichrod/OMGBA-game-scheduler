@@ -5851,12 +5851,12 @@ export default function App() {
               alt="COURTrax"
               style={{
                 width: "100%",
-                maxWidth: 1100,
-                height: "auto",
-                display: "block",
-                margin: "0 auto",
-                borderRadius: 20,
-                boxShadow: "0 18px 48px rgba(15, 23, 42, 0.28)",
+              maxWidth: 1100,
+    height: "auto",
+    maxHeight: "220px", // 👈 THIS is the key change
+    objectFit: "cover",
+    borderRadius: 16,
+    boxShadow: "0 12px 40px rgba(0,0,0,0.4)",
               }}
             />
           </div>
