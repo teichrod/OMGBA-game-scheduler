@@ -189,51 +189,6 @@ const styles = {
     gap: 16,
     flexWrap: "wrap",
   },
-  appHeader: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    textAlign: "center",
-    gap: 12,
-    padding: "24px 16px",
-    borderRadius: 20,
-    background: "rgba(255,255,255,0.9)",
-    backdropFilter: "blur(8px)",
-    WebkitBackdropFilter: "blur(8px)",
-    boxShadow: "0 10px 28px rgba(0,0,0,0.12)",
-    border: "1px solid rgba(255,255,255,0.45)",
-  },
-  appHeaderBrand: {
-    display: "contents",
-  },
-  appHeaderLogo: {
-    height: "clamp(96px, 14vw, 170px)",
-    width: "auto",
-    maxWidth: "min(92vw, 560px)",
-    objectFit: "contain",
-    flexShrink: 0,
-    filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.22))",
-  },
-  appHeaderTextWrap: {
-    display: "none",
-  },
-  appHeaderTitle: {
-    display: "none",
-  },
-  appHeaderSubtitle: {
-    fontSize: "clamp(15px, 2vw, 20px)",
-    fontWeight: 700,
-    color: "#ea580c",
-    lineHeight: 1.2,
-  },
-  appHeaderActions: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    flexWrap: "wrap",
-    justifyContent: "center",
-  },
   card: {
     background: "rgba(255,255,255,0.92)",
     border: "1px solid rgba(226,232,240,0.95)",
@@ -241,6 +196,71 @@ const styles = {
     padding: 18,
     boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
     backdropFilter: "blur(4px)",
+  },
+  appHeader: {
+    position: "relative",
+    overflow: "hidden",
+    borderRadius: 28,
+    padding: "24px 20px 22px",
+    background: "linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.94) 45%, rgba(17,24,39,0.96) 100%)",
+    border: "1px solid rgba(148,163,184,0.18)",
+    boxShadow: "0 18px 40px rgba(15,23,42,0.32)",
+  },
+  appHeaderGlow: {
+    position: "absolute",
+    inset: 0,
+    background: "radial-gradient(circle at top left, rgba(251,146,60,0.22), transparent 34%), radial-gradient(circle at top right, rgba(37,99,235,0.2), transparent 30%)",
+    pointerEvents: "none",
+  },
+  appHeaderTopBar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 5,
+    background: "linear-gradient(90deg, #f97316 0%, #fb923c 40%, #facc15 100%)",
+  },
+  appHeaderInner: {
+    position: "relative",
+    display: "grid",
+    gap: 18,
+    zIndex: 1,
+  },
+  appHeaderBrand: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    textAlign: "center",
+    gap: 12,
+  },
+  appHeaderLogoFrame: {
+    padding: "14px 22px",
+    borderRadius: 22,
+    background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.92) 100%)",
+    boxShadow: "0 14px 30px rgba(0,0,0,0.22)",
+    border: "1px solid rgba(255,255,255,0.75)",
+    maxWidth: "100%",
+  },
+  appHeaderLogo: {
+    display: "block",
+    height: "clamp(82px, 12vw, 150px)",
+    maxWidth: "min(100%, 560px)",
+    width: "auto",
+    objectFit: "contain",
+  },
+  appHeaderSubtitle: {
+    fontSize: "clamp(15px, 2.2vw, 20px)",
+    color: "#f8fafc",
+    fontWeight: 800,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    textShadow: "0 2px 12px rgba(0,0,0,0.35)",
+  },
+  appHeaderControls: {
+    display: "flex",
+    justifyContent: "center",
+    gap: 10,
+    flexWrap: "wrap",
   },
   title: {
     fontSize: 30,
@@ -5890,23 +5910,31 @@ export default function App() {
     <div style={styles.page}>
       <div style={styles.container}>
         <div style={styles.appHeader}>
-          <img src={APP_LOGO} alt="COURTrax logo" style={styles.appHeaderLogo} />
-          <div style={styles.appHeaderSubtitle}>Your Home For NWML Basketball</div>
-          {!isPublicMode ? (
-            <div style={styles.appHeaderActions}>
-              <button style={styles.button} onClick={resetAll}>Reset</button>
-              <button style={styles.primaryButton} onClick={runScheduler}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  <Wand2 size={16} /> {lockedGameCount ? `Regenerate Around ${lockedGameCount} Locked` : "Generate Schedule"}
-                </span>
-              </button>
-              {lockedGameCount ? <span style={styles.badge}>{lockedGameCount} locked game{lockedGameCount === 1 ? "" : "s"}</span> : null}
-              <button style={styles.successButton} onClick={publishSchedule} disabled={!result}>Publish Schedule</button>
-              <button style={styles.button} onClick={updatePublishedCoachInfo}>Update Coach Info Only</button>
-              <button style={styles.button} onClick={loadPublishedSchedule}>Load Published</button>
-              <button style={styles.dangerButton} onClick={clearPublishedSchedule}>Clear Published</button>
+          <div style={styles.appHeaderTopBar} />
+          <div style={styles.appHeaderGlow} />
+          <div style={styles.appHeaderInner}>
+            <div style={styles.appHeaderBrand}>
+              <div style={styles.appHeaderLogoFrame}>
+                <img src={APP_LOGO} alt="COURTrax logo" style={styles.appHeaderLogo} />
+              </div>
+              <div style={styles.appHeaderSubtitle}>Your Home For NWML Basketball</div>
             </div>
-          ) : null}
+            {!isPublicMode ? (
+              <div style={styles.appHeaderControls}>
+                <button style={styles.button} onClick={resetAll}>Reset</button>
+                <button style={styles.primaryButton} onClick={runScheduler}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <Wand2 size={16} /> {lockedGameCount ? `Regenerate Around ${lockedGameCount} Locked` : "Generate Schedule"}
+                  </span>
+                </button>
+                {lockedGameCount ? <span style={styles.badge}>{lockedGameCount} locked game{lockedGameCount === 1 ? "" : "s"}</span> : null}
+                <button style={styles.successButton} onClick={publishSchedule} disabled={!result}>Publish Schedule</button>
+                <button style={styles.button} onClick={updatePublishedCoachInfo}>Update Coach Info Only</button>
+                <button style={styles.button} onClick={loadPublishedSchedule}>Load Published</button>
+                <button style={styles.dangerButton} onClick={clearPublishedSchedule}>Clear Published</button>
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {publishNotice ? <div style={styles.publishBanner}>{publishNotice}</div> : null}
