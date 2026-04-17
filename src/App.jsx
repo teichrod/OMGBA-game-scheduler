@@ -191,11 +191,12 @@ const styles = {
   },
   appHeader: {
     display: "flex",
-    justifyContent: "space-between",
+    flexDirection: "column",
     alignItems: "center",
-    gap: 18,
-    flexWrap: "wrap",
-    padding: "18px 22px",
+    justifyContent: "center",
+    textAlign: "center",
+    gap: 12,
+    padding: "24px 16px",
     borderRadius: 20,
     background: "rgba(255,255,255,0.9)",
     backdropFilter: "blur(8px)",
@@ -204,34 +205,24 @@ const styles = {
     border: "1px solid rgba(255,255,255,0.45)",
   },
   appHeaderBrand: {
-    display: "flex",
-    alignItems: "center",
-    gap: 16,
-    flex: "1 1 420px",
-    minWidth: 0,
+    display: "contents",
   },
   appHeaderLogo: {
-    height: 88,
+    height: "clamp(96px, 14vw, 170px)",
     width: "auto",
+    maxWidth: "min(92vw, 560px)",
     objectFit: "contain",
     flexShrink: 0,
-    filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.18))",
+    filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.22))",
   },
   appHeaderTextWrap: {
-    display: "flex",
-    flexDirection: "column",
-    minWidth: 0,
+    display: "none",
   },
   appHeaderTitle: {
-    fontSize: "clamp(30px, 4vw, 44px)",
-    fontWeight: 900,
-    lineHeight: 1,
-    color: "#0f172a",
-    letterSpacing: "-0.03em",
-    marginBottom: 6,
+    display: "none",
   },
   appHeaderSubtitle: {
-    fontSize: "clamp(14px, 2vw, 18px)",
+    fontSize: "clamp(15px, 2vw, 20px)",
     fontWeight: 700,
     color: "#ea580c",
     lineHeight: 1.2,
@@ -241,8 +232,7 @@ const styles = {
     alignItems: "center",
     gap: 10,
     flexWrap: "wrap",
-    justifyContent: "flex-end",
-    flex: "1 1 420px",
+    justifyContent: "center",
   },
   card: {
     background: "rgba(255,255,255,0.92)",
@@ -5900,13 +5890,8 @@ export default function App() {
     <div style={styles.page}>
       <div style={styles.container}>
         <div style={styles.appHeader}>
-          <div style={styles.appHeaderBrand}>
-            <img src={APP_LOGO} alt="COURTrax logo" style={styles.appHeaderLogo} />
-            <div style={styles.appHeaderTextWrap}>
-              <h1 style={{ ...styles.appHeaderTitle, margin: 0 }}>COURTrax</h1>
-              <div style={styles.appHeaderSubtitle}>Your Home For NWML Basketball</div>
-            </div>
-          </div>
+          <img src={APP_LOGO} alt="COURTrax logo" style={styles.appHeaderLogo} />
+          <div style={styles.appHeaderSubtitle}>Your Home For NWML Basketball</div>
           {!isPublicMode ? (
             <div style={styles.appHeaderActions}>
               <button style={styles.button} onClick={resetAll}>Reset</button>
