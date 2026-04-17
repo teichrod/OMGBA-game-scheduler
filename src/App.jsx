@@ -53,6 +53,7 @@ const MAX_EARLY_OPTIONS = ["0", "1", "2", "3", "4"];
 const MIN_GAMES_PER_WEEK_OPTIONS = Array.from({ length: 21 }, (_, i) => String(25 + i));
 
 const ASSOCIATION_OPTIONS = ["OM", "BP", "CD", "RA"];
+
 const APP_LOGO = "/courtrax-logo.png";
 
 function getDivisionGenderCode(division) {
@@ -187,6 +188,61 @@ const styles = {
     alignItems: "center",
     gap: 16,
     flexWrap: "wrap",
+  },
+  appHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 18,
+    flexWrap: "wrap",
+    padding: "18px 22px",
+    borderRadius: 20,
+    background: "rgba(255,255,255,0.9)",
+    backdropFilter: "blur(8px)",
+    WebkitBackdropFilter: "blur(8px)",
+    boxShadow: "0 10px 28px rgba(0,0,0,0.12)",
+    border: "1px solid rgba(255,255,255,0.45)",
+  },
+  appHeaderBrand: {
+    display: "flex",
+    alignItems: "center",
+    gap: 16,
+    flex: "1 1 420px",
+    minWidth: 0,
+  },
+  appHeaderLogo: {
+    height: 88,
+    width: "auto",
+    objectFit: "contain",
+    flexShrink: 0,
+    filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.18))",
+  },
+  appHeaderTextWrap: {
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+  },
+  appHeaderTitle: {
+    fontSize: "clamp(30px, 4vw, 44px)",
+    fontWeight: 900,
+    lineHeight: 1,
+    color: "#0f172a",
+    letterSpacing: "-0.03em",
+    marginBottom: 6,
+  },
+  appHeaderSubtitle: {
+    fontSize: "clamp(14px, 2vw, 18px)",
+    fontWeight: 700,
+    color: "#ea580c",
+    lineHeight: 1.2,
+  },
+  appHeaderActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    flex: "1 1 420px",
   },
   card: {
     background: "rgba(255,255,255,0.92)",
@@ -5843,26 +5899,16 @@ export default function App() {
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        <div style={{ display: "grid", gap: 16 }}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, flexWrap: "wrap" }}>
-              <img
-  src={APP_LOGO}
-  alt="COURTrax Logo"
-  style={{
-    height: 55,
-    objectFit: "contain",
-    filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.25))"
-  }}
-/>
-              <div>
-                <h1 style={{ ...styles.title, textAlign: "center" }}>COURTrax</h1>
-                <div style={{ ...styles.subtitle, textAlign: "center" }}>🏀🏀Your Home For NWML Basketball🏀🏀</div>
-              </div>
+        <div style={styles.appHeader}>
+          <div style={styles.appHeaderBrand}>
+            <img src={APP_LOGO} alt="COURTrax logo" style={styles.appHeaderLogo} />
+            <div style={styles.appHeaderTextWrap}>
+              <h1 style={{ ...styles.appHeaderTitle, margin: 0 }}>COURTrax</h1>
+              <div style={styles.appHeaderSubtitle}>Your Home For NWML Basketball</div>
             </div>
           </div>
           {!isPublicMode ? (
-            <div style={{ ...styles.row, justifyContent: "center" }}>
+            <div style={styles.appHeaderActions}>
               <button style={styles.button} onClick={resetAll}>Reset</button>
               <button style={styles.primaryButton} onClick={runScheduler}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
