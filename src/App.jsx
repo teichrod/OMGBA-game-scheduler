@@ -970,6 +970,73 @@ function lastChanceCompleteShortTeamsWithinGroups(teams, openSlots, schedule, co
   }
 }
 
+function completeShortFifthBoysByTier(teams, openSlots, schedule, config) {
+  const fifthGroups = Object.values(
+    teams
+      .filter((team) => team.baseDivision === "5th Boys" || team.division === "5th Boys")
+      .reduce((acc, team) => {
+        const key = team.division;
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(team);
+        return acc;
+      }, {})
+  );
+
+  for (const groupTeams of fifthGroups) {
+    let safety = 0;
+    while (groupTeams.some((team) => getNeed(team) > 0) && safety < 500) {
+      safety += 1;
+      const shortTeams = groupTeams
+        .filter((team) => getNeed(team) > 0)
+        .sort((a, b) => {
+          const needDiff = getNeed(b) - getNeed(a);
+          if (needDiff !== 0) return needDiff;
+          return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true });
+        });
+
+      let placed = false;
+      for (const team of shortTeams) {
+        const opponents = groupTeams
+          .filter((opponent) =>
+            opponent.id !== team.id &&
+            getNeed(opponent) > 0 &&
+            (team.opponents?.[opponent.name] || 0) < getAllowedRepeatLimit(config, team.division)
+          )
+          .sort((a, b) => {
+            const needDiff = getNeed(b) - getNeed(a);
+            if (needDiff !== 0) return needDiff;
+            return (team.opponents?.[a.name] || 0) - (team.opponents?.[b.name] || 0);
+          });
+
+        for (const opponent of opponents) {
+          let slot = chooseBestRegularSeasonSlotForPair(team, opponent, openSlots, config, teams, schedule, { ignoreEarlyCap: true });
+          if (!slot) {
+            const freeSlots = openSlots
+              .filter((entry) => !entry.used && isRegularSeasonDate(entry.date, config))
+              .sort(compareSlotLike);
+            slot = freeSlots.find((entry) =>
+              canPairInSlot(team, opponent, entry, config, {
+                ignoreTimeVariety: true,
+                ignoreRepeatLimit: false,
+                ignoreEarlyCap: true,
+                allTeams: teams,
+              })
+            ) || null;
+          }
+          if (!slot) continue;
+          scheduleGame(schedule, slot, team, opponent, { tier: team.tierLabel || opponent.tierLabel || '' });
+          placed = true;
+          break;
+        }
+
+        if (placed) break;
+      }
+
+      if (!placed) break;
+    }
+  }
+}
+
 function buildShortTeamDiagnostics(team, groupTeams, openSlots, config, allTeams, options = {}) {
   const { regularSeasonOnly = false } = options;
   const usableSlots = openSlots.filter((slot) =>
@@ -1453,6 +1520,10 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
 
   if (teams.some((team) => getNeed(team) > 0)) {
     lastChanceCompleteShortTeamsWithinGroups(teams, openSlots, schedule, normalized, { regularSeasonOnly: true });
+  }
+
+  if (teams.some((team) => getNeed(team) > 0 && (team.baseDivision === "5th Boys" || team.division === "5th Boys"))) {
+    completeShortFifthBoysByTier(teams, openSlots, schedule, normalized);
   }
 
   const teamsByTier = teams.reduce((acc, team) => {
