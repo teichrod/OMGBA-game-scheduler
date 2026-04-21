@@ -798,6 +798,106 @@ function completeRegularSeasonWithinTiers(teams, openSlots, schedule, config) {
   }
 }
 
+function canUseLastChanceSlot(team, slot, config) {
+  const onDate = team.gamesByDate?.[slot.date] || 0;
+  if (onDate >= 2) return false;
+  if (onDate === 0) return true;
+  if ((team.doubleHeaders || 0) >= (team.maxDoubleheadersPerTeam || 0)) return false;
+  if (team.division === "5th Boys" && config?.fifthBoysDoubleheaderDate && slot.date !== config.fifthBoysDoubleheaderDate && (team.maxDoubleheadersPerTeam || 0) <= 1) {
+    return false;
+  }
+  const existing = getScheduledGamesOnDate(team, slot.date)[0];
+  return Boolean(existing && areBackToBackTimes(existing.time, slot.time) && existing.court === slot.court);
+}
+
+function chooseLastChancePairForSlot(groupTeams, slot, config, allTeams) {
+  let best = null;
+  let bestScore = -Infinity;
+
+  const needy = groupTeams
+    .filter((team) => getNeed(team) > 0 && canUseLastChanceSlot(team, slot, config))
+    .sort((a, b) => {
+      const needDiff = getNeed(b) - getNeed(a);
+      if (needDiff !== 0) return needDiff;
+      return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true });
+    });
+
+  for (let i = 0; i < needy.length; i += 1) {
+    for (let j = i + 1; j < needy.length; j += 1) {
+      const teamA = needy[i];
+      const teamB = needy[j];
+      if (!canPairInSlot(teamA, teamB, slot, config, {
+        ignoreTimeVariety: true,
+        ignoreRepeatLimit: true,
+        ignoreEarlyCap: true,
+        allTeams,
+      })) continue;
+
+      const repeatCount = teamA.opponents?.[teamB.name] || 0;
+      const aOnDate = teamA.gamesByDate?.[slot.date] || 0;
+      const bOnDate = teamB.gamesByDate?.[slot.date] || 0;
+      const score =
+        getNeed(teamA) * 5000 +
+        getNeed(teamB) * 5000 -
+        repeatCount * 700 -
+        aOnDate * 1200 -
+        bOnDate * 1200 -
+        (isEarlyTime(slot.time) ? (teamA.earlyGames + teamB.earlyGames) * 50 : 0);
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = { teamA, teamB, slot, score };
+      }
+    }
+  }
+
+  return best;
+}
+
+function lastChanceCompleteShortTeamsWithinGroups(teams, openSlots, schedule, config, options = {}) {
+  const { regularSeasonOnly = false } = options;
+  let progress = true;
+  let safety = 0;
+
+  while (progress && safety < 12000 && teams.some((team) => getNeed(team) > 0)) {
+    safety += 1;
+    progress = false;
+
+    const groupKeys = Array.from(new Set(teams.filter((team) => getNeed(team) > 0).map((team) => team.division)))
+      .sort((a, b) => {
+        const aNeed = teams.filter((team) => team.division === a).reduce((sum, team) => sum + getNeed(team), 0);
+        const bNeed = teams.filter((team) => team.division === b).reduce((sum, team) => sum + getNeed(team), 0);
+        return bNeed - aNeed;
+      });
+
+    for (const groupKey of groupKeys) {
+      const groupTeams = teams.filter((team) => team.division === groupKey);
+      if (!groupTeams.some((team) => getNeed(team) > 0)) continue;
+
+      const freeSlots = openSlots
+        .filter((slot) => !slot.used && (!regularSeasonOnly || isRegularSeasonDate(slot.date, config)))
+        .sort((a, b) => {
+          const aDateLoad = countGamesOnDate(schedule, a.date);
+          const bDateLoad = countGamesOnDate(schedule, b.date);
+          if (aDateLoad !== bDateLoad) return aDateLoad - bDateLoad;
+          return compareSlotLike(a, b);
+        });
+
+      let placedForGroup = false;
+      for (const slot of freeSlots) {
+        const pair = chooseLastChancePairForSlot(groupTeams, slot, config, teams);
+        if (!pair) continue;
+        scheduleGame(schedule, pair.slot, pair.teamA, pair.teamB, { tier: pair.teamA.tierLabel || pair.teamB.tierLabel || '' });
+        progress = true;
+        placedForGroup = true;
+        break;
+      }
+
+      if (placedForGroup) break;
+    }
+  }
+}
+
 function findBestTierForceFillCandidate(teams, slotGroups, config) {
   const needyTeams = teams
     .filter((team) => getNeed(team) > 0)
@@ -1242,6 +1342,10 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
 
   if (teams.some((team) => getNeed(team) > 0)) {
     completeRegularSeasonWithinTiers(teams, openSlots, schedule, normalized);
+  }
+
+  if (teams.some((team) => getNeed(team) > 0)) {
+    lastChanceCompleteShortTeamsWithinGroups(teams, openSlots, schedule, normalized, { regularSeasonOnly: true });
   }
 
   const teamsByTier = teams.reduce((acc, team) => {
