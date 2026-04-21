@@ -780,11 +780,7 @@ function completeRegularSeasonWithinTiers(teams, openSlots, schedule, config) {
       for (const pair of pairs) {
         let slot = chooseBestRegularSeasonSlotForPair(pair.teamA, pair.teamB, openSlots, config, teams, schedule);
         if (!slot) {
-          slot = chooseBestRegularSeasonSlotForPair(pair.teamA, pair.teamB, openSlots, config, teams, schedule, { ignoreRepeatLimit: true });
-        }
-        if (!slot) {
           slot = chooseBestRegularSeasonSlotForPair(pair.teamA, pair.teamB, openSlots, config, teams, schedule, {
-            ignoreRepeatLimit: true,
             ignoreEarlyCap: true,
           });
         }
@@ -826,9 +822,11 @@ function chooseLastChancePairForSlot(groupTeams, slot, config, allTeams) {
     for (let j = i + 1; j < needy.length; j += 1) {
       const teamA = needy[i];
       const teamB = needy[j];
+      const repeatLimit = getAllowedRepeatLimit(config, teamA.division);
+      if ((teamA.opponents?.[teamB.name] || 0) >= repeatLimit || (teamB.opponents?.[teamA.name] || 0) >= repeatLimit) continue;
       if (!canPairInSlot(teamA, teamB, slot, config, {
         ignoreTimeVariety: true,
-        ignoreRepeatLimit: true,
+        ignoreRepeatLimit: false,
         ignoreEarlyCap: true,
         allTeams,
       })) continue;
@@ -898,6 +896,39 @@ function lastChanceCompleteShortTeamsWithinGroups(teams, openSlots, schedule, co
   }
 }
 
+function buildShortTeamDiagnostics(team, groupTeams, openSlots, config, allTeams, options = {}) {
+  const { regularSeasonOnly = false } = options;
+  const usableSlots = openSlots.filter((slot) =>
+    !slot.used &&
+    (!regularSeasonOnly || isRegularSeasonDate(slot.date, config)) &&
+    canUseLastChanceSlot(team, slot, config)
+  );
+  const repeatLimit = getAllowedRepeatLimit(config, team.division);
+  const opponentsUnderRepeatLimit = groupTeams.filter((opponent) =>
+    opponent.id !== team.id &&
+    getNeed(opponent) > 0 &&
+    (team.opponents?.[opponent.name] || 0) < repeatLimit
+  );
+
+  let legalPairSlots = 0;
+  for (const slot of usableSlots.slice(0, 80)) {
+    for (const opponent of opponentsUnderRepeatLimit) {
+      if (!canUseLastChanceSlot(opponent, slot, config)) continue;
+      if (canPairInSlot(team, opponent, slot, config, {
+        ignoreTimeVariety: true,
+        ignoreRepeatLimit: false,
+        ignoreEarlyCap: true,
+        allTeams,
+      })) {
+        legalPairSlots += 1;
+        break;
+      }
+    }
+  }
+
+  return `${team.name} (${team.gamesScheduled}/${team.targetGames}; need ${getNeed(team)}; usable slots ${usableSlots.length}; needy opponents under repeat cap ${opponentsUnderRepeatLimit.length}; legal slot/opponent matches ${legalPairSlots})`;
+}
+
 function findBestTierForceFillCandidate(teams, slotGroups, config) {
   const needyTeams = teams
     .filter((team) => getNeed(team) > 0)
@@ -921,7 +952,7 @@ function findBestTierForceFillCandidate(teams, slotGroups, config) {
           if (!canStillUseTeamOnDate(opponent, slot, config, { ignoreEarlyCap: true })) continue;
           if (!canPairInSlot(team, opponent, slot, config, {
             ignoreTimeVariety: true,
-            ignoreRepeatLimit: true,
+            ignoreRepeatLimit: false,
             ignoreEarlyCap: true,
             allTeams: teams,
           })) continue;
@@ -996,12 +1027,12 @@ function canStillUseTeamOnDateUltraLateRescue(team, slot, config) {
 }
 
 function canPairInSlotTrueForceFill(teamA, teamB, slot, config, allTeams = [], options = {}) {
-  const { allowOpponentOverTarget = false } = options;
-
   if (!teamA || !teamB) return false;
   if (teamA.id === teamB.id || teamA.division !== teamB.division || slot.used) return false;
   if ((teamA.gamesScheduled || 0) >= (teamA.targetGames || 0)) return false;
   if ((teamB.gamesScheduled || 0) >= (teamB.targetGames || 0)) return false;
+  const repeatLimit = getAllowedRepeatLimit(config, teamA.division);
+  if ((teamA.opponents?.[teamB.name] || 0) >= repeatLimit || (teamB.opponents?.[teamA.name] || 0) >= repeatLimit) return false;
 
   if (hasSimultaneousConflict(teamA.name, slot, allTeams, config, [teamB.name])) return false;
   if (hasSimultaneousConflict(teamB.name, slot, allTeams, config, [teamA.name])) return false;
@@ -1103,7 +1134,7 @@ function trueForceFillShortTeamsWithinTier(teams, openSlots, schedule, config) {
 }
 
 function canPairInSlotUltraLateRescue(teamA, teamB, slot, config, allTeams = [], options = {}) {
-  const { allowOpponentOverTarget = false, allowCrossTier = false } = options;
+  const { allowCrossTier = false } = options;
 
   if (!teamA || !teamB || !slot || slot.used) return false;
   if (teamA.id === teamB.id) return false;
@@ -1111,6 +1142,8 @@ function canPairInSlotUltraLateRescue(teamA, teamB, slot, config, allTeams = [],
   if (!allowCrossTier && teamA.division !== teamB.division) return false;
   if ((teamA.gamesScheduled || 0) >= (teamA.targetGames || 0)) return false;
   if ((teamB.gamesScheduled || 0) >= (teamB.targetGames || 0)) return false;
+  const repeatLimit = getAllowedRepeatLimit(config, teamA.division);
+  if ((teamA.opponents?.[teamB.name] || 0) >= repeatLimit || (teamB.opponents?.[teamA.name] || 0) >= repeatLimit) return false;
 
   if (hasSimultaneousConflict(teamA.name, slot, allTeams, config, [teamB.name])) return false;
   if (hasSimultaneousConflict(teamB.name, slot, allTeams, config, [teamA.name])) return false;
@@ -1361,7 +1394,9 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     unscheduled.push({
       matchup: tierKey.replace(/::/g, ' - '),
       reason: 'Could not finish every remaining game within the available regular-season slots while staying inside the tier.',
-      suggestion: needy.map((team) => `${team.name} (${team.gamesScheduled}/${team.targetGames})`).join('; '),
+      suggestion: needy
+        .map((team) => buildShortTeamDiagnostics(team, tierTeams, openSlots, normalized, teams, { regularSeasonOnly: true }))
+        .join('; '),
     });
   }
 
@@ -1825,9 +1860,9 @@ function buildTeams(config) {
     if (config.globalAllowDoubleheaders) {
       maxDoubleheadersPerTeam = 99;
     } else if (division === "5th Boys") {
-      maxDoubleheadersPerTeam = (config.fifthBoysDoubleheaderDate ? 1 : 0) + (isOddDivision ? 1 : 0);
+      maxDoubleheadersPerTeam = (config.fifthBoysDoubleheaderDate ? 1 : 0) + (isOddDivision ? Math.max(1, Math.ceil(targetGames / 4)) : 0);
     } else {
-      maxDoubleheadersPerTeam = isOddDivision ? 1 : 0;
+      maxDoubleheadersPerTeam = isOddDivision ? Math.max(1, Math.ceil(targetGames / 4)) : 0;
     }
 
     for (let i = 0; i < count; i += 1) {
@@ -1971,7 +2006,8 @@ function applyGame(team, slot, opponentName, isHome) {
 }
 
 function getAllowedRepeatLimit(config, division) {
-  const count = Number(config.divisions[division] || 0);
+  const baseDivision = String(division || '').split('::')[0];
+  const count = Number(config.divisions[baseDivision] || config.divisions[division] || 0);
   const opponentsPerTeam = Math.max(0, count - 1);
   if (opponentsPerTeam === 0) return 0;
   return 2;
@@ -2745,7 +2781,7 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
 
       for (const opponent of divisionTeams) {
         if (!canStillUseTeamOnDate(opponent, slot, config, { ignoreEarlyCap })) continue;
-        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: emergencyMode, ignoreEarlyCap, allTeams })) continue;
+        if (!canPairInSlot(team, opponent, slot, config, { ignoreTimeVariety: true, ignoreRepeatLimit: false, ignoreEarlyCap, allTeams })) continue;
 
         const teamNeed = getNeed(team);
         const oppNeed = getNeed(opponent);
