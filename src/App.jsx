@@ -595,6 +595,7 @@ function buildPreseasonConfig(config) {
   return normalizeConfig({
     ...preseasonConfig,
     divisionGames: nextDivisionGames,
+    minGamesPerWeek: 0,
   });
 }
 
@@ -769,7 +770,7 @@ function canStillUseTeamOnDateTrueForceFill(team, slot, config) {
 
   if (onDate >= 1) {
     if ((team.doubleHeaders || 0) >= (team.maxDoubleheadersPerTeam || 0)) return false;
-    if (team.division === "5th Boys" && config?.fifthBoysDoubleheaderDate && slot.date !== config.fifthBoysDoubleheaderDate) {
+    if (team.division === "5th Boys" && config?.fifthBoysDoubleheaderDate && slot.date !== config.fifthBoysDoubleheaderDate && (team.maxDoubleheadersPerTeam || 0) <= 1) {
       return false;
     }
     const existing = getScheduledGamesOnDate(team, slot.date)[0];
@@ -787,7 +788,7 @@ function canStillUseTeamOnDateUltraLateRescue(team, slot, config) {
 
   if (onDate >= 1) {
     if ((team.doubleHeaders || 0) >= (team.maxDoubleheadersPerTeam || 0)) return false;
-    if (team.division === "5th Boys" && config?.fifthBoysDoubleheaderDate && slot.date !== config.fifthBoysDoubleheaderDate) {
+    if (team.division === "5th Boys" && config?.fifthBoysDoubleheaderDate && slot.date !== config.fifthBoysDoubleheaderDate && (team.maxDoubleheadersPerTeam || 0) <= 1) {
       return false;
     }
     const existingGames = getScheduledGamesOnDate(team, slot.date);
@@ -992,7 +993,7 @@ function ultraLateRescueFillShortTeams(teams, openSlots, schedule, config) {
       }
 
       const sameTierAnyOpponents = teams
-        .filter((opponent) => opponent.id !== team.id && opponent.division === team.division)
+        .filter((opponent) => opponent.id !== team.id && opponent.division === team.division && getNeed(opponent) > 0)
         .sort((a, b) => {
           const aOver = Math.max(0, (a.gamesScheduled || 0) - (a.targetGames || 0));
           const bOver = Math.max(0, (b.gamesScheduled || 0) - (b.targetGames || 0));
@@ -1002,32 +1003,6 @@ function ultraLateRescueFillShortTeams(teams, openSlots, schedule, config) {
       if (tryPlaceUltraLateRescueGameForTeam(team, sameTierAnyOpponents, openSlots, schedule, config, teams)) {
         progress = true;
         continue;
-      }
-
-      if ((baseDivisionCounts[team.baseDivision] || 0) >= 12) {
-        const crossTierShortOpponents = teams
-          .filter((opponent) => opponent.id !== team.id && opponent.baseDivision === team.baseDivision && opponent.division !== team.division && getNeed(opponent) > 0)
-          .sort((a, b) => {
-            const needDiff = getNeed(b) - getNeed(a);
-            if (needDiff !== 0) return needDiff;
-            return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true });
-          });
-        if (tryPlaceUltraLateRescueGameForTeam(team, crossTierShortOpponents, openSlots, schedule, config, teams, { allowCrossTier: true })) {
-          progress = true;
-          continue;
-        }
-
-        const crossTierAnyOpponents = teams
-          .filter((opponent) => opponent.id !== team.id && opponent.baseDivision === team.baseDivision && opponent.division !== team.division)
-          .sort((a, b) => {
-            const aOver = Math.max(0, (a.gamesScheduled || 0) - (a.targetGames || 0));
-            const bOver = Math.max(0, (b.gamesScheduled || 0) - (b.targetGames || 0));
-            if (aOver !== bOver) return aOver - bOver;
-            return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true });
-          });
-        if (tryPlaceUltraLateRescueGameForTeam(team, crossTierAnyOpponents, openSlots, schedule, config, teams, { allowCrossTier: true })) {
-          progress = true;
-        }
       }
     }
   }
@@ -1083,7 +1058,7 @@ function finalUnderTargetCompletionPass(teams, openSlots, schedule, config) {
       for (const slot of regularSlots) {
         if (!canStillUseTeamOnDateUltraLateRescue(team, slot, config)) continue;
         const opponentPool = teams
-          .filter((opponent) => opponent.id !== team.id && getNeed(opponent) > 0 && opponent.baseDivision === team.baseDivision)
+          .filter((opponent) => opponent.id !== team.id && getNeed(opponent) > 0 && opponent.division === team.division)
           .sort((a, b) => {
             const sameTierA = a.division === team.division ? 0 : 1;
             const sameTierB = b.division === team.division ? 0 : 1;
@@ -1097,10 +1072,9 @@ function finalUnderTargetCompletionPass(teams, openSlots, schedule, config) {
           });
 
         for (const opponent of opponentPool) {
-          const allowCrossTier = opponent.division !== team.division;
-          if (!canPairInSlotUltraLateRescue(team, opponent, slot, config, teams, { allowCrossTier })) continue;
+          if (!canPairInSlotUltraLateRescue(team, opponent, slot, config, teams)) continue;
           scheduleGame(schedule, slot, team, opponent, {
-            tier: allowCrossTier ? `${team.tierLabel || 'Division 1'} vs ${opponent.tierLabel || 'Division 2'}` : (team.tierLabel || opponent.tierLabel || ''),
+            tier: team.tierLabel || opponent.tierLabel || '',
           });
           placed = true;
           progress = true;
@@ -1644,7 +1618,7 @@ function buildTeams(config) {
     if (config.globalAllowDoubleheaders) {
       maxDoubleheadersPerTeam = 99;
     } else if (division === "5th Boys") {
-      maxDoubleheadersPerTeam = config.fifthBoysDoubleheaderDate ? 1 : (isOddDivision ? 1 : 0);
+      maxDoubleheadersPerTeam = (config.fifthBoysDoubleheaderDate ? 1 : 0) + (isOddDivision ? 1 : 0);
     } else {
       maxDoubleheadersPerTeam = isOddDivision ? 1 : 0;
     }
@@ -2344,7 +2318,7 @@ function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unschedule
     const pairing = selectedPairings[i];
     const slot = slots[i];
     if (!pairing || !slot) break;
-    scheduleGame(schedule, slot, pairing[0], pairing[1]);
+    scheduleGame(schedule, slot, pairing[0], pairing[1], { locked: true });
   }
 }
 
@@ -2797,6 +2771,7 @@ function validateManualSwap(schedule, gameA, gameB, config) {
   if (!gameA || !gameB) return 'Missing game.';
   if (gameA === gameB) return 'Same game.';
   if (gameA.date === gameB.date && gameA.time === gameB.time && gameA.court === gameB.court) return 'Same slot.';
+  if (gameA.locked || gameB.locked) return 'Locked games cannot be moved.';
 
   const remainder = schedule.filter((game) => game !== gameA && game !== gameB).map((game) => ({ ...game }));
   const movedA = { ...gameA, date: gameB.date, time: gameB.time, court: gameB.court };
@@ -2820,7 +2795,7 @@ function getTargetedGamesForRebalance(schedule, team) {
   const mostUsedTime = timeCounts[0]?.[0] || '';
   const prioritizeMorning = shouldPrioritizeMorning(team);
   return schedule
-    .filter((game) => game.home === team.name || game.away === team.name)
+    .filter((game) => !game.locked && (game.home === team.name || game.away === team.name))
     .sort((a, b) => {
       const aScore = (a.time === mostUsedTime ? 50 : 0) + (prioritizeMorning && isAfternoonTime(a.time) ? 25 : 0);
       const bScore = (b.time === mostUsedTime ? 50 : 0) + (prioritizeMorning && isAfternoonTime(b.time) ? 25 : 0);
@@ -2887,7 +2862,7 @@ function rebalanceScheduleTimes(schedule, config) {
         }
 
         const swapPool = nextSchedule
-          .filter((gameB) => gameB !== gameA)
+          .filter((gameB) => gameB !== gameA && !gameB.locked)
           .sort((a, b) => {
             const aMorning = shouldPrioritizeMorning(team) && isMorningTime(a.time) ? -20 : 0;
             const bMorning = shouldPrioritizeMorning(team) && isMorningTime(b.time) ? -20 : 0;
@@ -3883,7 +3858,7 @@ function fillDateGapsBySearch(schedule, date, config, maxDepth = 6) {
     const gapIndex = slotIndexMap.get(`${gapSlot.date}|${gapSlot.time}|${gapSlot.court}`) ?? -1;
     const candidates = dateGames
       .map((game, idx) => ({ game, idx, slotIndex: slotIndexMap.get(`${game.date}|${game.time}|${game.court}`) ?? 9999 }))
-      .filter((entry) => entry.slotIndex > gapIndex)
+      .filter((entry) => !entry.game.locked && entry.slotIndex > gapIndex)
       .sort((a, b) => {
         const aGapDistance = a.slotIndex - gapIndex;
         const bGapDistance = b.slotIndex - gapIndex;
@@ -3930,6 +3905,10 @@ function repackSingleDateEarlier(schedule, date, config) {
   const dateGames = schedule
     .filter((game) => game.date === date)
     .map((game) => ({ ...game }));
+
+  if (dateGames.some((game) => game.locked)) {
+    return schedule.map((game) => ({ ...game }));
+  }
 
   if (!allSlots.length || dateGames.length <= 1) {
     return schedule.map((game) => ({ ...game }));
@@ -4076,7 +4055,7 @@ function compactSingleCourtEarlier(schedule, date, courtName, config) {
       if (occupied.has(gapKey)) continue;
 
       const laterGames = working
-        .filter((game) => game.date === date && game.court === courtName)
+        .filter((game) => !game.locked && game.date === date && game.court === courtName)
         .map((game) => ({ ...game, slotIndex: courtSlots.findIndex((slot) => slot.time === game.time) }))
         .filter((game) => game.slotIndex > gapIndex)
         .sort((a, b) => a.slotIndex - b.slotIndex);
@@ -4180,7 +4159,7 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
 
       for (const donor of donorDates) {
         const donorGames = nextSchedule
-          .filter((game) => game.date === donor.date)
+          .filter((game) => !game.locked && game.date === donor.date)
           .sort((a, b) => {
             const aTargetCount = countTeamGamesOnDate(nextSchedule, a.home, targetDate) + countTeamGamesOnDate(nextSchedule, a.away, targetDate);
             const bTargetCount = countTeamGamesOnDate(nextSchedule, b.home, targetDate) + countTeamGamesOnDate(nextSchedule, b.away, targetDate);
@@ -4302,7 +4281,7 @@ function rebalanceTowardFinalSaturday(schedule, config) {
 
     for (const target of emptyFinalSlots.slice(0, 6)) {
       const donorGames = nextSchedule
-        .filter((game) => game.date !== finalDate)
+        .filter((game) => !game.locked && game.date !== finalDate)
         .sort((a, b) => {
           const aTeamsOnFinal = countTeamGamesOnDate(nextSchedule, a.home, finalDate) + countTeamGamesOnDate(nextSchedule, a.away, finalDate);
           const bTeamsOnFinal = countTeamGamesOnDate(nextSchedule, b.home, finalDate) + countTeamGamesOnDate(nextSchedule, b.away, finalDate);
@@ -4396,6 +4375,10 @@ function compactScheduleEarlier(schedule, config) {
 
 
 function validateManualMove(schedule, gameToMove, target, config) {
+  if (gameToMove?.locked) {
+    return 'Locked games cannot be moved.';
+  }
+
   if (config.fifthBoysDoubleheaderDate && target.date === config.fifthBoysDoubleheaderDate && gameToMove.division !== '5th Boys') {
     return 'Only 5th Boys can be scheduled on the selected 5th Boys doubleheader date.';
   }
