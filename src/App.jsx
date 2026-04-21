@@ -701,6 +701,103 @@ function findBestTierContinuationCandidate(teams, slotGroups, config, currentSch
   return bestDesperation;
 }
 
+function chooseBestRegularSeasonSlotForPair(teamA, teamB, openSlots, config, allTeams, schedule, options = {}) {
+  const { ignoreRepeatLimit = false, ignoreEarlyCap = false } = options;
+  let best = null;
+  let bestScore = Infinity;
+
+  for (const slot of openSlots) {
+    if (slot.used || !isRegularSeasonDate(slot.date, config)) continue;
+    if (!canPairInSlot(teamA, teamB, slot, config, {
+      ignoreTimeVariety: true,
+      ignoreRepeatLimit,
+      ignoreEarlyCap,
+      allTeams,
+    })) continue;
+
+    const aOnDate = teamA.gamesByDate?.[slot.date] || 0;
+    const bOnDate = teamB.gamesByDate?.[slot.date] || 0;
+    const repeatCount = teamA.opponents?.[teamB.name] || 0;
+    const dateDeficit = getDateMinimumDeficit(schedule, slot.date, config);
+    const score =
+      slotPenalty(teamA, teamB, slot, config) +
+      aOnDate * 900 +
+      bOnDate * 900 +
+      repeatCount * 450 +
+      (isEarlyTime(slot.time) ? (teamA.earlyGames + teamB.earlyGames) * 80 : 0) -
+      dateDeficit * 1200;
+
+    if (score < bestScore) {
+      bestScore = score;
+      best = slot;
+    }
+  }
+
+  return best;
+}
+
+function completeRegularSeasonWithinTiers(teams, openSlots, schedule, config) {
+  const teamsByTier = teams.reduce((acc, team) => {
+    const key = team.division;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(team);
+    return acc;
+  }, {});
+
+  const tiers = Object.values(teamsByTier)
+    .filter((tierTeams) => tierTeams.some((team) => getNeed(team) > 0))
+    .sort((a, b) => {
+      const needA = a.reduce((sum, team) => sum + getNeed(team), 0);
+      const needB = b.reduce((sum, team) => sum + getNeed(team), 0);
+      return needB - needA;
+    });
+
+  for (const tierTeams of tiers) {
+    let progress = true;
+    let safety = 0;
+
+    while (progress && safety < 5000 && tierTeams.some((team) => getNeed(team) > 0)) {
+      safety += 1;
+      progress = false;
+
+      const pairs = [];
+      for (let i = 0; i < tierTeams.length; i += 1) {
+        for (let j = i + 1; j < tierTeams.length; j += 1) {
+          const teamA = tierTeams[i];
+          const teamB = tierTeams[j];
+          if (getNeed(teamA) <= 0 || getNeed(teamB) <= 0) continue;
+          pairs.push({ teamA, teamB, repeatCount: teamA.opponents?.[teamB.name] || 0 });
+        }
+      }
+
+      pairs.sort((a, b) => {
+        const needDiff = (getNeed(b.teamA) + getNeed(b.teamB)) - (getNeed(a.teamA) + getNeed(a.teamB));
+        if (needDiff !== 0) return needDiff;
+        if (a.repeatCount !== b.repeatCount) return a.repeatCount - b.repeatCount;
+        return `${a.teamA.name}-${a.teamB.name}`.localeCompare(`${b.teamA.name}-${b.teamB.name}`, undefined, { numeric: true });
+      });
+
+      for (const pair of pairs) {
+        let slot = chooseBestRegularSeasonSlotForPair(pair.teamA, pair.teamB, openSlots, config, teams, schedule);
+        if (!slot) {
+          slot = chooseBestRegularSeasonSlotForPair(pair.teamA, pair.teamB, openSlots, config, teams, schedule, { ignoreRepeatLimit: true });
+        }
+        if (!slot) {
+          slot = chooseBestRegularSeasonSlotForPair(pair.teamA, pair.teamB, openSlots, config, teams, schedule, {
+            ignoreRepeatLimit: true,
+            ignoreEarlyCap: true,
+          });
+        }
+        if (!slot) continue;
+
+        scheduleGame(schedule, slot, pair.teamA, pair.teamB, { tier: pair.teamA.tierLabel || pair.teamB.tierLabel || '' });
+        progress = true;
+        break;
+      }
+    }
+  }
+}
+
 function findBestTierForceFillCandidate(teams, slotGroups, config) {
   const needyTeams = teams
     .filter((team) => getNeed(team) > 0)
@@ -1115,6 +1212,8 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     tierSummary.push(...tierAssignments.summary);
   }
 
+  completeRegularSeasonWithinTiers(teams, openSlots, schedule, normalized);
+
   let safety = 0;
   while (teams.some((team) => getNeed(team) > 0) && safety < 12000) {
     safety += 1;
@@ -1139,6 +1238,10 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
 
   if (teams.some((team) => getNeed(team) > 0)) {
     ultraLateRescueFillShortTeams(teams, openSlots, schedule, normalized);
+  }
+
+  if (teams.some((team) => getNeed(team) > 0)) {
+    completeRegularSeasonWithinTiers(teams, openSlots, schedule, normalized);
   }
 
   const teamsByTier = teams.reduce((acc, team) => {
