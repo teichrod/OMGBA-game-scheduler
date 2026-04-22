@@ -587,6 +587,16 @@ function buildPreseasonConfig(config) {
       if (totalTarget <= 0 || preseasonEnabledDates <= 0) return [division, 0];
       if (postEnabledDates <= 0 || totalEnabledDates <= 0) return [division, totalTarget];
       let preseasonTarget = Math.round((totalTarget * preseasonEnabledDates) / totalEnabledDates);
+      const isFifthBoys = division === "5th Boys";
+      const hasFifthBoysPreseasonDoubleheader = Boolean(
+        isFifthBoys &&
+        normalized.fifthBoysDoubleheaderDate &&
+        isPreseasonDate(normalized.fifthBoysDoubleheaderDate, normalized)
+      );
+      const maxNoExtraRegularDoubleheaderGames = postEnabledDates;
+      if (isFifthBoys && hasFifthBoysPreseasonDoubleheader) {
+        preseasonTarget = Math.max(preseasonTarget, totalTarget - maxNoExtraRegularDoubleheaderGames);
+      }
       preseasonTarget = Math.max(1, Math.min(totalTarget - 1, preseasonTarget));
       return [division, preseasonTarget];
     })
@@ -1501,6 +1511,306 @@ function finalUnderTargetCompletionPass(teams, openSlots, schedule, config) {
   }
 }
 
+function completeShortFifthBoysPreseasonGames(teams, openSlots, schedule, config) {
+  const fifthBoys = teams.filter((team) => team.division === "5th Boys");
+  if (!fifthBoys.length) return;
+
+  let progress = true;
+  let guard = 0;
+  while (progress && guard < 200) {
+    guard += 1;
+    progress = false;
+    const shortTeams = fifthBoys
+      .filter((team) => getNeed(team) > 0)
+      .sort((a, b) => getNeed(b) - getNeed(a) || fairnessScore(b) - fairnessScore(a));
+
+    if (!shortTeams.length) break;
+
+    for (const teamA of shortTeams) {
+      if (getNeed(teamA) <= 0) continue;
+      const opponents = fifthBoys
+        .filter((teamB) => teamB.id !== teamA.id && getNeed(teamB) > 0)
+        .sort((a, b) => {
+          const repeatDiff = (teamA.opponents?.[a.name] || 0) - (teamA.opponents?.[b.name] || 0);
+          if (repeatDiff !== 0) return repeatDiff;
+          return getNeed(b) - getNeed(a);
+        });
+
+      for (const teamB of opponents) {
+        const slots = openSlots
+          .filter((slot) => !slot.used && isPreseasonDate(slot.date, config))
+          .sort((a, b) => {
+            const aDateLoad = (teamA.gamesByDate?.[a.date] || 0) + (teamB.gamesByDate?.[a.date] || 0);
+            const bDateLoad = (teamA.gamesByDate?.[b.date] || 0) + (teamB.gamesByDate?.[b.date] || 0);
+            if (aDateLoad !== bDateLoad) return aDateLoad - bDateLoad;
+            return compareSlotLike(a, b);
+          });
+        let placed = false;
+        for (const slot of slots) {
+          if (!canPairInSlot(teamA, teamB, slot, config, {
+            ignoreTimeVariety: true,
+            ignoreEarlyCap: true,
+            allTeams: teams,
+          })) {
+            continue;
+          }
+          scheduleGame(schedule, slot, teamA, teamB);
+          progress = true;
+          placed = true;
+          break;
+        }
+        if (placed) break;
+      }
+    }
+  }
+}
+
+function getRegularSeasonDates(config) {
+  return getEnabledGameDates(config).filter((date) => isRegularSeasonDate(date, config));
+}
+
+function getPairCountBetween(teamA, teamB) {
+  return Math.max(
+    Number(teamA?.opponents?.[teamB?.name] || 0),
+    Number(teamB?.opponents?.[teamA?.name] || 0)
+  );
+}
+
+function canPlanRegularSeasonPair(teamA, teamB, pairCounts, config) {
+  if (!teamA || !teamB || teamA.id === teamB.id || teamA.division !== teamB.division) return false;
+  const key = [teamA.id, teamB.id].sort().join("||");
+  const plannedCount = Number(pairCounts[key] || 0);
+  const existingCount = getPairCountBetween(teamA, teamB);
+  return existingCount + plannedCount < getAllowedRepeatLimit(config, teamA.division);
+}
+
+function buildDateMatchingCandidates(groupTeams, needs, pairCounts, config, capacity) {
+  const teams = groupTeams
+    .filter((team) => Number(needs[team.id] || 0) > 0)
+    .sort((a, b) => {
+      const needDiff = Number(needs[b.id] || 0) - Number(needs[a.id] || 0);
+      if (needDiff !== 0) return needDiff;
+      return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true });
+    });
+  const candidates = [];
+
+  function signatureFor(candidate) {
+    return candidate
+      .map((game) => [game.teamA.id, game.teamB.id].sort().join("~"))
+      .sort()
+      .join("|");
+  }
+
+  function walk(index, used, games) {
+    if (games.length >= capacity) {
+      candidates.push(games.map((game) => ({ ...game })));
+      return;
+    }
+
+    let firstIndex = -1;
+    for (let i = index; i < teams.length; i += 1) {
+      if (!used.has(teams[i].id) && Number(needs[teams[i].id] || 0) > 0) {
+        firstIndex = i;
+        break;
+      }
+    }
+
+    if (firstIndex < 0) {
+      candidates.push(games.map((game) => ({ ...game })));
+      return;
+    }
+
+    const teamA = teams[firstIndex];
+
+    for (let i = firstIndex + 1; i < teams.length; i += 1) {
+      const teamB = teams[i];
+      if (used.has(teamB.id) || Number(needs[teamB.id] || 0) <= 0) continue;
+      if (!canPlanRegularSeasonPair(teamA, teamB, pairCounts, config)) continue;
+      used.add(teamA.id);
+      used.add(teamB.id);
+      games.push({ teamA, teamB });
+      walk(firstIndex + 1, used, games);
+      games.pop();
+      used.delete(teamA.id);
+      used.delete(teamB.id);
+    }
+
+    used.add(teamA.id);
+    walk(firstIndex + 1, used, games);
+    used.delete(teamA.id);
+  }
+
+  walk(0, new Set(), []);
+
+  const seen = new Set();
+  return candidates
+    .filter((candidate) => {
+      const signature = signatureFor(candidate);
+      if (seen.has(signature)) return false;
+      seen.add(signature);
+      return true;
+    })
+    .sort((a, b) => {
+      if (b.length !== a.length) return b.length - a.length;
+      const aNeed = a.reduce((sum, game) => sum + Number(needs[game.teamA.id] || 0) + Number(needs[game.teamB.id] || 0), 0);
+      const bNeed = b.reduce((sum, game) => sum + Number(needs[game.teamA.id] || 0) + Number(needs[game.teamB.id] || 0), 0);
+      if (bNeed !== aNeed) return bNeed - aNeed;
+      const aRepeats = a.reduce((sum, game) => sum + getPairCountBetween(game.teamA, game.teamB), 0);
+      const bRepeats = b.reduce((sum, game) => sum + getPairCountBetween(game.teamA, game.teamB), 0);
+      return aRepeats - bRepeats;
+    })
+    .slice(0, 160);
+}
+
+function buildRegularSeasonDatePlanForGroup(groupTeams, dates, slotCapacityByDate, config) {
+  const needs = Object.fromEntries(groupTeams.map((team) => [team.id, getNeed(team)]));
+  const totalNeed = Object.values(needs).reduce((sum, value) => sum + Number(value || 0), 0);
+  if (totalNeed === 0) return [];
+  if (totalNeed % 2 !== 0) return null;
+
+  const pairCounts = {};
+  const orderedDates = [...dates].sort((a, b) => parseShortDate(a) - parseShortDate(b));
+
+  function hasEnoughFutureDates(dateIndex) {
+    const remainingDates = Math.max(0, orderedDates.length - dateIndex);
+    return groupTeams.every((team) => Number(needs[team.id] || 0) <= remainingDates);
+  }
+
+  function remainingSlotCapacity(dateIndex) {
+    return orderedDates
+      .slice(dateIndex)
+      .reduce((sum, date) => sum + Math.max(0, Number(slotCapacityByDate[date] || 0)), 0);
+  }
+
+  function search(dateIndex) {
+    const remainingNeed = Object.values(needs).reduce((sum, value) => sum + Number(value || 0), 0);
+    if (remainingNeed === 0) return [];
+    if (dateIndex >= orderedDates.length) return null;
+    if (remainingNeed > remainingSlotCapacity(dateIndex) * 2) return null;
+    if (!hasEnoughFutureDates(dateIndex)) return null;
+
+    const date = orderedDates[dateIndex];
+    const capacity = Math.min(
+      Math.floor(remainingNeed / 2),
+      Math.max(0, Number(slotCapacityByDate[date] || 0)),
+      Math.floor(groupTeams.length / 2)
+    );
+    const candidates = buildDateMatchingCandidates(groupTeams, needs, pairCounts, config, capacity);
+
+    for (const candidate of candidates) {
+      for (const game of candidate) {
+        const key = [game.teamA.id, game.teamB.id].sort().join("||");
+        pairCounts[key] = Number(pairCounts[key] || 0) + 1;
+        needs[game.teamA.id] -= 1;
+        needs[game.teamB.id] -= 1;
+      }
+
+      const next = search(dateIndex + 1);
+      if (next) {
+        return [
+          ...candidate.map((game) => ({ date, teamA: game.teamA, teamB: game.teamB })),
+          ...next,
+        ];
+      }
+
+      for (const game of candidate) {
+        const key = [game.teamA.id, game.teamB.id].sort().join("||");
+        pairCounts[key] -= 1;
+        needs[game.teamA.id] += 1;
+        needs[game.teamB.id] += 1;
+      }
+    }
+
+    return null;
+  }
+
+  return search(0);
+}
+
+function chooseSlotForPlannedRegularSeasonGame(teamA, teamB, date, openSlots, config, allTeams) {
+  const dateSlots = openSlots
+    .filter((slot) => !slot.used && slot.date === date && isRegularSeasonDate(slot.date, config))
+    .sort((a, b) => {
+      const penaltyDiff = slotPenalty(teamA, teamB, a, config) - slotPenalty(teamA, teamB, b, config);
+      if (penaltyDiff !== 0) return penaltyDiff;
+      return compareSlotLike(a, b);
+    });
+  const optionSets = [
+    { ignoreTimeVariety: false, ignoreEarlyCap: false },
+    { ignoreTimeVariety: true, ignoreEarlyCap: false },
+    { ignoreTimeVariety: true, ignoreEarlyCap: true },
+  ];
+
+  for (const options of optionSets) {
+    for (const slot of dateSlots) {
+      if (canPairInSlot(teamA, teamB, slot, config, { ...options, allTeams })) {
+        return slot;
+      }
+    }
+  }
+
+  return null;
+}
+
+function completeRegularSeasonWithDatePlans(teams, openSlots, schedule, config, unscheduled) {
+  const regularDates = getRegularSeasonDates(config);
+  const slotCapacityByDate = Object.fromEntries(
+    regularDates.map((date) => [
+      date,
+      openSlots.filter((slot) => !slot.used && slot.date === date).length,
+    ])
+  );
+  const teamsByTier = teams.reduce((acc, team) => {
+    const key = team.division;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(team);
+    return acc;
+  }, {});
+
+  const groups = Object.entries(teamsByTier)
+    .map(([key, groupTeams]) => ({ key, groupTeams }))
+    .sort((a, b) => {
+      const aNeed = a.groupTeams.reduce((sum, team) => sum + getNeed(team), 0);
+      const bNeed = b.groupTeams.reduce((sum, team) => sum + getNeed(team), 0);
+      return bNeed - aNeed;
+    });
+
+  for (const group of groups) {
+    if (!group.groupTeams.some((team) => getNeed(team) > 0)) continue;
+    const groupNeed = group.groupTeams.reduce((sum, team) => sum + getNeed(team), 0);
+    const maxNeed = Math.max(...group.groupTeams.map((team) => getNeed(team)));
+    if (groupNeed % 2 !== 0 || maxNeed > regularDates.length || group.groupTeams.length > 8) {
+      continue;
+    }
+    const plan = buildRegularSeasonDatePlanForGroup(group.groupTeams, regularDates, slotCapacityByDate, config);
+    if (!plan) {
+      unscheduled.push({
+        matchup: group.key.replace(/::/g, ' - '),
+        reason: 'Could not build an exact regular-season matchup plan for this tier.',
+        suggestion: group.groupTeams
+          .filter((team) => getNeed(team) > 0)
+          .map((team) => `${team.name} needs ${getNeed(team)}`)
+          .join('; '),
+      });
+      continue;
+    }
+
+    for (const item of plan) {
+      const slot = chooseSlotForPlannedRegularSeasonGame(item.teamA, item.teamB, item.date, openSlots, config, teams);
+      if (!slot) {
+        unscheduled.push({
+          matchup: `${item.teamA.name} vs ${item.teamB.name}`,
+          reason: `No open slot could hold this planned game on ${item.date}.`,
+          suggestion: 'Enable another court or time on that date, or move a locked game.',
+        });
+        continue;
+      }
+      scheduleGame(schedule, slot, item.teamA, item.teamB, { tier: item.teamA.tierLabel || item.teamB.tierLabel || '' });
+      slotCapacityByDate[item.date] = Math.max(0, Number(slotCapacityByDate[item.date] || 0) - 1);
+    }
+  }
+}
+
 function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreReports = []) {
   const normalized = normalizeConfig(config);
   const teams = buildTeams(normalized).map((team) => ({ ...team, baseDivision: team.division, tierLabel: '' }));
@@ -1530,6 +1840,7 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     tierSummary.push(...tierAssignments.summary);
   }
 
+  completeRegularSeasonWithDatePlans(teams, openSlots, schedule, normalized, unscheduled);
   completeRegularSeasonWithinTiers(teams, openSlots, schedule, normalized);
 
   let safety = 0;
@@ -1597,7 +1908,8 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     });
   }
 
-  const result = buildResultFromSchedule(schedule, normalized, unscheduled);
+  const unresolvedUnscheduled = teams.some((team) => getNeed(team) > 0) ? unscheduled : [];
+  const result = buildResultFromSchedule(schedule, normalized, unresolvedUnscheduled);
   return {
     ...result,
     seasonPhase: 'regular',
@@ -2754,6 +3066,67 @@ function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unschedule
   }
 }
 
+function scheduleFifthBoysPreseasonRoundRobinDates(teams, openSlots, schedule, unscheduled, config) {
+  if (!config.fifthBoysDoubleheaderDate) return;
+  const teamList = teams.filter((team) => team.division === "5th Boys");
+  if (teamList.length < 2 || teamList.length % 2 === 1) return;
+
+  const targetGames = Number(config.divisionGames?.["5th Boys"] || 0);
+  const maxCurrentGames = Math.max(...teamList.map((team) => team.gamesScheduled || 0));
+  const roundsNeeded = Math.max(0, targetGames - maxCurrentGames);
+  if (!roundsNeeded) return;
+
+  const dates = getEnabledGameDates(config)
+    .filter((date) => isPreseasonDate(date, config) && date !== config.fifthBoysDoubleheaderDate)
+    .sort((a, b) => parseShortDate(a) - parseShortDate(b));
+  const rounds = buildRoundRobinRounds(teamList);
+  const firstUnusedRoundIndex = 2;
+
+  for (let i = 0; i < roundsNeeded; i += 1) {
+    const date = dates[i];
+    const pairings = rounds[firstUnusedRoundIndex + i] || [];
+    if (!date || pairings.length < teamList.length / 2) {
+      unscheduled.push({
+        matchup: "5th Boys preseason",
+        reason: "Not enough preseason Saturdays to give 5th Boys their required pre-split games.",
+        suggestion: "Enable another November/December Saturday or reduce the 5th Boys game target.",
+      });
+      return;
+    }
+
+    const slots = getFreeSlotsForDate(openSlots, date);
+    if (slots.length < pairings.length) {
+      unscheduled.push({
+        matchup: `5th Boys preseason ${date}`,
+        reason: "Not enough open slots for a full 5th Boys round.",
+        suggestion: "Enable more courts or time slots on this preseason date.",
+      });
+      return;
+    }
+
+    for (const pairing of pairings) {
+      const [teamA, teamB] = pairing;
+      const slot = slots.find((candidate) =>
+        !candidate.used &&
+        canPairInSlot(teamA, teamB, candidate, config, {
+          ignoreTimeVariety: true,
+          ignoreEarlyCap: true,
+          allTeams: teams,
+        })
+      );
+      if (!slot) {
+        unscheduled.push({
+          matchup: `${teamA?.name || "5th Boys"} vs ${teamB?.name || "5th Boys"}`,
+          reason: `Could not place the planned 5th Boys preseason round on ${date}.`,
+          suggestion: "Check locked games and court availability on that date.",
+        });
+        return;
+      }
+      scheduleGame(schedule, slot, teamA, teamB);
+    }
+  }
+}
+
 function chooseBestCandidate(team, allTeams, slotGroups, config) {
   const divisionTeams = allTeams.filter(
     (candidate) =>
@@ -3423,13 +3796,16 @@ function generateScheduleEngine(config, lockedGames = []) {
   applyLockedGames(schedule, teams, openSlots, config, lockedGames, unscheduled);
   pushRepeatTrace('After locked games');
   scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config);
+  scheduleFifthBoysPreseasonRoundRobinDates(teams, openSlots, schedule, unscheduled, config);
   pushRepeatTrace('After 5th Boys doubleheader day');
 
   const divisionPlans = {};
   for (const division of DIVISIONS) {
     const divisionTeams = teams.filter((team) => team.division === division);
     const targetGames = Number(config.divisionGames[division] || 0);
-    divisionPlans[division] = buildDivisionMatchPlan(divisionTeams, targetGames, config, division);
+    divisionPlans[division] = divisionTeams.every((team) => getNeed(team) <= 0)
+      ? []
+      : buildDivisionMatchPlan(divisionTeams, targetGames, config, division);
   }
 
   seedEarlyPreseasonDatesFor5thBoys(teams, divisionPlans, openSlots, schedule, config);
@@ -3446,6 +3822,7 @@ function generateScheduleEngine(config, lockedGames = []) {
 
   pushRepeatTrace('After planned division leftovers');
   forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, config);
+  completeShortFifthBoysPreseasonGames(teams, openSlots, schedule, config);
   pushRepeatTrace('After completion fallback');
 
   let improvedSchedule = schedule.map((game) => ({ ...game }));
