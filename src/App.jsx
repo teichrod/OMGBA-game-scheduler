@@ -618,7 +618,7 @@ function getTierStandingScore(row) {
     + Number(row.pointDiff || 0);
 }
 
-function buildRegularSeasonTierAssignments(teams, standingsRows) {
+function buildRegularSeasonTierAssignments(teams, standingsRows, config = DEFAULT_CONFIG) {
   const count = teams.length;
   if (count < 12) {
     return {
@@ -646,10 +646,17 @@ function buildRegularSeasonTierAssignments(teams, standingsRows) {
   const remainingParity = (group) => group.reduce((sum, team) => sum + Math.max(0, Number(team.targetGames || 0) - Number(team.gamesScheduled || 0)), 0) % 2;
   const rankIndex = new Map(orderedTeams.map((team, index) => [team.id, index]));
   const remainingNeed = (team) => Math.max(0, Number(team.targetGames || 0) - Number(team.gamesScheduled || 0));
+  const remainingRepeatCapacity = (team, opponent) => {
+    let cap = 0;
+    while (canAddPairUnderRepeatPolicy(team, opponent, config, cap, { date: getRegularSeasonDates(config)[0] || '' })) {
+      cap += 1;
+    }
+    return cap;
+  };
   const repeatCapacityWithinGroup = (team, group) =>
     group
       .filter((opponent) => opponent.id !== team.id)
-      .reduce((sum, opponent) => sum + Math.max(0, 2 - Number(team.opponents?.[opponent.name] || 0)), 0);
+      .reduce((sum, opponent) => sum + remainingRepeatCapacity(team, opponent), 0);
   const groupFeasibilityPenalty = (group) => {
     const totalNeed = group.reduce((sum, team) => sum + remainingNeed(team), 0);
     const teamDeficit = group.reduce((sum, team) => {
@@ -660,7 +667,7 @@ function buildRegularSeasonTierAssignments(teams, standingsRows) {
     const pairCapacity = group.reduce((sum, team, index) => {
       for (let i = index + 1; i < group.length; i += 1) {
         const opponent = group[i];
-        sum += Math.max(0, 2 - Number(team.opponents?.[opponent.name] || 0));
+        sum += remainingRepeatCapacity(team, opponent);
       }
       return sum;
     }, 0);
@@ -911,16 +918,20 @@ function buildRemainingPairPlanForGroup(groupTeams, config) {
       division: team.division,
       need: getNeed(team),
       opponents: { ...(team.opponents || {}) },
+      scheduledGames: [...(team.scheduledGames || [])],
     }))
     .filter((team) => team.need > 0);
-  const repeatLimit = getAllowedRepeatLimit(config, groupTeams[0]?.division || '');
   if (working.length < 2) return [];
 
   const initialNeeds = working.map((team) => team.need);
   const initialCaps = working.map((teamA, i) =>
     working.map((teamB, j) => {
       if (i === j) return 0;
-      return Math.max(0, repeatLimit - (teamA.opponents[teamB.name] || 0));
+      let cap = 0;
+      while (canAddPairUnderRepeatPolicy(teamA, teamB, config, cap, { date: getRegularSeasonDates(config)[0] || '' })) {
+        cap += 1;
+      }
+      return cap;
     })
   );
   const memo = new Set();
@@ -1035,8 +1046,7 @@ function chooseLastChancePairForSlot(groupTeams, slot, config, allTeams) {
     for (let j = i + 1; j < needy.length; j += 1) {
       const teamA = needy[i];
       const teamB = needy[j];
-      const repeatLimit = getAllowedRepeatLimit(config, teamA.division);
-      if ((teamA.opponents?.[teamB.name] || 0) >= repeatLimit || (teamB.opponents?.[teamA.name] || 0) >= repeatLimit) continue;
+      if (!canAddPairUnderRepeatPolicy(teamA, teamB, config, 0, slot)) continue;
       if (!canPairInSlot(teamA, teamB, slot, config, {
         ignoreTimeVariety: true,
         ignoreRepeatLimit: false,
@@ -1139,7 +1149,7 @@ function completeShortFifthBoysByTier(teams, openSlots, schedule, config) {
           .filter((opponent) =>
             opponent.id !== team.id &&
             getNeed(opponent) > 0 &&
-            (team.opponents?.[opponent.name] || 0) < getAllowedRepeatLimit(config, team.division)
+            canAddPairUnderRepeatPolicy(team, opponent, config, 0, { date: getRegularSeasonDates(config)[0] || '' })
           )
           .sort((a, b) => {
             const needDiff = getNeed(b) - getNeed(a);
@@ -1183,11 +1193,10 @@ function buildShortTeamDiagnostics(team, groupTeams, openSlots, config, allTeams
     (!regularSeasonOnly || isRegularSeasonDate(slot.date, config)) &&
     canUseLastChanceSlot(team, slot, config)
   );
-  const repeatLimit = getAllowedRepeatLimit(config, team.division);
   const opponentsUnderRepeatLimit = groupTeams.filter((opponent) =>
     opponent.id !== team.id &&
     getNeed(opponent) > 0 &&
-    (team.opponents?.[opponent.name] || 0) < repeatLimit
+    canAddPairUnderRepeatPolicy(team, opponent, config, 0, { date: getRegularSeasonDates(config)[0] || '' })
   );
 
   let legalPairSlots = 0;
@@ -1311,8 +1320,7 @@ function canPairInSlotTrueForceFill(teamA, teamB, slot, config, allTeams = [], o
   if (teamA.id === teamB.id || teamA.division !== teamB.division || slot.used) return false;
   if ((teamA.gamesScheduled || 0) >= (teamA.targetGames || 0)) return false;
   if ((teamB.gamesScheduled || 0) >= (teamB.targetGames || 0)) return false;
-  const repeatLimit = getAllowedRepeatLimit(config, teamA.division);
-  if ((teamA.opponents?.[teamB.name] || 0) >= repeatLimit || (teamB.opponents?.[teamA.name] || 0) >= repeatLimit) return false;
+  if (!canAddPairUnderRepeatPolicy(teamA, teamB, config, 0, slot)) return false;
 
   if (hasSimultaneousConflict(teamA.name, slot, allTeams, config, [teamB.name])) return false;
   if (hasSimultaneousConflict(teamB.name, slot, allTeams, config, [teamA.name])) return false;
@@ -1422,8 +1430,7 @@ function canPairInSlotUltraLateRescue(teamA, teamB, slot, config, allTeams = [],
   if (!allowCrossTier && teamA.division !== teamB.division) return false;
   if ((teamA.gamesScheduled || 0) >= (teamA.targetGames || 0)) return false;
   if ((teamB.gamesScheduled || 0) >= (teamB.targetGames || 0)) return false;
-  const repeatLimit = getAllowedRepeatLimit(config, teamA.division);
-  if ((teamA.opponents?.[teamB.name] || 0) >= repeatLimit || (teamB.opponents?.[teamA.name] || 0) >= repeatLimit) return false;
+  if (!canAddPairUnderRepeatPolicy(teamA, teamB, config, 0, slot)) return false;
 
   if (hasSimultaneousConflict(teamA.name, slot, allTeams, config, [teamB.name])) return false;
   if (hasSimultaneousConflict(teamB.name, slot, allTeams, config, [teamA.name])) return false;
@@ -1819,12 +1826,29 @@ function getPairCountBetween(teamA, teamB) {
   );
 }
 
+function hadPreseasonMeetingBetween(teamA, teamB, config) {
+  if (!teamA || !teamB) return false;
+  return (teamA.scheduledGames || []).some(
+    (game) => game.opponentName === teamB.name && isPreseasonDate(game.date, config)
+  ) || (teamB.scheduledGames || []).some(
+    (game) => game.opponentName === teamA.name && isPreseasonDate(game.date, config)
+  );
+}
+
+function canAddPairUnderRepeatPolicy(teamA, teamB, config, plannedCount = 0, slot = null) {
+  const currentCount = getPairCountBetween(teamA, teamB) + Number(plannedCount || 0);
+  const repeatLimit = getAllowedRepeatLimit(config, teamA?.division || '');
+  if (currentCount >= repeatLimit) return false;
+  if (!slot || !isRegularSeasonDate(slot.date, config)) return true;
+  if (currentCount <= 0) return true;
+  return hadPreseasonMeetingBetween(teamA, teamB, config);
+}
+
 function canPlanRegularSeasonPair(teamA, teamB, pairCounts, config) {
   if (!teamA || !teamB || teamA.id === teamB.id || teamA.division !== teamB.division) return false;
   const key = [teamA.id, teamB.id].sort().join("||");
   const plannedCount = Number(pairCounts[key] || 0);
-  const existingCount = getPairCountBetween(teamA, teamB);
-  return existingCount + plannedCount < getAllowedRepeatLimit(config, teamA.division);
+  return canAddPairUnderRepeatPolicy(teamA, teamB, config, plannedCount, { date: getRegularSeasonDates(config)[0] || '' });
 }
 
 function buildDateMatchingCandidates(groupTeams, needs, pairCounts, config, capacity) {
@@ -2073,7 +2097,7 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
 
   for (const division of DIVISIONS) {
     const divisionTeams = teams.filter((team) => team.baseDivision === division);
-    const tierAssignments = buildRegularSeasonTierAssignments(divisionTeams, standingsByDivision[division] || []);
+    const tierAssignments = buildRegularSeasonTierAssignments(divisionTeams, standingsByDivision[division] || [], normalized);
     for (const group of tierAssignments.groups) {
       for (const team of group.teams) {
         team.division = group.key;
@@ -2783,11 +2807,7 @@ function canPairInSlot(teamA, teamB, slot, config, options = {}) {
   if (hasSimultaneousConflict(teamA.name, slot, allTeams, config, [teamB.name])) return false;
   if (hasSimultaneousConflict(teamB.name, slot, allTeams, config, [teamA.name])) return false;
 
-  const repeatLimit = getAllowedRepeatLimit(config, teamA.division);
-  if (!ignoreRepeatLimit) {
-    if ((teamA.opponents[teamB.name] || 0) >= repeatLimit) return false;
-    if ((teamB.opponents[teamA.name] || 0) >= repeatLimit) return false;
-  }
+  if (!ignoreRepeatLimit && !canAddPairUnderRepeatPolicy(teamA, teamB, config, 0, slot)) return false;
 
   const aOnDate = teamA.gamesByDate[slot.date] || 0;
   const bOnDate = teamB.gamesByDate[slot.date] || 0;
@@ -3417,13 +3437,13 @@ function chooseBestCandidate(team, allTeams, slotGroups, config) {
       const remainingOptionsA = divisionTeams.filter(
         (other) =>
           other.id !== opponent.id &&
-          (team.opponents[other.name] || 0) < getAllowedRepeatLimit(config, team.division)
+          canAddPairUnderRepeatPolicy(team, other, config, 0, group.slots[0] || null)
       ).length;
 
       const remainingOptionsB = divisionTeams.filter(
         (other) =>
           other.id !== team.id &&
-          (opponent.opponents[other.name] || 0) < getAllowedRepeatLimit(config, opponent.division)
+          canAddPairUnderRepeatPolicy(opponent, other, config, 0, group.slots[0] || null)
       ).length;
 
       const constraintScore = (Math.min(10, remainingOptionsA) * 20) + (Math.min(10, remainingOptionsB) * 20);
@@ -3625,7 +3645,7 @@ function chooseCompletionFirstCandidate(team, allTeams, slotGroups, config, opti
         const slotDateDeficit = getDateMinimumDeficit(currentSchedule, slot.date, config);
         const teamRepeatedPartners = countRepeatedOpponentPartners(team);
         const opponentRepeatedPartners = countRepeatedOpponentPartners(opponent);
-        const createsNewRepeatPair = repeatCount >= getAllowedRepeatLimit(config, team.division);
+        const createsNewRepeatPair = repeatCount > 0 && !hadPreseasonMeetingBetween(team, opponent, config);
         const divisionPool = [team, ...divisionTeams];
         const teamUnusedOpponents = teamUnusedOpponentsBase;
         const opponentUnusedOpponents = countUnusedOpponentsForTeam(opponent, divisionPool);
@@ -4509,11 +4529,15 @@ function rebuildAvoidableRepeatDivisions(schedule, config) {
 }
 function getRepeatedOpponentViolations(schedule, config) {
   const pairCounts = {};
+  const preseasonPairCounts = {};
   for (const game of Array.isArray(schedule) ? schedule : []) {
     if (!game?.division || !game?.home || !game?.away) continue;
     const teams = [game.home, game.away].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     const key = `${game.division}||${teams[0]}||${teams[1]}`;
     pairCounts[key] = (pairCounts[key] || 0) + 1;
+    if (isPreseasonDate(game.date, config)) {
+      preseasonPairCounts[key] = (preseasonPairCounts[key] || 0) + 1;
+    }
   }
 
   const pairViolations = [];
@@ -4522,14 +4546,19 @@ function getRepeatedOpponentViolations(schedule, config) {
   for (const [key, count] of Object.entries(pairCounts)) {
     const [division, teamA, teamB] = key.split("||");
     const allowed = getAllowedRepeatLimit(config, division);
-    if (count <= allowed) continue;
+    const preseasonCount = preseasonPairCounts[key] || 0;
+    const violatesRepeatCap = count > allowed;
+    const violatesPreseasonRepeatRule = count > 1 && preseasonCount <= 0;
+    if (!violatesRepeatCap && !violatesPreseasonRepeatRule) continue;
     pairViolations.push({
       division,
       teamA,
       teamB,
       count,
-      allowed,
-      extraGames: count - allowed,
+      allowed: violatesPreseasonRepeatRule ? 1 : allowed,
+      preseasonCount,
+      reason: violatesPreseasonRepeatRule ? 'Repeat opponent did not meet in preseason' : 'Repeat cap exceeded',
+      extraGames: violatesPreseasonRepeatRule ? count - 1 : count - allowed,
     });
     teamViolationCounts[teamA] = (teamViolationCounts[teamA] || 0) + 1;
     teamViolationCounts[teamB] = (teamViolationCounts[teamB] || 0) + 1;
