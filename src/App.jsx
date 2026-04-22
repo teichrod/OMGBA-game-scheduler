@@ -1670,6 +1670,86 @@ function completeShortPreseasonGamesByDivision(teams, openSlots, schedule, confi
   }
 }
 
+function rebalanceShortPreseasonTeamsByReplacingGames(teams, schedule, config) {
+  let progress = true;
+  let guard = 0;
+  const teamMap = Object.fromEntries(teams.map((team) => [team.name, team]));
+
+  while (progress && guard < 300) {
+    guard += 1;
+    progress = false;
+    const shortTeams = teams
+      .filter((team) => getNeed(team) > 0)
+      .sort((a, b) => getNeed(b) - getNeed(a) || (a.gamesScheduled || 0) - (b.gamesScheduled || 0));
+
+    for (const shortTeam of shortTeams) {
+      if (getNeed(shortTeam) <= 0) continue;
+      let placedForThisTeam = false;
+      const candidates = schedule
+        .map((game, index) => ({ game, index }))
+        .filter(({ game }) =>
+          !game.locked &&
+          game.division === shortTeam.division &&
+          isPreseasonDate(game.date, config) &&
+          game.date !== config.fifthBoysDoubleheaderDate &&
+          game.home !== shortTeam.name &&
+          game.away !== shortTeam.name
+        )
+        .sort((a, b) => compareSlotLike(a.game, b.game));
+
+      for (const { game, index } of candidates) {
+        const homeTeam = teamMap[game.home];
+        const awayTeam = teamMap[game.away];
+        if (!homeTeam || !awayTeam) continue;
+
+        const replacements = [
+          { donor: homeTeam, opponent: awayTeam, shortIsHome: true },
+          { donor: awayTeam, opponent: homeTeam, shortIsHome: false },
+        ].sort((a, b) => {
+          const aDonorGames = a.donor.gamesScheduled || 0;
+          const bDonorGames = b.donor.gamesScheduled || 0;
+          if (bDonorGames !== aDonorGames) return bDonorGames - aDonorGames;
+          return (a.opponent.opponents?.[shortTeam.name] || 0) - (b.opponent.opponents?.[shortTeam.name] || 0);
+        });
+
+        for (const replacement of replacements) {
+          const { donor, opponent, shortIsHome } = replacement;
+          if ((donor.gamesScheduled || 0) <= (shortTeam.gamesScheduled || 0)) continue;
+
+          removeGameFromTeam(homeTeam, game, awayTeam.name, true);
+          removeGameFromTeam(awayTeam, game, homeTeam.name, false);
+
+          const slot = { date: game.date, time: game.time, court: game.court, used: false };
+          const canReplace = canPairInSlot(shortTeam, opponent, slot, config, {
+            ignoreTimeVariety: true,
+            ignoreEarlyCap: false,
+            allTeams: teams,
+          });
+
+          if (canReplace) {
+            const nextGame = {
+              ...game,
+              home: shortIsHome ? shortTeam.name : opponent.name,
+              away: shortIsHome ? opponent.name : shortTeam.name,
+            };
+            schedule[index] = nextGame;
+            addGameToTeam(shortIsHome ? shortTeam : opponent, nextGame, shortIsHome ? opponent.name : shortTeam.name, true);
+            addGameToTeam(shortIsHome ? opponent : shortTeam, nextGame, shortIsHome ? shortTeam.name : opponent.name, false);
+            progress = true;
+            placedForThisTeam = true;
+            break;
+          }
+
+          addGameToTeam(homeTeam, game, awayTeam.name, true);
+          addGameToTeam(awayTeam, game, homeTeam.name, false);
+        }
+
+        if (placedForThisTeam || getNeed(shortTeam) <= 0) break;
+      }
+    }
+  }
+}
+
 function getRegularSeasonDates(config) {
   return getEnabledGameDates(config).filter((date) => isRegularSeasonDate(date, config));
 }
@@ -2684,7 +2764,7 @@ function canPairInSlot(teamA, teamB, slot, config, options = {}) {
     }
 
     if (slot.date === config.fifthBoysDoubleheaderDate && baseDivisionA !== "5th Boys") {
-      if (aOnDate >= 1 || bOnDate >= 1 || baseDivisionB === "5th Boys") return false;
+      return false;
     }
   }
 
@@ -3960,6 +4040,7 @@ function generateScheduleEngine(config, lockedGames = []) {
   forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, config);
   completeShortPreseasonGamesByDivision(teams, openSlots, schedule, config);
   completeShortFifthBoysPreseasonGames(teams, openSlots, schedule, config);
+  rebalanceShortPreseasonTeamsByReplacingGames(teams, schedule, config);
   pushRepeatTrace('After completion fallback');
 
   let improvedSchedule = schedule.map((game) => ({ ...game }));
