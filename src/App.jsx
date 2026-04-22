@@ -6155,6 +6155,54 @@ function getMarginCategoryScore(pointDiff) {
   return 0;
 }
 
+function clampRating(value, min = 0, max = 100) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return min;
+  return Math.max(min, Math.min(max, numeric));
+}
+
+function buildOpponentAdjustedRatings(rowValues, games) {
+  const ratings = Object.fromEntries(rowValues.map((row) => [row.team, row.gamesPlayed > 0 ? 50 : 0]));
+  const gamesByTeam = Object.fromEntries(rowValues.map((row) => [row.team, []]));
+
+  for (const game of Array.isArray(games) ? games : []) {
+    if (gamesByTeam[game.home]) gamesByTeam[game.home].push(game);
+    if (gamesByTeam[game.away]) gamesByTeam[game.away].push(game);
+  }
+
+  for (let pass = 0; pass < 10; pass += 1) {
+    const nextRatings = {};
+
+    for (const row of rowValues) {
+      const teamGames = gamesByTeam[row.team] || [];
+      if (!teamGames.length) {
+        nextRatings[row.team] = 0;
+        continue;
+      }
+
+      const gameRatings = teamGames.map((game) => {
+        const isHome = game.home === row.team;
+        const opponent = isHome ? game.away : game.home;
+        const teamScore = isHome ? game.homeScore : game.awayScore;
+        const opponentScore = isHome ? game.awayScore : game.homeScore;
+        const margin = teamScore - opponentScore;
+        const resultPoints = margin > 0 ? 8 : margin < 0 ? -8 : 0;
+        const marginPoints = clampRating(margin, -10, 10) / 2;
+        const opponentAdjustment = ((ratings[opponent] ?? 50) - 50) * 0.45;
+        return 50 + resultPoints + marginPoints + opponentAdjustment;
+      });
+
+      const averageGameRating = gameRatings.reduce((sum, value) => sum + value, 0) / gameRatings.length;
+      const recordAnchor = 50 + ((row.winPct || 0) - 0.5) * 12;
+      nextRatings[row.team] = clampRating((averageGameRating * 0.85) + (recordAnchor * 0.15));
+    }
+
+    Object.assign(ratings, nextRatings);
+  }
+
+  return ratings;
+}
+
 function buildDivisionStandings(schedule, scoreReports) {
   const standingsByDivision = {};
   const divisionGames = {};
@@ -6231,21 +6279,23 @@ function buildDivisionStandings(schedule, scoreReports) {
   return Object.fromEntries(
     Object.entries(standingsByDivision).map(([division, rows]) => {
       const rowValues = Object.values(rows);
-      const rowMap = Object.fromEntries(rowValues.map((row) => [row.team, row]));
 
       for (const row of rowValues) {
         const totalResults = row.wins + row.losses + row.ties;
         row.winPct = totalResults > 0 ? (row.wins + row.ties * 0.5) / totalResults : 0;
+        row.avgMarginCategory = row.gamesPlayed > 0 ? row.marginCategoryTotal / row.gamesPlayed : 0;
       }
 
+      const adjustedRatings = buildOpponentAdjustedRatings(rowValues, divisionGames[division] || []);
+
       for (const row of rowValues) {
-        const opponentWinPcts = (row.opponents || [])
-          .map((teamName) => rowMap[teamName]?.winPct || 0);
-        row.sos = opponentWinPcts.length
-          ? opponentWinPcts.reduce((sum, value) => sum + value, 0) / opponentWinPcts.length
+        const opponentRatings = (row.opponents || [])
+          .map((teamName) => adjustedRatings[teamName])
+          .filter((value) => Number.isFinite(Number(value)));
+        row.sos = opponentRatings.length
+          ? (opponentRatings.reduce((sum, value) => sum + value, 0) / opponentRatings.length) / 100
           : 0;
-        row.avgMarginCategory = row.gamesPlayed > 0 ? row.marginCategoryTotal / row.gamesPlayed : 0;
-        row.performanceRating = (row.winPct * 100) + (row.sos * 50) + (row.avgMarginCategory * 10);
+        row.performanceRating = adjustedRatings[row.team] || 0;
       }
 
       return [
@@ -8089,10 +8139,12 @@ export default function App() {
       PF: "Points For",
       PA: "Points Against",
       PD: "Point Differential",
-      SOS: "Strength of Schedule (average opponent win percentage)",
-      PR: "Performance Rating (Win% × 100 + SOS × 50 + Avg margin tier × 10)",
+      SOS: "Strength of Schedule (average opponent PR, scaled 0-1)",
+      PR: "Performance Rating (iterative opponent-adjusted game rating)",
     };
-    const tooltip = tooltipMap[label] || label;
+    const tooltip = label === "PR"
+      ? "Performance Rating (iterative opponent-adjusted game rating)"
+      : tooltipMap[label] || label;
     return (
       <th
         style={{ ...styles.th, textAlign: align, cursor: "pointer", userSelect: "none" }}
