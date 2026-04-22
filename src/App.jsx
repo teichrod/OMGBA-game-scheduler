@@ -809,63 +809,107 @@ function completeRegularSeasonWithinTiers(teams, openSlots, schedule, config) {
 }
 
 function buildRemainingPairPlanForGroup(groupTeams, config) {
-  const working = groupTeams.map((team) => ({
-    id: team.id,
-    name: team.name,
-    division: team.division,
-    need: getNeed(team),
-    opponents: { ...(team.opponents || {}) },
-  }));
-  const byId = Object.fromEntries(working.map((team) => [team.id, team]));
+  const working = groupTeams
+    .map((team) => ({
+      id: team.id,
+      name: team.name,
+      division: team.division,
+      need: getNeed(team),
+      opponents: { ...(team.opponents || {}) },
+    }))
+    .filter((team) => team.need > 0);
   const repeatLimit = getAllowedRepeatLimit(config, groupTeams[0]?.division || '');
-  const plan = [];
-  let safety = 0;
+  if (working.length < 2) return [];
 
-  const remainingCapacity = (team) =>
-    working
-      .filter((opponent) => opponent.id !== team.id && opponent.need > 0)
-      .reduce((sum, opponent) => sum + Math.max(0, repeatLimit - (team.opponents[opponent.name] || 0)), 0);
+  const initialNeeds = working.map((team) => team.need);
+  const initialCaps = working.map((teamA, i) =>
+    working.map((teamB, j) => {
+      if (i === j) return 0;
+      return Math.max(0, repeatLimit - (teamA.opponents[teamB.name] || 0));
+    })
+  );
+  const memo = new Set();
 
-  while (working.some((team) => team.need > 0) && safety < 500) {
-    safety += 1;
-    const teamA = working
-      .filter((team) => team.need > 0)
+  const capacityForTeam = (needs, caps, index) =>
+    caps[index].reduce((sum, cap, opponentIndex) => (
+      opponentIndex === index || needs[opponentIndex] <= 0 ? sum : sum + Math.min(cap, needs[opponentIndex])
+    ), 0);
+
+  const isFeasible = (needs, caps) => {
+    const remaining = needs.reduce((sum, need) => sum + need, 0);
+    if (remaining === 0) return true;
+    if (remaining % 2 !== 0) return false;
+    for (let i = 0; i < needs.length; i += 1) {
+      if (needs[i] > capacityForTeam(needs, caps, i)) return false;
+    }
+    return true;
+  };
+
+  const stateKey = (needs, caps) => {
+    const capBits = [];
+    for (let i = 0; i < caps.length; i += 1) {
+      for (let j = i + 1; j < caps.length; j += 1) {
+        capBits.push(caps[i][j]);
+      }
+    }
+    return `${needs.join(',')}|${capBits.join(',')}`;
+  };
+
+  const search = (needs, caps) => {
+    if (!isFeasible(needs, caps)) return null;
+    if (needs.every((need) => need === 0)) return [];
+
+    const key = stateKey(needs, caps);
+    if (memo.has(key)) return null;
+    memo.add(key);
+
+    const teamIndex = needs
+      .map((need, index) => ({ index, need, capacity: capacityForTeam(needs, caps, index) }))
+      .filter((entry) => entry.need > 0)
       .sort((a, b) => {
-        const needDiff = b.need - a.need;
-        if (needDiff !== 0) return needDiff;
-        const capDiff = remainingCapacity(a) - remainingCapacity(b);
-        if (capDiff !== 0) return capDiff;
-        return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true });
-      })[0];
-
-    if (!teamA) break;
-
-    const opponent = working
-      .filter((team) => team.id !== teamA.id && team.need > 0 && (teamA.opponents[team.name] || 0) < repeatLimit)
-      .sort((a, b) => {
-        const aRemaining = repeatLimit - (teamA.opponents[a.name] || 0);
-        const bRemaining = repeatLimit - (teamA.opponents[b.name] || 0);
+        if (a.capacity !== b.capacity) return a.capacity - b.capacity;
         if (b.need !== a.need) return b.need - a.need;
-        if (bRemaining !== aRemaining) return bRemaining - aRemaining;
-        const capDiff = remainingCapacity(a) - remainingCapacity(b);
-        if (capDiff !== 0) return capDiff;
-        return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true });
-      })[0];
+        return String(working[a.index].name || '').localeCompare(String(working[b.index].name || ''), undefined, { numeric: true });
+      })[0]?.index;
 
-    if (!opponent) break;
+    if (teamIndex == null) return [];
 
-    plan.push({ teamAId: teamA.id, teamBId: opponent.id });
-    teamA.need -= 1;
-    opponent.need -= 1;
-    teamA.opponents[opponent.name] = (teamA.opponents[opponent.name] || 0) + 1;
-    opponent.opponents[teamA.name] = (opponent.opponents[teamA.name] || 0) + 1;
-  }
+    const opponents = needs
+      .map((need, index) => ({
+        index,
+        need,
+        cap: caps[teamIndex][index],
+        capacity: capacityForTeam(needs, caps, index),
+      }))
+      .filter((entry) => entry.index !== teamIndex && entry.need > 0 && entry.cap > 0)
+      .sort((a, b) => {
+        if (b.need !== a.need) return b.need - a.need;
+        if (a.capacity !== b.capacity) return a.capacity - b.capacity;
+        if (b.cap !== a.cap) return b.cap - a.cap;
+        return String(working[a.index].name || '').localeCompare(String(working[b.index].name || ''), undefined, { numeric: true });
+      });
 
-  return plan.sort((a, b) => {
-    const aNeed = (byId[a.teamAId]?.need || 0) + (byId[a.teamBId]?.need || 0);
-    const bNeed = (byId[b.teamAId]?.need || 0) + (byId[b.teamBId]?.need || 0);
-    return bNeed - aNeed;
-  });
+    for (const opponent of opponents) {
+      const nextNeeds = [...needs];
+      const nextCaps = caps.map((row) => [...row]);
+      nextNeeds[teamIndex] -= 1;
+      nextNeeds[opponent.index] -= 1;
+      nextCaps[teamIndex][opponent.index] -= 1;
+      nextCaps[opponent.index][teamIndex] -= 1;
+
+      const rest = search(nextNeeds, nextCaps);
+      if (rest) {
+        return [
+          { teamAId: working[teamIndex].id, teamBId: working[opponent.index].id },
+          ...rest,
+        ];
+      }
+    }
+
+    return null;
+  };
+
+  return search(initialNeeds, initialCaps) || [];
 }
 
 function canUseLastChanceSlot(team, slot, config) {
