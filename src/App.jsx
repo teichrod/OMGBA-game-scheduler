@@ -6170,7 +6170,7 @@ function buildOpponentAdjustedRatings(rowValues, games) {
     if (gamesByTeam[game.away]) gamesByTeam[game.away].push(game);
   }
 
-  for (let pass = 0; pass < 10; pass += 1) {
+  for (let pass = 0; pass < 12; pass += 1) {
     const nextRatings = {};
 
     for (const row of rowValues) {
@@ -6186,15 +6186,16 @@ function buildOpponentAdjustedRatings(rowValues, games) {
         const teamScore = isHome ? game.homeScore : game.awayScore;
         const opponentScore = isHome ? game.awayScore : game.homeScore;
         const margin = teamScore - opponentScore;
-        const resultPoints = margin > 0 ? 8 : margin < 0 ? -8 : 0;
-        const marginPoints = clampRating(margin, -10, 10) / 2;
-        const opponentAdjustment = ((ratings[opponent] ?? 50) - 50) * 0.45;
+        const resultPoints = margin > 0 ? 18 : margin < 0 ? -18 : 0;
+        const marginPoints = clampRating(margin, -25, 25) * 0.8;
+        const opponentAdjustment = ((ratings[opponent] ?? 50) - 50) * 0.75;
         return 50 + resultPoints + marginPoints + opponentAdjustment;
       });
 
       const averageGameRating = gameRatings.reduce((sum, value) => sum + value, 0) / gameRatings.length;
-      const recordAnchor = 50 + ((row.winPct || 0) - 0.5) * 12;
-      nextRatings[row.team] = clampRating((averageGameRating * 0.85) + (recordAnchor * 0.15));
+      const recordAnchor = 50 + ((row.winPct || 0) - 0.5) * 55;
+      const adjusted = (averageGameRating * 0.82) + (recordAnchor * 0.18);
+      nextRatings[row.team] = clampRating(50 + ((adjusted - 50) * 1.35));
     }
 
     Object.assign(ratings, nextRatings);
@@ -6227,6 +6228,7 @@ function buildDivisionStandings(schedule, scoreReports) {
           opponents: [],
           winPct: 0,
           sos: 0,
+          sosStrength: 0,
           avgMarginCategory: 0,
           performanceRating: 0,
         };
@@ -6292,11 +6294,20 @@ function buildDivisionStandings(schedule, scoreReports) {
         const opponentRatings = (row.opponents || [])
           .map((teamName) => adjustedRatings[teamName])
           .filter((value) => Number.isFinite(Number(value)));
-        row.sos = opponentRatings.length
+        row.sosStrength = opponentRatings.length
           ? (opponentRatings.reduce((sum, value) => sum + value, 0) / opponentRatings.length) / 100
           : 0;
         row.performanceRating = adjustedRatings[row.team] || 0;
       }
+
+      [...rowValues]
+        .sort((a, b) => {
+          if ((b.sosStrength || 0) !== (a.sosStrength || 0)) return (b.sosStrength || 0) - (a.sosStrength || 0);
+          return String(a.team || '').localeCompare(String(b.team || ''), undefined, { numeric: true });
+        })
+        .forEach((row, index) => {
+          row.sos = row.gamesPlayed > 0 ? index + 1 : 0;
+        });
 
       return [
         division,
@@ -6400,7 +6411,7 @@ function getStandingsSortValue(row, key) {
     case "pointDiff":
       return Number(row.pointDiff || 0);
     case "sos":
-      return Number(row.sos || 0);
+      return row.sos ? -Number(row.sos || 0) : -999;
     case "performanceRating":
       return Number(row.performanceRating || 0);
     default:
@@ -8139,7 +8150,7 @@ export default function App() {
       PF: "Points For",
       PA: "Points Against",
       PD: "Point Differential",
-      SOS: "Strength of Schedule (average opponent PR, scaled 0-1)",
+      SOS: "Strength of Schedule rank (#1 is hardest schedule)",
       PR: "Performance Rating (iterative opponent-adjusted game rating)",
     };
     const tooltip = label === "PR"
@@ -9270,7 +9281,7 @@ export default function App() {
                                               <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsFor}</td>
                                               <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsAgainst}</td>
                                               <td style={{ ...styles.td, textAlign: "center" }}>{row.pointDiff}</td>
-                                              <td style={{ ...styles.td, textAlign: "center" }}>{(row.sos || 0).toFixed(3)}</td>
+                                              <td style={{ ...styles.td, textAlign: "center" }}>{row.sos ? `#${row.sos}` : "—"}</td>
                                               <td style={{ ...styles.td, textAlign: "center", fontWeight: 700 }}>{(row.performanceRating || 0).toFixed(1)}</td>
                                             </tr>
                                           ))}
@@ -9354,7 +9365,7 @@ export default function App() {
                                       <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsFor}</td>
                                       <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsAgainst}</td>
                                       <td style={{ ...styles.td, textAlign: "center" }}>{row.pointDiff}</td>
-                                      <td style={{ ...styles.td, textAlign: "center" }}>{(row.sos || 0).toFixed(3)}</td>
+                                      <td style={{ ...styles.td, textAlign: "center" }}>{row.sos ? `#${row.sos}` : "—"}</td>
                                       <td style={{ ...styles.td, textAlign: "center", fontWeight: 700 }}>{(row.performanceRating || 0).toFixed(1)}</td>
                                     </tr>
                                   ))}
