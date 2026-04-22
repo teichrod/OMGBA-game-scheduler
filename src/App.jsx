@@ -644,6 +644,30 @@ function buildRegularSeasonTierAssignments(teams, standingsRows) {
   const divisionTwo = orderedTeams.slice(splitIndex);
   const baseDivision = teams[0]?.baseDivision || teams[0]?.division || '';
   const remainingParity = (group) => group.reduce((sum, team) => sum + Math.max(0, Number(team.targetGames || 0) - Number(team.gamesScheduled || 0)), 0) % 2;
+  const rankIndex = new Map(orderedTeams.map((team, index) => [team.id, index]));
+  const remainingNeed = (team) => Math.max(0, Number(team.targetGames || 0) - Number(team.gamesScheduled || 0));
+  const repeatCapacityWithinGroup = (team, group) =>
+    group
+      .filter((opponent) => opponent.id !== team.id)
+      .reduce((sum, opponent) => sum + Math.max(0, 2 - Number(team.opponents?.[opponent.name] || 0)), 0);
+  const groupFeasibilityPenalty = (group) => {
+    const totalNeed = group.reduce((sum, team) => sum + remainingNeed(team), 0);
+    const teamDeficit = group.reduce((sum, team) => {
+      const need = remainingNeed(team);
+      if (!need) return sum;
+      return sum + Math.max(0, need - repeatCapacityWithinGroup(team, group));
+    }, 0);
+    const pairCapacity = group.reduce((sum, team, index) => {
+      for (let i = index + 1; i < group.length; i += 1) {
+        const opponent = group[i];
+        sum += Math.max(0, 2 - Number(team.opponents?.[opponent.name] || 0));
+      }
+      return sum;
+    }, 0);
+
+    return (teamDeficit * 10000) + ((totalNeed % 2) * 2500) + (Math.max(0, Math.ceil(totalNeed / 2) - pairCapacity) * 5000);
+  };
+  const combinedFeasibilityPenalty = () => groupFeasibilityPenalty(divisionOne) + groupFeasibilityPenalty(divisionTwo);
 
   if (remainingParity(divisionOne) !== 0 && remainingParity(divisionTwo) !== 0) {
     let bestSwap = null;
@@ -668,6 +692,40 @@ function buildRegularSeasonTierAssignments(teams, standingsRows) {
       divisionOne[bestSwap.i] = divisionTwo[bestSwap.j];
       divisionTwo[bestSwap.j] = hold;
     }
+  }
+
+  let currentPenalty = combinedFeasibilityPenalty();
+  let repairGuard = 0;
+  while (currentPenalty > 0 && repairGuard < 30) {
+    repairGuard += 1;
+    let bestSwap = null;
+
+    for (let i = 0; i < divisionOne.length; i += 1) {
+      for (let j = 0; j < divisionTwo.length; j += 1) {
+        const teamA = divisionOne[i];
+        const teamB = divisionTwo[j];
+        const rankA = rankIndex.get(teamA.id) ?? i;
+        const rankB = rankIndex.get(teamB.id) ?? (splitIndex + j);
+        const boundaryDistance = Math.abs(rankA - (splitIndex - 1)) + Math.abs(rankB - splitIndex);
+
+        divisionOne[i] = teamB;
+        divisionTwo[j] = teamA;
+        const penalty = combinedFeasibilityPenalty();
+        divisionOne[i] = teamA;
+        divisionTwo[j] = teamB;
+
+        if (penalty >= currentPenalty) continue;
+        if (!bestSwap || penalty < bestSwap.penalty || (penalty === bestSwap.penalty && boundaryDistance < bestSwap.boundaryDistance)) {
+          bestSwap = { i, j, penalty, boundaryDistance };
+        }
+      }
+    }
+
+    if (!bestSwap) break;
+    const hold = divisionOne[bestSwap.i];
+    divisionOne[bestSwap.i] = divisionTwo[bestSwap.j];
+    divisionTwo[bestSwap.j] = hold;
+    currentPenalty = bestSwap.penalty;
   }
   const divisionOneIds = new Set(divisionOne.map((team) => team.id));
 
