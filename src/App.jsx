@@ -7167,42 +7167,50 @@ export default function App() {
       return;
     }
 
+    const existingReports = normalizeScoreReportsCollection(scoreReports);
+    const reportsToAdd = [];
+
+    for (const game of result.schedule) {
+      const existingStatus = getOfficialScoreFromReports(game, existingReports);
+      if (existingStatus?.verified) continue;
+
+      let homeScore = 20 + Math.floor(Math.random() * 41);
+      let awayScore = 20 + Math.floor(Math.random() * 41);
+      if (homeScore === awayScore) {
+        homeScore += 1;
+      }
+      reportsToAdd.push({
+        id: createRowId("score"),
+        gameId: getGameScoreKey(game),
+        division: game.division,
+        date: game.date,
+        time: game.time,
+        court: game.court,
+        home: game.home,
+        away: game.away,
+        reportingTeam: game.home,
+        reporterEmail: "admin@test.local",
+        teamScore: homeScore,
+        opponentScore: awayScore,
+        approvalMode: false,
+        approvalOfReportId: "",
+        submittedAt: new Date().toISOString(),
+        forfeitTeam: "",
+        technicalFouls: [],
+        verifiedFinal: true,
+        verifiedAt: new Date().toISOString(),
+        officialHomeScore: homeScore,
+        officialAwayScore: awayScore,
+        verificationReason: "Admin random-fill for testing",
+      });
+    }
+
     const nextReports = normalizeScoreReportsCollection(
-      result.schedule.map((game) => {
-        let homeScore = 20 + Math.floor(Math.random() * 41);
-        let awayScore = 20 + Math.floor(Math.random() * 41);
-        if (homeScore === awayScore) {
-          homeScore += 1;
-        }
-        return {
-          id: createRowId("score"),
-          gameId: getGameScoreKey(game),
-          division: game.division,
-          date: game.date,
-          time: game.time,
-          court: game.court,
-          home: game.home,
-          away: game.away,
-          reportingTeam: game.home,
-          reporterEmail: "admin@test.local",
-          teamScore: homeScore,
-          opponentScore: awayScore,
-          approvalMode: false,
-          approvalOfReportId: "",
-          submittedAt: new Date().toISOString(),
-          forfeitTeam: "",
-          technicalFouls: [],
-          verifiedFinal: true,
-          verifiedAt: new Date().toISOString(),
-          officialHomeScore: homeScore,
-          officialAwayScore: awayScore,
-          verificationReason: "Admin random-fill for testing",
-        };
-      })
+      [...existingReports, ...reportsToAdd]
     );
 
     setScoreReports(nextReports);
-    setScoreNotice(`Filled ${nextReports.length} game${nextReports.length === 1 ? "" : "s"} with random verified final scores for testing.`);
+    setScoreNotice(`Filled ${reportsToAdd.length} unscored game${reportsToAdd.length === 1 ? "" : "s"} with random verified final scores for testing. Existing verified scores were preserved.`);
     setPublishNotice("Random testing scores applied in admin only. Publish Schedule if you want them to become live.");
   }
 
