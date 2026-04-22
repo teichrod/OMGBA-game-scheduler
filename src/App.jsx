@@ -61,6 +61,12 @@ const PUBLIC_BTN_SCORE_REPORTING = "/courtrax_btn_score_reporting.png";
 const PUBLIC_BTN_TECHNICALS = "/courtrax_btn_technicals.png";
 const PUBLIC_BTN_TOURNAMENTS = "/courtrax_btn_tournaments.png";
 
+const TOURNAMENT_COURTS = ["MGMS-AB", "MGMS-DE", "MGCG-FG", "MGCG-HI", "MGCG-JK"];
+const TOURNAMENT_WEEKEND_OPTIONS = [
+  { value: "third", label: "3rd weekend in January", saturdayOrdinal: 3 },
+  { value: "fourth", label: "4th weekend in January", saturdayOrdinal: 4 },
+];
+
 
 function getDivisionGenderCode(division) {
   return division.includes("Girls") ? "G" : "B";
@@ -6419,6 +6425,193 @@ function getStandingsSortValue(row, key) {
   }
 }
 
+function parseClockMinutes(time) {
+  const raw = String(time || "").trim();
+  const match = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+  if (!match) return 0;
+  let hour = Number(match[1]);
+  const minute = Number(match[2] || 0);
+  const suffix = String(match[3] || "").toUpperCase();
+  if (suffix === "AM" && hour === 12) hour = 0;
+  if (suffix === "PM" && hour < 12) hour += 12;
+  return hour * 60 + minute;
+}
+
+function formatClockMinutes(totalMinutes) {
+  const safe = ((Number(totalMinutes || 0) % 1440) + 1440) % 1440;
+  let hour = Math.floor(safe / 60);
+  const minute = safe % 60;
+  if (hour === 0) hour = 12;
+  if (hour > 12) hour -= 12;
+  return `${hour}:${String(minute).padStart(2, "0")}`;
+}
+
+function getJanuaryTournamentWeekendDates(seasonYear, optionValue) {
+  const januaryYear = Number(seasonYear || createInitialState().seasonYear) + 1;
+  const ordinal = TOURNAMENT_WEEKEND_OPTIONS.find((entry) => entry.value === optionValue)?.saturdayOrdinal || 3;
+  const cursor = new Date(januaryYear, 0, 1);
+  const saturdays = [];
+  while (cursor.getMonth() === 0) {
+    if (cursor.getDay() === 6) saturdays.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const saturday = saturdays[Math.max(0, ordinal - 1)] || saturdays[2] || saturdays[0];
+  const friday = new Date(saturday);
+  friday.setDate(friday.getDate() - 1);
+  const sunday = new Date(saturday);
+  sunday.setDate(sunday.getDate() + 1);
+  return {
+    friday: formatShortDate(friday),
+    saturday: formatShortDate(saturday),
+    sunday: formatShortDate(sunday),
+  };
+}
+
+function createDefaultTournamentSetup(config) {
+  return {
+    weekend: "third",
+    divisions: Object.fromEntries(DIVISIONS.map((division) => [division, Number(config?.divisions?.[division] || 0) > 1])),
+    fridayCourtStarts: Object.fromEntries(TOURNAMENT_COURTS.map((court) => [court, "6:00"])),
+    coachRequests: [],
+  };
+}
+
+function buildTournamentSlots(config, setup) {
+  const dates = getJanuaryTournamentWeekendDates(config?.seasonYear, setup?.weekend);
+  const fridayStarts = setup?.fridayCourtStarts || {};
+  const slots = [];
+  const addDaySlots = (date, dayLabel, startForCourt, rounds = 12) => {
+    for (const court of TOURNAMENT_COURTS) {
+      const start = parseClockMinutes(startForCourt(court));
+      for (let i = 0; i < rounds; i += 1) {
+        slots.push({
+          id: `${date}|${formatClockMinutes(start + i * 65)}|${court}`,
+          date,
+          dayLabel,
+          time: formatClockMinutes(start + i * 65),
+          court,
+          slotIndex: i,
+        });
+      }
+    }
+  };
+
+  addDaySlots(dates.friday, "Friday", (court) => fridayStarts[court] || "6:00", 4);
+  addDaySlots(dates.saturday, "Saturday", () => "8:00", 12);
+  addDaySlots(dates.sunday, "Sunday", () => "8:00", 12);
+
+  return slots.sort((a, b) => {
+    const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
+    if (dateDiff !== 0) return dateDiff;
+    const timeDiff = parseClockMinutes(a.time) - parseClockMinutes(b.time);
+    if (timeDiff !== 0) return timeDiff;
+    return TOURNAMENT_COURTS.indexOf(a.court) - TOURNAMENT_COURTS.indexOf(b.court);
+  });
+}
+
+function getNextPowerOfTwo(value) {
+  let size = 1;
+  while (size < Number(value || 0)) size *= 2;
+  return size;
+}
+
+function createTournamentBracketForDivision(division, teams, slotQueue) {
+  const entrants = [...teams];
+  const bracketSize = getNextPowerOfTwo(Math.max(2, entrants.length));
+  const byes = bracketSize - entrants.length;
+  const firstRoundPairs = [];
+  let teamIndex = 0;
+  for (let i = 0; i < byes; i += 1) {
+    firstRoundPairs.push([entrants[teamIndex] || null, null]);
+    teamIndex += 1;
+  }
+  while (teamIndex < entrants.length) {
+    firstRoundPairs.push([entrants[teamIndex] || null, entrants[teamIndex + 1] || null]);
+    teamIndex += 2;
+  }
+  const games = [];
+  let previousRoundGameIds = [];
+  let gameNumber = 1;
+
+  for (let roundSize = bracketSize, round = 1; roundSize >= 2; roundSize /= 2, round += 1) {
+    const gamesThisRound = [];
+    const gameCount = roundSize / 2;
+    for (let i = 0; i < gameCount; i += 1) {
+      const gameId = `${division.replace(/[^A-Za-z0-9]/g, "_")}_R${round}_G${i + 1}`;
+      let teamA = "TBD";
+      let teamB = "TBD";
+      let isBye = false;
+
+      if (round === 1) {
+        const pair = firstRoundPairs[i] || [null, null];
+        teamA = pair[0] || "BYE";
+        teamB = pair[1] || "BYE";
+        isBye = teamA === "BYE" || teamB === "BYE";
+      } else {
+        const left = previousRoundGameIds[i * 2] || "";
+        const right = previousRoundGameIds[i * 2 + 1] || "";
+        teamA = String(left).includes("_R") ? `Winner ${left}` : left;
+        teamB = String(right).includes("_R") ? `Winner ${right}` : right;
+      }
+
+      if (!isBye) {
+        const slot = slotQueue.shift() || {};
+        games.push({
+          id: gameId,
+          division,
+          round,
+          gameNumber: gameNumber,
+          label: roundSize === 2 ? "Championship" : `Round ${round}`,
+          teamA,
+          teamB,
+          date: slot.date || "",
+          dayLabel: slot.dayLabel || "",
+          time: slot.time || "",
+          court: slot.court || "",
+        });
+        gameNumber += 1;
+        gamesThisRound.push(gameId);
+      } else {
+        gamesThisRound.push(teamA === "BYE" ? teamB : teamA);
+      }
+    }
+    previousRoundGameIds = gamesThisRound;
+  }
+
+  return { division, teams: entrants, bracketSize, games };
+}
+
+function buildMidseasonTournament(config, setup) {
+  const normalized = normalizeConfig(config);
+  const tournamentSetup = setup || createDefaultTournamentSetup(normalized);
+  const slots = buildTournamentSlots(normalized, tournamentSetup);
+  const slotQueue = [...slots];
+  const brackets = [];
+
+  for (const division of DIVISIONS) {
+    if (!tournamentSetup.divisions?.[division]) continue;
+    const count = Number(normalized.divisions?.[division] || 0);
+    if (count < 2) continue;
+    const details = syncDivisionTeamDetails(normalized.divisionTeamDetails?.[division], count);
+    const teams = details.map((entry, index) => buildFormattedTeamName(division, entry, index + 1, count));
+    brackets.push(createTournamentBracketForDivision(division, teams, slotQueue));
+  }
+
+  const scheduledGames = brackets.flatMap((bracket) => bracket.games);
+  return {
+    name: "Mid-Season Tournament",
+    generatedAt: new Date().toLocaleString(),
+    weekend: tournamentSetup.weekend,
+    dates: getJanuaryTournamentWeekendDates(normalized.seasonYear, tournamentSetup.weekend),
+    courts: [...TOURNAMENT_COURTS],
+    fridayCourtStarts: { ...(tournamentSetup.fridayCourtStarts || {}) },
+    coachRequests: [...(tournamentSetup.coachRequests || [])],
+    brackets,
+    games: scheduledGames,
+    unscheduledCount: scheduledGames.filter((game) => !game.date || !game.time || !game.court).length,
+  };
+}
+
 function compareStandingsRows(a, b, sortKey = "winPct", sortDirection = "desc") {
   const direction = sortDirection === "asc" ? 1 : -1;
   const aValue = getStandingsSortValue(a, sortKey);
@@ -6468,6 +6661,8 @@ export default function App() {
   const [publishedMeta, setPublishedMeta] = useState(null);
   const [publishedSnapshot, setPublishedSnapshot] = useState(null);
   const [publishNotice, setPublishNotice] = useState("");
+  const [tournamentSetup, setTournamentSetup] = useState(() => createDefaultTournamentSetup(normalizeConfig(createInitialState())));
+  const [tournamentResult, setTournamentResult] = useState(null);
   const [adminScheduleDate, setAdminScheduleDate] = useState("");
   const [dragState, setDragState] = useState(null);
   const [gridNotice, setGridNotice] = useState("");
@@ -6518,15 +6713,10 @@ export default function App() {
       if (!isPublicMode) return;
       const published = await loadPublishedPayload();
       if (cancelled) return;
-      if (published?.result) {
-        setResult(published.result);
-        setPublishedMeta(published.meta || null);
-        setScoreReports(normalizeScoreReportsCollection(Array.isArray(published.scoreReports) ? published.scoreReports : []));
-      } else {
-        setResult(null);
-        setPublishedMeta(null);
-        setScoreReports([]);
-      }
+      setResult(published?.result || null);
+      setPublishedMeta(published?.meta || null);
+      setScoreReports(normalizeScoreReportsCollection(Array.isArray(published?.scoreReports) ? published.scoreReports : []));
+      setTournamentResult(published?.tournament || null);
     }
 
     loadPublicSchedule();
@@ -6810,6 +7000,9 @@ export default function App() {
     () => buildStandingsDisplayGroups(publishedSnapshot?.result || null, publishedDivisionStandings),
     [publishedSnapshot, publishedDivisionStandings]
   );
+  const displayedTournament = isPublicMode
+    ? tournamentResult
+    : tournamentResult || publishedSnapshot?.tournament || null;
   const adminDisplayedStandings = adminStandingsSource === "published" ? publishedDivisionStandings : divisionStandings;
   const adminDisplayedStandingsResult = adminStandingsSource === "published" ? (publishedSnapshot?.result || null) : result;
   const adminDisplayedStandingsGroups = useMemo(
@@ -7044,6 +7237,41 @@ export default function App() {
     }));
   }
 
+  function toggleTournamentDivision(division, enabled) {
+    setTournamentSetup((prev) => ({
+      ...prev,
+      divisions: { ...(prev.divisions || {}), [division]: Boolean(enabled) },
+    }));
+  }
+
+  function updateTournamentFridayStart(court, time) {
+    setTournamentSetup((prev) => ({
+      ...prev,
+      fridayCourtStarts: { ...(prev.fridayCourtStarts || {}), [court]: time },
+    }));
+  }
+
+  function addTournamentCoachRequest() {
+    setTournamentSetup((prev) => ({
+      ...prev,
+      coachRequests: [...(prev.coachRequests || []), { id: createRowId("tourney_request"), team: "", request: "" }],
+    }));
+  }
+
+  function updateTournamentCoachRequest(id, patch) {
+    setTournamentSetup((prev) => ({
+      ...prev,
+      coachRequests: (prev.coachRequests || []).map((entry) => entry.id === id ? { ...entry, ...patch } : entry),
+    }));
+  }
+
+  function removeTournamentCoachRequest(id) {
+    setTournamentSetup((prev) => ({
+      ...prev,
+      coachRequests: (prev.coachRequests || []).filter((entry) => entry.id !== id),
+    }));
+  }
+
   function toggleSaturday(index, enabled) {
     setConfig((prev) => ({
       ...prev,
@@ -7187,8 +7415,11 @@ export default function App() {
       return;
     }
 
-    setConfig(normalizeConfig(target.config));
+    const nextConfig = normalizeConfig(target.config);
+    setConfig(nextConfig);
     setResult(null);
+    setTournamentSetup(createDefaultTournamentSetup(nextConfig));
+    setTournamentResult(null);
     setAdminScheduleDate(
       target.config?.saturdays?.find((entry) => entry.enabled)?.date ||
       target.config?.saturdays?.[0]?.date ||
@@ -7218,8 +7449,11 @@ export default function App() {
   }
 
   function resetAll() {
-    setConfig(normalizeConfig(createInitialState()));
+    const initialConfig = normalizeConfig(createInitialState());
+    setConfig(initialConfig);
     setResult(null);
+    setTournamentSetup(createDefaultTournamentSetup(initialConfig));
+    setTournamentResult(null);
     setScheduleDivisionFilter("all");
     setScheduleTeamFilter("all");
     setActiveTab(isPublicMode ? "schedule" : "setup");
@@ -7298,6 +7532,13 @@ export default function App() {
     }
   }
 
+  function generateTournamentBrackets() {
+    const next = buildMidseasonTournament(config, tournamentSetup);
+    setTournamentResult(next);
+    setActiveTab("tournaments");
+    setPublishNotice(`Generated ${next.brackets.length} tournament bracket${next.brackets.length === 1 ? "" : "s"} with ${next.games.length} scheduled game${next.games.length === 1 ? "" : "s"}.`);
+  }
+
   function randomizeAllScoresForTesting() {
     if (!result?.schedule?.length) {
       setPublishNotice("Generate a schedule first.");
@@ -7358,6 +7599,8 @@ export default function App() {
         config,
         result,
         scoreReports,
+        tournamentSetup,
+        tournamentResult,
         adminScheduleDate,
         activeTab,
       };
@@ -7380,6 +7623,8 @@ export default function App() {
       if (payload?.config) setConfig(normalizeConfig(payload.config));
       setResult(payload?.result || null);
       setScoreReports(normalizeScoreReportsCollection(Array.isArray(payload?.scoreReports) ? payload.scoreReports : []));
+      if (payload?.tournamentSetup) setTournamentSetup(payload.tournamentSetup);
+      setTournamentResult(payload?.tournamentResult || null);
       if (typeof payload?.adminScheduleDate === "string") setAdminScheduleDate(payload.adminScheduleDate);
       if (typeof payload?.activeTab === "string") setActiveTab(payload.activeTab);
       setPublishNotice("Sandbox loaded into admin view. Published schedule was not changed.");
@@ -7406,6 +7651,7 @@ export default function App() {
       scoreReports: retainedReports,
       config: normalizedConfig,
       coachDirectory,
+      tournament: tournamentResult || publishedSnapshot?.tournament || null,
     });
     if (ok) {
       setPublishedMeta(meta);
@@ -7414,6 +7660,43 @@ export default function App() {
       setPublishNotice("Schedule published for public view.");
     } else {
       setPublishNotice("Publish failed.");
+    }
+  }
+
+  async function publishTournament() {
+    const tournament = tournamentResult || buildMidseasonTournament(config, tournamentSetup);
+    const existing = await loadPublishedPayload();
+    const normalizedConfig = normalizeConfig(config);
+    const coachDirectory = buildCoachDirectoryFromConfig(normalizedConfig);
+    const scheduleResult = existing?.result || result || null;
+    const retainedReports = Array.isArray(existing?.scoreReports)
+      ? existing.scoreReports
+      : Array.isArray(scoreReports)
+        ? scoreReports
+        : [];
+    const meta = {
+      ...(existing?.meta || publishedMeta || {}),
+      publishedAt: existing?.meta?.publishedAt || new Date().toLocaleString(),
+      tournamentPublishedAt: new Date().toLocaleString(),
+      tournamentGames: tournament.games.length,
+    };
+
+    const ok = await savePublishedPayload({
+      result: scheduleResult,
+      meta,
+      scoreReports: retainedReports,
+      config: normalizedConfig,
+      coachDirectory,
+      tournament,
+    });
+
+    if (ok) {
+      setTournamentResult(tournament);
+      setPublishedMeta(meta);
+      await refreshPublishedSnapshot();
+      setPublishNotice("Tournament brackets published for public view.");
+    } else {
+      setPublishNotice("Tournament publish failed.");
     }
   }
 
@@ -7460,6 +7743,7 @@ export default function App() {
       scoreReports: updatedScoreReports,
       config: mergedPublishedConfig,
       coachDirectory,
+      tournament: published?.tournament || tournamentResult || null,
     });
 
     if (ok) {
@@ -7480,6 +7764,7 @@ export default function App() {
       setResult(published.result);
       setPublishedMeta(published.meta || null);
       setScoreReports(normalizeScoreReportsCollection(Array.isArray(published.scoreReports) ? published.scoreReports : []));
+      setTournamentResult(published.tournament || null);
       if (published.config || published.coachDirectory) {
         setConfig(applyCoachDirectoryToConfig(published.config || config, getPublishedCoachDirectory(published, config)));
       }
@@ -7496,6 +7781,7 @@ export default function App() {
       setPublishedMeta(null);
       setPublishedSnapshot(null);
       setScoreReports([]);
+      setTournamentResult(null);
       if (isPublicMode) setResult(null);
       setPublishNotice("Published schedule cleared.");
     } else {
@@ -7725,6 +8011,7 @@ export default function App() {
       scoreReports: nextReports,
       config: lookupConfig,
       coachDirectory,
+      tournament: published?.tournament || tournamentResult || null,
     });
 
     if (!ok) {
@@ -7813,6 +8100,7 @@ export default function App() {
       scoreReports: updatedReports,
       config: normalizeConfig(published?.config || config),
       coachDirectory: getPublishedCoachDirectory(published, normalizeConfig(published?.config || config)),
+      tournament: published?.tournament || tournamentResult || null,
     });
 
     if (!ok) {
@@ -7848,6 +8136,7 @@ export default function App() {
       scoreReports: updatedReports,
       config: normalizeConfig(published?.config || config),
       coachDirectory: getPublishedCoachDirectory(published, normalizeConfig(published?.config || config)),
+      tournament: published?.tournament || tournamentResult || null,
     });
 
     if (!ok) {
@@ -7893,6 +8182,7 @@ export default function App() {
       scoreReports: updatedReports,
       config: normalizedConfig,
       coachDirectory: getPublishedCoachDirectory(published, normalizedConfig),
+      tournament: published?.tournament || tournamentResult || null,
     });
 
     if (!ok) {
@@ -8085,6 +8375,7 @@ export default function App() {
       scoreReports: nextReports,
       config: lookupConfig,
       coachDirectory,
+      tournament: published?.tournament || tournamentResult || null,
     });
 
     if (ok) {
@@ -8343,7 +8634,7 @@ export default function App() {
           </div>
         ) : (
           <div style={styles.tabBarAdmin}>
-            {[["setup", "Setup"], ["schedule", "Schedule Views"], ["audit", "Audit"], ["debug", "Repeat Debug"], ["issues", "Issues"], ["technicals", "Technicals"]].map(([key, label]) => (
+            {[["setup", "Setup"], ["schedule", "Schedule Views"], ["tournaments", "Tournaments"], ["audit", "Audit"], ["debug", "Repeat Debug"], ["issues", "Issues"], ["technicals", "Technicals"]].map(([key, label]) => (
               <button key={key} style={activeTab === key ? styles.tabButtonActive : styles.tabButton} onClick={() => setActiveTab(key)}>
                 {label}
               </button>
@@ -9303,6 +9594,178 @@ export default function App() {
                 ) : null}
 
               </>
+            )}
+          </Card>
+        ) : null}
+
+        {activeTab === "tournaments" ? (
+          <Card>
+            <div style={{ ...styles.headerRow, marginBottom: 16 }}>
+              <SectionTitle icon={Trophy}>Mid-Season Tournament</SectionTitle>
+              {!isPublicMode ? (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button style={styles.primaryButton} onClick={generateTournamentBrackets}>Generate Brackets</button>
+                  <button style={styles.successButton} onClick={publishTournament} disabled={!tournamentResult}>Publish Tournament</button>
+                </div>
+              ) : null}
+            </div>
+
+            {!isPublicMode ? (
+              <div style={{ display: "grid", gap: 18, marginBottom: 20 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+                  <div>
+                    <label style={styles.smallLabel}>Tournament weekend</label>
+                    <select
+                      style={styles.select}
+                      value={tournamentSetup.weekend}
+                      onChange={(e) => setTournamentSetup((prev) => ({ ...prev, weekend: e.target.value }))}
+                    >
+                      {TOURNAMENT_WEEKEND_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={styles.smallLabel}>Dates</label>
+                    <div style={{ ...styles.input, display: "flex", alignItems: "center", minHeight: 44 }}>
+                      {Object.values(getJanuaryTournamentWeekendDates(config.seasonYear, tournamentSetup.weekend)).join(" / ")}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={styles.smallLabel}>Divisions included</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+                    {DIVISIONS.map((division) => (
+                      <label key={division} style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, background: "#f8fafc" }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(tournamentSetup.divisions?.[division])}
+                          onChange={(e) => toggleTournamentDivision(division, e.target.checked)}
+                        />
+                        <span>{division}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={styles.smallLabel}>Friday court start times</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+                    {TOURNAMENT_COURTS.map((court) => (
+                      <div key={court}>
+                        <label style={styles.smallLabel}>{court}</label>
+                        <select
+                          style={styles.select}
+                          value={tournamentSetup.fridayCourtStarts?.[court] || "6:00"}
+                          onChange={(e) => updateTournamentFridayStart(court, e.target.value)}
+                        >
+                          {["5:00", "5:30", "6:00", "6:30", "7:00", "7:30", "8:00"].map((time) => (
+                            <option key={time} value={time}>{formatTimeDisplay(time)}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 8 }}>
+                    <label style={{ ...styles.smallLabel, marginBottom: 0 }}>Coach scheduling requests</label>
+                    <button type="button" style={styles.button} onClick={addTournamentCoachRequest}>Add Request</button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {(tournamentSetup.coachRequests || []).map((entry) => (
+                      <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "220px minmax(0, 1fr) auto", gap: 10, alignItems: "start" }}>
+                        <select
+                          style={styles.select}
+                          value={entry.team}
+                          onChange={(e) => updateTournamentCoachRequest(entry.id, { team: e.target.value })}
+                        >
+                          <option value="">Select team</option>
+                          {buildTeamNamesFromConfig(config).map((teamName) => (
+                            <option key={teamName} value={teamName}>{teamName}</option>
+                          ))}
+                        </select>
+                        <textarea
+                          style={{ ...styles.input, minHeight: 70, resize: "vertical" }}
+                          value={entry.request}
+                          onChange={(e) => updateTournamentCoachRequest(entry.id, { request: e.target.value })}
+                          placeholder="Example: cannot play Friday before 7:30, prefers Saturday morning"
+                        />
+                        <button type="button" style={styles.inlineDangerButton} onClick={() => removeTournamentCoachRequest(entry.id)}>Remove</button>
+                      </div>
+                    ))}
+                    {!(tournamentSetup.coachRequests || []).length ? (
+                      <div style={{ border: "1px dashed #cbd5e1", borderRadius: 12, padding: 14, color: "#64748b" }}>No coach requests entered yet.</div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {!displayedTournament ? (
+              <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>
+                {isPublicMode ? "No tournament brackets have been published yet." : "Generate tournament brackets to preview them here."}
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 18 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <span style={styles.badge}>{displayedTournament.name}</span>
+                  <span style={styles.badge}>{Object.values(displayedTournament.dates || {}).join(" / ")}</span>
+                  <span style={displayedTournament.unscheduledCount ? styles.badgeDanger : styles.badge}>
+                    {displayedTournament.unscheduledCount || 0} unscheduled
+                  </span>
+                </div>
+
+                <div style={{ display: "grid", gap: 14 }}>
+                  {(displayedTournament.brackets || []).map((bracket) => (
+                    <div key={bracket.division} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
+                      <div style={{ padding: "10px 12px", fontWeight: 800, background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                        <span>{bracket.division}</span>
+                        <span style={{ color: "#1d4ed8" }}>{bracket.teams.length} teams • {bracket.bracketSize}-team bracket</span>
+                      </div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={styles.table}>
+                          <thead>
+                            <tr>
+                              <th style={styles.th}>Game</th>
+                              <th style={styles.th}>Round</th>
+                              <th style={styles.th}>Date</th>
+                              <th style={styles.th}>Time</th>
+                              <th style={styles.th}>Court</th>
+                              <th style={styles.th}>Matchup</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(bracket.games || []).map((game) => (
+                              <tr key={game.id}>
+                                <td style={styles.td}>{game.gameNumber}</td>
+                                <td style={styles.td}>{game.label}</td>
+                                <td style={styles.td}>{game.date || "—"}</td>
+                                <td style={styles.td}>{game.time ? formatTimeDisplay(game.time) : "—"}</td>
+                                <td style={styles.td}>{game.court || "—"}</td>
+                                <td style={styles.td}>{game.teamA} vs {game.teamB}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {!isPublicMode && (displayedTournament.coachRequests || []).length ? (
+                  <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 14, background: "#f8fafc" }}>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>Coach requests captured</div>
+                    <div style={{ display: "grid", gap: 6, fontSize: 14, color: "#334155" }}>
+                      {displayedTournament.coachRequests.map((entry) => (
+                        <div key={entry.id}><strong>{entry.team || "Unassigned"}:</strong> {entry.request || "—"}</div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             )}
           </Card>
         ) : null}
