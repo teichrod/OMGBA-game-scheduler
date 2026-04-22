@@ -6178,7 +6178,7 @@ function buildDivisionStandings(schedule, scoreReports) {
 }
 
 
-function buildTierMapFromResult(result, standingsByDivision = {}) {
+function buildTierMapFromResult(result) {
   const map = {};
   if (!result) return map;
 
@@ -6204,22 +6204,11 @@ function buildTierMapFromResult(result, standingsByDivision = {}) {
     }
   }
 
-  for (const [division, rows] of Object.entries(standingsByDivision || {})) {
-    const divisionRows = Array.isArray(rows) ? rows : [];
-    if (divisionRows.length < 12) continue;
-    if (map[division] && Object.keys(map[division]).length) continue;
-    const splitIndex = Math.floor(divisionRows.length / 2);
-    map[division] = {};
-    divisionRows.forEach((row, index) => {
-      map[division][row.team] = index < splitIndex ? "Division 1" : "Division 2";
-    });
-  }
-
   return map;
 }
 
 function buildStandingsDisplayGroups(result, standingsByDivision = {}) {
-  const tierMap = buildTierMapFromResult(result, standingsByDivision);
+  const tierMap = buildTierMapFromResult(result);
   const groupsByDivision = {};
 
   for (const division of Object.keys(standingsByDivision || {})) {
