@@ -643,6 +643,33 @@ function buildRegularSeasonTierAssignments(teams, standingsRows) {
   const divisionOne = orderedTeams.slice(0, splitIndex);
   const divisionTwo = orderedTeams.slice(splitIndex);
   const baseDivision = teams[0]?.baseDivision || teams[0]?.division || '';
+  const remainingParity = (group) => group.reduce((sum, team) => sum + Math.max(0, Number(team.targetGames || 0) - Number(team.gamesScheduled || 0)), 0) % 2;
+
+  if (remainingParity(divisionOne) !== 0 && remainingParity(divisionTwo) !== 0) {
+    let bestSwap = null;
+    for (let i = 0; i < divisionOne.length; i += 1) {
+      for (let j = 0; j < divisionTwo.length; j += 1) {
+        const teamA = divisionOne[i];
+        const teamB = divisionTwo[j];
+        const needA = Math.max(0, Number(teamA.targetGames || 0) - Number(teamA.gamesScheduled || 0));
+        const needB = Math.max(0, Number(teamB.targetGames || 0) - Number(teamB.gamesScheduled || 0));
+        if (Math.abs(needA - needB) % 2 === 0) continue;
+        const rankA = orderedTeams.findIndex((team) => team.id === teamA.id);
+        const rankB = orderedTeams.findIndex((team) => team.id === teamB.id);
+        const boundaryDistance = Math.abs(rankA - (splitIndex - 1)) + Math.abs(rankB - splitIndex);
+        if (!bestSwap || boundaryDistance < bestSwap.boundaryDistance) {
+          bestSwap = { i, j, boundaryDistance };
+        }
+      }
+    }
+
+    if (bestSwap) {
+      const hold = divisionOne[bestSwap.i];
+      divisionOne[bestSwap.i] = divisionTwo[bestSwap.j];
+      divisionTwo[bestSwap.j] = hold;
+    }
+  }
+  const divisionOneIds = new Set(divisionOne.map((team) => team.id));
 
   return {
     groups: [
@@ -652,7 +679,7 @@ function buildRegularSeasonTierAssignments(teams, standingsRows) {
     summary: orderedTeams.map((team, index) => ({
       team: team.name,
       baseDivision,
-      tier: index < splitIndex ? 'Division 1' : 'Division 2',
+      tier: divisionOneIds.has(team.id) ? 'Division 1' : 'Division 2',
       preseasonRank: index + 1,
     })),
   };
@@ -1552,6 +1579,84 @@ function completeShortFifthBoysPreseasonGames(teams, openSlots, schedule, config
             ignoreEarlyCap: true,
             allTeams: teams,
           })) {
+            continue;
+          }
+          scheduleGame(schedule, slot, teamA, teamB);
+          progress = true;
+          placed = true;
+          break;
+        }
+        if (placed) break;
+      }
+    }
+  }
+}
+
+function completeShortPreseasonGamesByDivision(teams, openSlots, schedule, config) {
+  let progress = true;
+  let guard = 0;
+
+  while (progress && guard < 800) {
+    guard += 1;
+    progress = false;
+    const shortTeams = teams
+      .filter((team) => getNeed(team) > 0)
+      .sort((a, b) => {
+        const needDiff = getNeed(b) - getNeed(a);
+        if (needDiff !== 0) return needDiff;
+        return (b.targetGames - b.gamesScheduled) - (a.targetGames - a.gamesScheduled);
+      });
+
+    for (const teamA of shortTeams) {
+      if (getNeed(teamA) <= 0) continue;
+      const shortOpponents = teams
+        .filter((teamB) =>
+          teamB.id !== teamA.id &&
+          teamB.division === teamA.division &&
+          getNeed(teamB) > 0
+        )
+        .sort((a, b) => {
+          const repeatDiff = (teamA.opponents?.[a.name] || 0) - (teamA.opponents?.[b.name] || 0);
+          if (repeatDiff !== 0) return repeatDiff;
+          return getNeed(b) - getNeed(a);
+        });
+      const overTargetBridgeOpponents = teams
+        .filter((teamB) =>
+          teamB.id !== teamA.id &&
+          teamB.division === teamA.division &&
+          getNeed(teamB) <= 0 &&
+          Number(teamB.gamesScheduled || 0) <= Number(teamB.targetGames || 0)
+        )
+        .sort((a, b) => {
+          const repeatDiff = (teamA.opponents?.[a.name] || 0) - (teamA.opponents?.[b.name] || 0);
+          if (repeatDiff !== 0) return repeatDiff;
+          return Number(a.gamesScheduled || 0) - Number(b.gamesScheduled || 0);
+        });
+      const opponents = [...shortOpponents, ...overTargetBridgeOpponents];
+
+      let placed = false;
+      for (const teamB of opponents) {
+        const slots = openSlots
+          .filter((slot) => !slot.used && isPreseasonDate(slot.date, config))
+          .sort((a, b) => {
+            const aDateLoad = (teamA.gamesByDate?.[a.date] || 0) + (teamB.gamesByDate?.[a.date] || 0);
+            const bDateLoad = (teamA.gamesByDate?.[b.date] || 0) + (teamB.gamesByDate?.[b.date] || 0);
+            if (aDateLoad !== bDateLoad) return aDateLoad - bDateLoad;
+            return compareSlotsAvoidingEarlyForTeams(teamA, teamB, config)(a, b);
+          });
+
+        for (const slot of slots) {
+          const originalTarget = teamB.targetGames;
+          if (getNeed(teamB) <= 0 && teamB.gamesScheduled >= teamB.targetGames) {
+            teamB.targetGames = teamB.gamesScheduled + 1;
+          }
+          const canPlace = canPairInSlot(teamA, teamB, slot, config, {
+            ignoreTimeVariety: true,
+            ignoreEarlyCap: false,
+            allTeams: teams,
+          });
+          teamB.targetGames = originalTarget;
+          if (!canPlace) {
             continue;
           }
           scheduleGame(schedule, slot, teamA, teamB);
@@ -2564,7 +2669,9 @@ function canPairInSlot(teamA, teamB, slot, config, options = {}) {
   }
 
   if (config.fifthBoysDoubleheaderDate) {
-    if (teamA.division === "5th Boys") {
+    const baseDivisionA = String(teamA.baseDivision || teamA.division || '').split('::')[0];
+    const baseDivisionB = String(teamB.baseDivision || teamB.division || '').split('::')[0];
+    if (baseDivisionA === "5th Boys") {
       const aHasDecemberDh = (teamA.gamesByDate[config.fifthBoysDoubleheaderDate] || 0) >= 2;
       const bHasDecemberDh = (teamB.gamesByDate[config.fifthBoysDoubleheaderDate] || 0) >= 2;
       const aWouldBeDh = aOnDate >= 1;
@@ -2576,7 +2683,9 @@ function canPairInSlot(teamA, teamB, slot, config, options = {}) {
       }
     }
 
-    if (teamA.division !== "5th Boys" && slot.date === config.fifthBoysDoubleheaderDate) return false;
+    if (slot.date === config.fifthBoysDoubleheaderDate && baseDivisionA !== "5th Boys") {
+      if (aOnDate >= 1 || bOnDate >= 1 || baseDivisionB === "5th Boys") return false;
+    }
   }
 
   if (!ignoreEarlyCap && isEarlyTime(slot.time)) {
@@ -2740,6 +2849,23 @@ function getFreeSlotsForDate(openSlots, date) {
       if (timeDiff !== 0) return timeDiff;
       return a.court.localeCompare(b.court);
     });
+}
+
+function compareSlotsAvoidingEarlyForTeams(teamA, teamB, config) {
+  return (a, b) => {
+    const earlyLimit = Number(config?.maxEarlyGames || 0);
+    const aEarlyRisk = isEarlyTime(a.time)
+      ? Math.max(0, (teamA?.earlyGames || 0) + 1 - earlyLimit) + Math.max(0, (teamB?.earlyGames || 0) + 1 - earlyLimit) + 1
+      : 0;
+    const bEarlyRisk = isEarlyTime(b.time)
+      ? Math.max(0, (teamA?.earlyGames || 0) + 1 - earlyLimit) + Math.max(0, (teamB?.earlyGames || 0) + 1 - earlyLimit) + 1
+      : 0;
+    if (aEarlyRisk !== bEarlyRisk) return aEarlyRisk - bEarlyRisk;
+    const aEarlyCount = (isEarlyTime(a.time) ? (teamA?.earlyGames || 0) + (teamB?.earlyGames || 0) : 0);
+    const bEarlyCount = (isEarlyTime(b.time) ? (teamA?.earlyGames || 0) + (teamB?.earlyGames || 0) : 0);
+    if (aEarlyCount !== bEarlyCount) return aEarlyCount - bEarlyCount;
+    return compareSlotLike(a, b);
+  };
 }
 
 function countDivisionGamesOnDate(schedule, division, date) {
@@ -3060,7 +3186,14 @@ function scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unschedule
 
   for (let i = 0; i < neededGames; i += 1) {
     const pairing = selectedPairings[i];
-    const slot = slots[i];
+    const slot = slots
+      .filter((candidate) => !candidate.used)
+      .sort(compareSlotsAvoidingEarlyForTeams(pairing?.[0], pairing?.[1], config))
+      .find((candidate) => canPairInSlot(pairing?.[0], pairing?.[1], candidate, config, {
+        ignoreTimeVariety: true,
+        ignoreEarlyCap: false,
+        allTeams: teams,
+      })) || slots.find((candidate) => !candidate.used);
     if (!pairing || !slot) break;
     scheduleGame(schedule, slot, pairing[0], pairing[1], { locked: true });
   }
@@ -3106,11 +3239,14 @@ function scheduleFifthBoysPreseasonRoundRobinDates(teams, openSlots, schedule, u
 
     for (const pairing of pairings) {
       const [teamA, teamB] = pairing;
-      const slot = slots.find((candidate) =>
+      const slot = slots
+        .filter((candidate) => !candidate.used)
+        .sort(compareSlotsAvoidingEarlyForTeams(teamA, teamB, config))
+        .find((candidate) =>
         !candidate.used &&
         canPairInSlot(teamA, teamB, candidate, config, {
           ignoreTimeVariety: true,
-          ignoreEarlyCap: true,
+          ignoreEarlyCap: false,
           allTeams: teams,
         })
       );
@@ -3822,6 +3958,7 @@ function generateScheduleEngine(config, lockedGames = []) {
 
   pushRepeatTrace('After planned division leftovers');
   forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, config);
+  completeShortPreseasonGamesByDivision(teams, openSlots, schedule, config);
   completeShortFifthBoysPreseasonGames(teams, openSlots, schedule, config);
   pushRepeatTrace('After completion fallback');
 
