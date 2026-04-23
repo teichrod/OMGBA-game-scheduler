@@ -9188,7 +9188,12 @@ export default function App() {
                                   }
                                 />
 
-                                <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{previewName}</div>
+                                <div
+                                  title={previewName}
+                                  style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                                >
+                                  {previewName}
+                                </div>
                               </div>
                             );
                           })}
