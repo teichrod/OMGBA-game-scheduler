@@ -6467,6 +6467,14 @@ function getJanuaryTournamentWeekendDates(seasonYear, optionValue) {
   };
 }
 
+function getTournamentSeedingLockDate(config, setup) {
+  const dates = getJanuaryTournamentWeekendDates(config?.seasonYear, setup?.weekend);
+  const fridayTime = parseShortDate(dates.friday);
+  const lockDate = new Date(fridayTime);
+  lockDate.setDate(lockDate.getDate() - 6);
+  return formatShortDate(lockDate);
+}
+
 function createDefaultTournamentSetup(config) {
   return {
     weekend: "third",
@@ -6515,7 +6523,8 @@ function getNextPowerOfTwo(value) {
   return size;
 }
 
-function createTournamentBracketForDivision(division, teams, slotQueue) {
+function createTournamentBracketForDivision(division, teams, slotQueue, options = {}) {
+  const { seeded = true } = options;
   const entrants = [...teams];
   const bracketSize = getNextPowerOfTwo(Math.max(2, entrants.length));
   const byes = bracketSize - entrants.length;
@@ -6562,8 +6571,8 @@ function createTournamentBracketForDivision(division, teams, slotQueue) {
           round,
           gameNumber: gameNumber,
           label: roundSize === 2 ? "Championship" : `Round ${round}`,
-          teamA,
-          teamB,
+          teamA: seeded ? teamA : teamA.replace(/^Seed TBD /, "Seed TBD "),
+          teamB: seeded ? teamB : teamB.replace(/^Seed TBD /, "Seed TBD "),
           date: slot.date || "",
           dayLabel: slot.dayLabel || "",
           time: slot.time || "",
@@ -6578,23 +6587,42 @@ function createTournamentBracketForDivision(division, teams, slotQueue) {
     previousRoundGameIds = gamesThisRound;
   }
 
-  return { division, teams: entrants, bracketSize, games };
+  return { division, teams: seeded ? entrants : [], teamCount: entrants.length, seeded, bracketSize, games };
 }
 
-function buildMidseasonTournament(config, setup) {
+function getTournamentDivisionTeams(config, division, standingsRows = [], seeded = false) {
+  const count = Number(config?.divisions?.[division] || 0);
+  const details = syncDivisionTeamDetails(config?.divisionTeamDetails?.[division], count);
+  const configuredTeams = details.map((entry, index) => buildFormattedTeamName(division, entry, index + 1, count));
+  if (!seeded) return configuredTeams.map((_, index) => `Seed TBD ${index + 1}`);
+
+  const standingsOrder = (Array.isArray(standingsRows) ? standingsRows : [])
+    .map((row) => row.team)
+    .filter((teamName) => configuredTeams.includes(teamName));
+  const seen = new Set(standingsOrder);
+  return [
+    ...standingsOrder,
+    ...configuredTeams.filter((teamName) => !seen.has(teamName)),
+  ];
+}
+
+function buildMidseasonTournament(config, setup, options = {}) {
+  const { seeded = false, schedule = [], scoreReports = [] } = options;
   const normalized = normalizeConfig(config);
   const tournamentSetup = setup || createDefaultTournamentSetup(normalized);
   const slots = buildTournamentSlots(normalized, tournamentSetup);
   const slotQueue = [...slots];
   const brackets = [];
+  const lockDate = getTournamentSeedingLockDate(normalized, tournamentSetup);
+  const seedingSchedule = (Array.isArray(schedule) ? schedule : []).filter((game) => parseShortDate(game.date) <= parseShortDate(lockDate));
+  const standingsByDivision = seeded ? buildDivisionStandings(seedingSchedule, scoreReports) : {};
 
   for (const division of DIVISIONS) {
     if (!tournamentSetup.divisions?.[division]) continue;
     const count = Number(normalized.divisions?.[division] || 0);
     if (count < 2) continue;
-    const details = syncDivisionTeamDetails(normalized.divisionTeamDetails?.[division], count);
-    const teams = details.map((entry, index) => buildFormattedTeamName(division, entry, index + 1, count));
-    brackets.push(createTournamentBracketForDivision(division, teams, slotQueue));
+    const teams = getTournamentDivisionTeams(normalized, division, standingsByDivision[division] || [], seeded);
+    brackets.push(createTournamentBracketForDivision(division, teams, slotQueue, { seeded }));
   }
 
   const scheduledGames = brackets.flatMap((bracket) => bracket.games);
@@ -6602,6 +6630,8 @@ function buildMidseasonTournament(config, setup) {
     name: "Mid-Season Tournament",
     generatedAt: new Date().toLocaleString(),
     weekend: tournamentSetup.weekend,
+    seeded,
+    seedingLockDate: lockDate,
     dates: getJanuaryTournamentWeekendDates(normalized.seasonYear, tournamentSetup.weekend),
     courts: [...TOURNAMENT_COURTS],
     fridayCourtStarts: { ...(tournamentSetup.fridayCourtStarts || {}) },
@@ -7022,6 +7052,20 @@ export default function App() {
     if (!result?.schedule?.length) return 0;
     return result.schedule.filter((game) => isPreseasonDate(game.date, config)).length;
   }, [result, config]);
+  const tournamentSeedingLockDate = useMemo(
+    () => getTournamentSeedingLockDate(config, tournamentSetup),
+    [config, tournamentSetup]
+  );
+  const tournamentSeedingLockGames = useMemo(() => {
+    if (!result?.schedule?.length || !tournamentSeedingLockDate) return [];
+    return result.schedule.filter((game) => game.date === tournamentSeedingLockDate);
+  }, [result, tournamentSeedingLockDate]);
+  const tournamentSeedingLockCompleteCount = useMemo(
+    () => tournamentSeedingLockGames.filter((game) => getOfficialScoreFromReports(game, scoreReports).verified).length,
+    [tournamentSeedingLockGames, scoreReports]
+  );
+  const tournamentCanGenerateShell = preseasonGamesTotalCount > 0 && preseasonGamesCompleteCount >= preseasonGamesTotalCount;
+  const tournamentCanSeedTeams = tournamentCanGenerateShell && tournamentSeedingLockGames.length > 0 && tournamentSeedingLockCompleteCount >= tournamentSeedingLockGames.length;
 
   const scoreLogRows = useMemo(() => {
     if (!result) return [];
@@ -7533,10 +7577,29 @@ export default function App() {
   }
 
   function generateTournamentBrackets() {
-    const next = buildMidseasonTournament(config, tournamentSetup);
+    if (!tournamentCanGenerateShell) {
+      setPublishNotice(`Finish and verify all preseason games first. Preseason completion: ${preseasonGamesCompleteCount}/${preseasonGamesTotalCount || 0}.`);
+      return;
+    }
+    const next = buildMidseasonTournament(config, tournamentSetup, { seeded: false });
     setTournamentResult(next);
     setActiveTab("tournaments");
-    setPublishNotice(`Generated ${next.brackets.length} tournament bracket${next.brackets.length === 1 ? "" : "s"} with ${next.games.length} scheduled game${next.games.length === 1 ? "" : "s"}.`);
+    setPublishNotice(`Generated ${next.brackets.length} unseeded tournament bracket shell${next.brackets.length === 1 ? "" : "s"}. Teams can be seeded after all ${tournamentSeedingLockDate} games are verified.`);
+  }
+
+  function seedTournamentBrackets() {
+    if (!tournamentCanSeedTeams) {
+      setPublishNotice(`Teams cannot be seeded yet. Verify all games on ${tournamentSeedingLockDate} first (${tournamentSeedingLockCompleteCount}/${tournamentSeedingLockGames.length || 0} complete).`);
+      return;
+    }
+    const next = buildMidseasonTournament(config, tournamentSetup, {
+      seeded: true,
+      schedule: result?.schedule || [],
+      scoreReports,
+    });
+    setTournamentResult(next);
+    setActiveTab("tournaments");
+    setPublishNotice(`Seeded ${next.brackets.length} tournament bracket${next.brackets.length === 1 ? "" : "s"} using standings through ${tournamentSeedingLockDate}.`);
   }
 
   function randomizeAllScoresForTesting() {
@@ -9604,7 +9667,8 @@ export default function App() {
               <SectionTitle icon={Trophy}>Mid-Season Tournament</SectionTitle>
               {!isPublicMode ? (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button style={styles.primaryButton} onClick={generateTournamentBrackets}>Generate Brackets</button>
+                  <button style={styles.primaryButton} onClick={generateTournamentBrackets} disabled={!tournamentCanGenerateShell}>Generate Bracket Shell</button>
+                  <button style={styles.button} onClick={seedTournamentBrackets} disabled={!tournamentCanSeedTeams}>Seed Teams</button>
                   <button style={styles.successButton} onClick={publishTournament} disabled={!tournamentResult}>Publish Tournament</button>
                 </div>
               ) : null}
@@ -9612,6 +9676,9 @@ export default function App() {
 
             {!isPublicMode ? (
               <div style={{ display: "grid", gap: 18, marginBottom: 20 }}>
+                <div style={{ border: "1px solid #dbeafe", background: "#eff6ff", color: "#1e3a8a", borderRadius: 12, padding: 12, fontSize: 14, fontWeight: 600 }}>
+                  Bracket shells unlock after preseason is fully verified ({preseasonGamesCompleteCount}/{preseasonGamesTotalCount || 0}). Team seeding unlocks after every game on {tournamentSeedingLockDate} is verified ({tournamentSeedingLockCompleteCount}/{tournamentSeedingLockGames.length || 0}).
+                </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
                   <div>
                     <label style={styles.smallLabel}>Tournament weekend</label>
@@ -9660,7 +9727,7 @@ export default function App() {
                           value={tournamentSetup.fridayCourtStarts?.[court] || "6:00"}
                           onChange={(e) => updateTournamentFridayStart(court, e.target.value)}
                         >
-                          {["5:00", "5:30", "6:00", "6:30", "7:00", "7:30", "8:00"].map((time) => (
+                          {["5:30", "5:45", "6:00", "6:15", "6:30"].map((time) => (
                             <option key={time} value={time}>{formatTimeDisplay(time)}</option>
                           ))}
                         </select>
@@ -9713,6 +9780,9 @@ export default function App() {
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <span style={styles.badge}>{displayedTournament.name}</span>
                   <span style={styles.badge}>{Object.values(displayedTournament.dates || {}).join(" / ")}</span>
+                  <span style={displayedTournament.seeded ? styles.badge : styles.badgeDanger}>
+                    {displayedTournament.seeded ? `Seeded through ${displayedTournament.seedingLockDate}` : "Bracket shell - teams not seeded"}
+                  </span>
                   <span style={displayedTournament.unscheduledCount ? styles.badgeDanger : styles.badge}>
                     {displayedTournament.unscheduledCount || 0} unscheduled
                   </span>
@@ -9723,7 +9793,7 @@ export default function App() {
                     <div key={bracket.division} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
                       <div style={{ padding: "10px 12px", fontWeight: 800, background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                         <span>{bracket.division}</span>
-                        <span style={{ color: "#1d4ed8" }}>{bracket.teams.length} teams • {bracket.bracketSize}-team bracket</span>
+                        <span style={{ color: "#1d4ed8" }}>{bracket.teamCount || bracket.teams.length} teams • {bracket.bracketSize}-team bracket</span>
                       </div>
                       <div style={{ overflowX: "auto" }}>
                         <table style={styles.table}>
