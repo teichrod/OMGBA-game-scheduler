@@ -8868,7 +8868,7 @@ export default function App() {
           <div
             style={{
               ...styles.grid2,
-              gridTemplateColumns: isAdminCompact ? "1fr" : "minmax(0, 1fr) minmax(280px, 360px)",
+              gridTemplateColumns: isAdminCompact ? "1fr" : "minmax(0, 1fr) minmax(340px, 420px)",
             }}
           >
             <div style={{ display: "grid", gap: 24, alignContent: "start", alignSelf: "start" }}>
@@ -9229,7 +9229,7 @@ export default function App() {
                 </div>
                 <div style={{ display: "grid", gap: 8 }}>
                   {!isAdminCompact ? (
-                    <div style={{ display: "grid", gridTemplateColumns: "80px 2.5fr 84px 66px", gap: 12, padding: "0 12px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#64748b" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "52px 2fr 84px 66px", gap: 12, padding: "0 12px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#64748b" }}>
                       <div>Use</div>
                       <div>Court</div>
                       <div>First game</div>
@@ -9237,11 +9237,11 @@ export default function App() {
                     </div>
                   ) : null}
                   {(config.dateCourtSettings[selectedCourtDate] || []).map((court, index) => (
-                    <div key={`${selectedCourtDate}-${court.name || "custom"}-${index}`} style={{ display: "grid", gridTemplateColumns: isAdminCompact ? "1fr" : "80px 2.5fr 84px 66px", gap: 12, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                    <div key={`${selectedCourtDate}-${court.name || "custom"}-${index}`} style={{ display: "grid", gridTemplateColumns: isAdminCompact ? "1fr" : "52px 2fr 84px 66px", gap: 12, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
                       <div><input type="checkbox" checked={court.enabled} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { enabled: e.target.checked })} /></div>
                       <input style={styles.input} value={court.name} placeholder={index === (config.dateCourtSettings[selectedCourtDate] || []).length - 1 ? "Custom court name" : "Court name"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { name: e.target.value })} />
                       <select style={styles.select} value={court.startTime || "8:00"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { startTime: e.target.value })}>
-                        {DEFAULT_TIMES.map((time) => <option key={time} value={time}>{formatTimeDisplay(time)} start</option>)}
+                        {DEFAULT_TIMES.map((time) => <option key={time} value={time}>{formatTimeDisplay(time)}</option>)}
                       </select>
                       <div style={{ fontWeight: 700 }}>{getSlotsRemainingForCourt(config, court)}</div>
                     </div>
