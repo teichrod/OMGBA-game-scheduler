@@ -8865,7 +8865,12 @@ export default function App() {
         )}
 
         {activeTab === "setup" && !isPublicMode ? (
-          <div style={styles.grid2}>
+          <div
+            style={{
+              ...styles.grid2,
+              gridTemplateColumns: isAdminCompact ? "1fr" : "minmax(0, 1fr) minmax(280px, 360px)",
+            }}
+          >
             <div style={{ display: "grid", gap: 24, alignContent: "start", alignSelf: "start" }}>
               <Card>
                 <SectionTitle>Save / Load Setup</SectionTitle>
