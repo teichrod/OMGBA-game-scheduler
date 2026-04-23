@@ -6754,6 +6754,24 @@ function getScheduleGridForDate(config, result, date) {
   });
 }
 
+function buildVisualBracketRounds(bracket) {
+  const games = Array.isArray(bracket?.games) ? bracket.games : [];
+  const roundOrder = [];
+  const grouped = {};
+  for (const game of games) {
+    const key = String(game.label || `Round ${game.round || ""}`);
+    if (!grouped[key]) {
+      grouped[key] = [];
+      roundOrder.push(key);
+    }
+    grouped[key].push(game);
+  }
+  return roundOrder.map((label) => ({
+    label,
+    games: grouped[label].sort((a, b) => Number(a.gameNumber || 0) - Number(b.gameNumber || 0)),
+  }));
+}
+
 export default function App() {
   const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
   const isPublicMode = (params.get("view") || "").toLowerCase() === "public";
@@ -6770,6 +6788,7 @@ export default function App() {
   const [publishNotice, setPublishNotice] = useState("");
   const [tournamentSetup, setTournamentSetup] = useState(() => createDefaultTournamentSetup(normalizeConfig(createInitialState())));
   const [tournamentResult, setTournamentResult] = useState(null);
+  const [selectedTournamentBracket, setSelectedTournamentBracket] = useState("");
   const [adminScheduleDate, setAdminScheduleDate] = useState("");
   const [dragState, setDragState] = useState(null);
   const [gridNotice, setGridNotice] = useState("");
@@ -7110,6 +7129,22 @@ export default function App() {
   const displayedTournament = isPublicMode
     ? tournamentResult
     : tournamentResult || publishedSnapshot?.tournament || null;
+  const tournamentBracketOptions = displayedTournament?.brackets || [];
+  const activeTournamentBracket = tournamentBracketOptions.find((bracket) => bracket.division === selectedTournamentBracket)
+    || tournamentBracketOptions[0]
+    || null;
+  const activeTournamentRounds = useMemo(() => buildVisualBracketRounds(activeTournamentBracket), [activeTournamentBracket]);
+
+  useEffect(() => {
+    const brackets = displayedTournament?.brackets || [];
+    if (!brackets.length) {
+      if (selectedTournamentBracket) setSelectedTournamentBracket("");
+      return;
+    }
+    if (!brackets.some((bracket) => bracket.division === selectedTournamentBracket)) {
+      setSelectedTournamentBracket(brackets[0].division);
+    }
+  }, [displayedTournament, selectedTournamentBracket]);
   const adminDisplayedStandings = adminStandingsSource === "published" ? publishedDivisionStandings : divisionStandings;
   const adminDisplayedStandingsResult = adminStandingsSource === "published" ? (publishedSnapshot?.result || null) : result;
   const adminDisplayedStandingsGroups = useMemo(
@@ -9866,11 +9901,45 @@ export default function App() {
                 </div>
 
                 <div style={{ display: "grid", gap: 14 }}>
-                  {(displayedTournament.brackets || []).map((bracket) => (
+                  <div style={{ maxWidth: 360 }}>
+                    <label style={styles.smallLabel}>Bracket</label>
+                    <select
+                      style={styles.select}
+                      value={activeTournamentBracket?.division || ""}
+                      onChange={(e) => setSelectedTournamentBracket(e.target.value)}
+                    >
+                      {tournamentBracketOptions.map((bracket) => (
+                        <option key={bracket.division} value={bracket.division}>{bracket.division}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {([activeTournamentBracket].filter(Boolean)).map((bracket) => (
                     <div key={bracket.division} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
                       <div style={{ padding: "10px 12px", fontWeight: 800, background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                         <span>{bracket.division}</span>
                         <span style={{ color: "#1d4ed8" }}>{bracket.teamCount || bracket.teams.length} teams • {bracket.bracketSize}-team bracket</span>
+                      </div>
+                      <div style={{ overflowX: "auto", padding: 14, background: "#ffffff" }}>
+                        <div style={{ display: "grid", gridAutoFlow: "column", gridAutoColumns: "minmax(220px, 1fr)", gap: 14, alignItems: "start", minWidth: Math.max(680, activeTournamentRounds.length * 240) }}>
+                          {activeTournamentRounds.map((round) => (
+                            <div key={round.label} style={{ display: "grid", gap: 12 }}>
+                              <div style={{ fontWeight: 800, color: "#0f172a", textAlign: "center", borderBottom: "2px solid #e2e8f0", paddingBottom: 8 }}>{round.label}</div>
+                              {round.games.map((game) => (
+                                <div key={game.id} style={{ border: "1px solid #cbd5e1", borderRadius: 8, background: "#f8fafc", overflow: "hidden" }}>
+                                  <div style={{ padding: "7px 9px", fontSize: 12, fontWeight: 800, color: "#475569", display: "flex", justifyContent: "space-between", gap: 8, background: "#e2e8f0" }}>
+                                    <span>Game {game.gameNumber}</span>
+                                    <span>{game.date || "—"} {game.time ? formatTimeDisplay(game.time) : ""}</span>
+                                  </div>
+                                  <div style={{ display: "grid" }}>
+                                    <div style={{ padding: "9px 10px", borderBottom: "1px solid #e2e8f0", fontWeight: 700, minHeight: 38 }}>{game.teamA || "TBD"}</div>
+                                    <div style={{ padding: "9px 10px", fontWeight: 700, minHeight: 38 }}>{game.teamB || "TBD"}</div>
+                                  </div>
+                                  <div style={{ padding: "7px 9px", fontSize: 12, color: "#64748b", borderTop: "1px solid #e2e8f0" }}>{game.court || "Court TBD"}</div>
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                       <div style={{ overflowX: "auto" }}>
                         <table style={styles.table}>
