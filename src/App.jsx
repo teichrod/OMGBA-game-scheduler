@@ -61,6 +61,7 @@ const PUBLIC_BTN_SCORE_REPORTING = "/courtrax_btn_score_reporting.png";
 const PUBLIC_BTN_TECHNICALS = "/courtrax_btn_technicals.png";
 const PUBLIC_BTN_TOURNAMENTS = "/courtrax_btn_tournaments.png";
 
+const SHOW_TOURNAMENTS = false;
 const TOURNAMENT_COURTS = ["MGMS-AB", "MGMS-DE", "MGCG-FG", "MGCG-HI", "MGCG-JK"];
 const TOURNAMENT_LAST_START_MINUTES = 21 * 60;
 const TOURNAMENT_WEEKEND_OPTIONS = [
@@ -6872,6 +6873,12 @@ export default function App() {
   }, [isPublicMode]);
 
   useEffect(() => {
+    if (!SHOW_TOURNAMENTS && activeTab === "tournaments") {
+      setActiveTab(isPublicMode ? "schedule" : "setup");
+    }
+  }, [activeTab, isPublicMode]);
+
+  useEffect(() => {
     if (!isPublicMode) {
       const setups = loadSavedSetupsFromStorage();
       setSavedSetups(setups);
@@ -8755,11 +8762,11 @@ export default function App() {
                   ["standings", PUBLIC_BTN_STANDINGS, "Standings"],
                   ["score_reporting", PUBLIC_BTN_SCORE_REPORTING, "Score Reporting"],
                   ["technicals", PUBLIC_BTN_TECHNICALS, "Technicals"],
-                  ["tournaments", PUBLIC_BTN_TOURNAMENTS, "Tournaments"],
+                  ...(SHOW_TOURNAMENTS ? [["tournaments", PUBLIC_BTN_TOURNAMENTS, "Tournaments"]] : []),
                 ]
               : [
                   ["schedule", PUBLIC_BTN_SCHEDULE, "Schedule"],
-                  ["tournaments", PUBLIC_BTN_TOURNAMENTS, "Tournaments"],
+                  ...(SHOW_TOURNAMENTS ? [["tournaments", PUBLIC_BTN_TOURNAMENTS, "Tournaments"]] : []),
                   ["standings", PUBLIC_BTN_STANDINGS, "Standings"],
                   ["score_reporting", PUBLIC_BTN_SCORE_REPORTING, "Score Reporting"],
                   ["technicals", PUBLIC_BTN_TECHNICALS, "Technicals"],
@@ -8809,7 +8816,15 @@ export default function App() {
           </div>
         ) : (
           <div style={styles.tabBarAdmin}>
-            {[["setup", "Setup"], ["schedule", "Schedule Views"], ["tournaments", "Tournaments"], ["audit", "Audit"], ["debug", "Repeat Debug"], ["issues", "Issues"], ["technicals", "Technicals"]].map(([key, label]) => (
+            {[
+              ["setup", "Setup"],
+              ["schedule", "Schedule Views"],
+              ...(SHOW_TOURNAMENTS ? [["tournaments", "Tournaments"]] : []),
+              ["audit", "Audit"],
+              ["debug", "Repeat Debug"],
+              ["issues", "Issues"],
+              ["technicals", "Technicals"],
+            ].map(([key, label]) => (
               <button key={key} style={activeTab === key ? styles.tabButtonActive : styles.tabButton} onClick={() => setActiveTab(key)}>
                 {label}
               </button>
@@ -9773,7 +9788,7 @@ export default function App() {
           </Card>
         ) : null}
 
-        {activeTab === "tournaments" ? (
+        {SHOW_TOURNAMENTS && activeTab === "tournaments" ? (
           <Card>
             <div style={{ ...styles.headerRow, marginBottom: 16 }}>
               <SectionTitle icon={Trophy}>Mid-Season Tournament</SectionTitle>
