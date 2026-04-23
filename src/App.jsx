@@ -181,7 +181,7 @@ const styles = {
     backgroundSize: "cover",
     backgroundPosition: "center",
     backgroundAttachment: "fixed",
-    padding: 24,
+    padding: "clamp(10px, 2vw, 24px)",
     color: "#0f172a",
     fontFamily: "Arial, sans-serif",
   },
@@ -207,7 +207,7 @@ const styles = {
     background: "rgba(255,255,255,0.92)",
     border: "1px solid rgba(226,232,240,0.95)",
     borderRadius: 16,
-    padding: 18,
+    padding: "clamp(12px, 2vw, 18px)",
     boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
     backdropFilter: "blur(4px)",
   },
@@ -230,6 +230,9 @@ const styles = {
     background: "white",
     cursor: "pointer",
     fontWeight: 600,
+    boxSizing: "border-box",
+    minHeight: 42,
+    whiteSpace: "normal",
   },
   primaryButton: {
     padding: "10px 14px",
@@ -239,6 +242,9 @@ const styles = {
     color: "white",
     cursor: "pointer",
     fontWeight: 600,
+    boxSizing: "border-box",
+    minHeight: 42,
+    whiteSpace: "normal",
   },
   successButton: {
     padding: "10px 14px",
@@ -248,6 +254,9 @@ const styles = {
     color: "white",
     cursor: "pointer",
     fontWeight: 600,
+    boxSizing: "border-box",
+    minHeight: 42,
+    whiteSpace: "normal",
   },
   dangerButton: {
     padding: "10px 14px",
@@ -257,6 +266,9 @@ const styles = {
     color: "#b91c1c",
     cursor: "pointer",
     fontWeight: 600,
+    boxSizing: "border-box",
+    minHeight: 42,
+    whiteSpace: "normal",
   },
   input: {
     width: "100%",
@@ -379,7 +391,7 @@ publicGraphicTabImage: {
 },
   tabBarAdmin: {
     display: "grid",
-    gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))",
     gap: 8,
   },
   tabButton: {
@@ -389,6 +401,8 @@ publicGraphicTabImage: {
     borderRadius: 10,
     cursor: "pointer",
     fontWeight: 600,
+    minWidth: 0,
+    whiteSpace: "normal",
   },
   tabButtonActive: {
     padding: "12px 10px",
@@ -398,6 +412,8 @@ publicGraphicTabImage: {
     borderRadius: 10,
     cursor: "pointer",
     fontWeight: 700,
+    minWidth: 0,
+    whiteSpace: "normal",
   },
   publicStatCard: {
     border: "1px solid #dbeafe",
@@ -427,18 +443,18 @@ publicGraphicTabImage: {
   },
   grid2: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 3fr) minmax(360px, 2fr)",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))",
     gap: 24,
     alignItems: "start",
   },
   statsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0,1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))",
     gap: 16,
   },
   statsGrid5: {
     display: "grid",
-    gridTemplateColumns: "repeat(5, minmax(0,1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))",
     gap: 16,
   },
   tableWrap: {
@@ -449,6 +465,7 @@ publicGraphicTabImage: {
   },
   table: {
     width: "100%",
+    minWidth: 760,
     borderCollapse: "collapse",
     fontSize: 14,
   },
@@ -6817,6 +6834,9 @@ export default function App() {
   const [isMobilePublic, setIsMobilePublic] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth <= 820 : false
   );
+  const [isAdminCompact, setIsAdminCompact] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= 920 : false
+  );
 
   async function refreshPublishedSnapshot() {
     try {
@@ -6870,6 +6890,18 @@ export default function App() {
   useEffect(() => {
     if (isPublicMode) return;
     refreshPublishedSnapshot();
+  }, [isPublicMode]);
+
+  useEffect(() => {
+    if (isPublicMode) return undefined;
+
+    const updateIsAdminCompact = () => {
+      setIsAdminCompact(window.innerWidth <= 920);
+    };
+
+    updateIsAdminCompact();
+    window.addEventListener("resize", updateIsAdminCompact);
+    return () => window.removeEventListener("resize", updateIsAdminCompact);
   }, [isPublicMode]);
 
   useEffect(() => {
@@ -8840,7 +8872,7 @@ export default function App() {
                 <div style={{ display: "grid", gap: 12 }}>
                   <div>
                     <label style={styles.smallLabel}>Setup name</label>
-                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 10 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isAdminCompact ? "1fr" : "minmax(0,1fr) auto", gap: 10 }}>
                       <input
                         style={styles.input}
                         value={savedSetupName}
@@ -8852,7 +8884,7 @@ export default function App() {
                   </div>
                   <div>
                     <label style={styles.smallLabel}>Saved setups</label>
-                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto auto", gap: 10 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isAdminCompact ? "1fr" : "minmax(0,1fr) auto auto", gap: 10 }}>
                       <select
                         style={styles.select}
                         value={selectedSavedSetup || ""}
@@ -8960,7 +8992,7 @@ export default function App() {
                     Pick teams that cannot play at the same time because they share a coach or another admin conflict.
                   </div>
                   {(config.coachConflicts || []).map((entry) => (
-                    <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) auto", gap: 10, alignItems: "end", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                    <div key={entry.id} style={{ display: "grid", gridTemplateColumns: isAdminCompact ? "1fr" : "minmax(0,1fr) minmax(0,1fr) auto", gap: 10, alignItems: "end", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
                       <div>
                         <label style={styles.smallLabel}>Team A</label>
                         <select style={styles.select} value={entry.teamA || ""} onChange={(e) => updateCoachConflict(entry.id, { teamA: e.target.value })}>
@@ -9003,7 +9035,7 @@ export default function App() {
                         <div
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "minmax(0, 1fr) 90px 110px auto",
+                            gridTemplateColumns: isAdminCompact ? "1fr" : "minmax(0, 1fr) 90px 110px auto",
                             gap: 12,
                             alignItems: "center",
                           }}
@@ -9030,25 +9062,27 @@ export default function App() {
                         </div>
 
                         <div style={{ display: "grid", gap: 8 }}>
-                          <div
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "40px 90px 60px 140px 120px 1fr",
-                              gap: 6,
-                              padding: "0 4px",
-                              fontSize: 12,
-                              fontWeight: 700,
-                              textTransform: "uppercase",
-                              color: "#64748b",
-                            }}
-                          >
-                            <div>Team</div>
-                            <div>Assoc.</div>
-                            <div>No.</div>
-                            <div>Coach</div>
-			    <div>Coach email</div>
-                            <div>Preview</div>
-                          </div>
+                          {!isAdminCompact ? (
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "40px 90px 60px 140px 120px 1fr",
+                                gap: 6,
+                                padding: "0 4px",
+                                fontSize: 12,
+                                fontWeight: 700,
+                                textTransform: "uppercase",
+                                color: "#64748b",
+                              }}
+                            >
+                              <div>Team</div>
+                              <div>Assoc.</div>
+                              <div>No.</div>
+                              <div>Coach</div>
+			      <div>Coach email</div>
+                              <div>Preview</div>
+                            </div>
+                          ) : null}
 
                           {teamDetails.map((entry, idx) => {
                             const associationCode = getAssociationCode(entry);
@@ -9066,7 +9100,7 @@ export default function App() {
                                 key={`${division}-${idx}`}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "40px 90px 60px 140px 120px 1fr",
+                                  gridTemplateColumns: isAdminCompact ? "1fr" : "40px 90px 60px 140px 120px 1fr",
                                   gap: 6,
                                   alignItems: "center",
                                   border: "1px solid #e2e8f0",
@@ -9167,9 +9201,9 @@ export default function App() {
                 <div style={{ border: "1px solid #e2e8f0", background: "#f8fafc", padding: 12, borderRadius: 12, fontSize: 14, color: "#475569", marginBottom: 12 }}>
                   Choose the season year, then select the Saturdays to use from November through February.
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isAdminCompact ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 12 }}>
                   {config.saturdays.map((entry, index) => (
-                    <div key={`${entry.date}-${index}`} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                    <div key={`${entry.date}-${index}`} style={{ display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", gap: 10, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
                       <input type="checkbox" checked={entry.enabled} onChange={(e) => toggleSaturday(index, e.target.checked)} />
                       <input style={styles.input} value={entry.date} onChange={(e) => updateSaturdayDate(index, e.target.value)} />
                     </div>
@@ -9189,14 +9223,16 @@ export default function App() {
                   Choose which courts are active on the selected date, choose the first game start time for each court, and review how many slots remain on that court for the day.
                 </div>
                 <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 140px 110px", gap: 12, padding: "0 12px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#64748b" }}>
-                    <div>Use</div>
-                    <div>Court</div>
-                    <div>First game</div>
-                    <div>Slots left</div>
-                  </div>
+                  {!isAdminCompact ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 140px 110px", gap: 12, padding: "0 12px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#64748b" }}>
+                      <div>Use</div>
+                      <div>Court</div>
+                      <div>First game</div>
+                      <div>Slots left</div>
+                    </div>
+                  ) : null}
                   {(config.dateCourtSettings[selectedCourtDate] || []).map((court, index) => (
-                    <div key={`${selectedCourtDate}-${court.name || "custom"}-${index}`} style={{ display: "grid", gridTemplateColumns: "80px 1fr 140px 110px", gap: 12, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+                    <div key={`${selectedCourtDate}-${court.name || "custom"}-${index}`} style={{ display: "grid", gridTemplateColumns: isAdminCompact ? "1fr" : "80px 1fr 140px 110px", gap: 12, alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
                       <div><input type="checkbox" checked={court.enabled} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { enabled: e.target.checked })} /></div>
                       <input style={styles.input} value={court.name} placeholder={index === (config.dateCourtSettings[selectedCourtDate] || []).length - 1 ? "Custom court name" : "Court name"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { name: e.target.value })} />
                       <select style={styles.select} value={court.startTime || "8:00"} onChange={(e) => updateCourtForDate(selectedCourtDate, index, { startTime: e.target.value })}>
@@ -9205,7 +9241,7 @@ export default function App() {
                       <div style={{ fontWeight: 700 }}>{getSlotsRemainingForCourt(config, court)}</div>
                     </div>
                   ))}
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, background: "#f8fafc", fontWeight: 700 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, background: "#f8fafc", fontWeight: 700, gap: 12, flexWrap: "wrap" }}>
                     <span>Total slots for {selectedCourtDate || "selected date"}</span>
                     <span>{selectedDateSlotTotal}</span>
                   </div>
@@ -9214,7 +9250,7 @@ export default function App() {
 
               <Card>
                 <SectionTitle>Time Slots</SectionTitle>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isAdminCompact ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 10 }}>
                   {config.timeSlots.map((slot, index) => (
                     <label key={slot.time} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, fontSize: 14 }}>
                       <input type="checkbox" checked={slot.enabled} onChange={(e) => toggleTime(index, e.target.checked)} />
@@ -9274,7 +9310,7 @@ export default function App() {
               <>
                 {!isPublicMode ? (
                   <div style={{ marginBottom: 20 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16, alignItems: "end", marginBottom: 16 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isAdminCompact ? "1fr" : "280px 1fr", gap: 16, alignItems: "end", marginBottom: 16 }}>
                       <div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                           <label style={{ ...styles.smallLabel, marginBottom: 0 }}>View one date in grid form</label>
@@ -9302,7 +9338,7 @@ export default function App() {
                         <button style={styles.button} onClick={() => setDateDebugExpanded((v) => !v)}>{dateDebugExpanded ? 'Hide' : 'Show'}</button>
                       </div>
                       {dateDebugExpanded ? (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 10 }}>
                           {dateDebugRows.map((row) => (
                             <div key={row.date} style={{ border: `1px solid ${row.meetsTarget ? '#bbf7d0' : '#fecaca'}`, background: row.meetsTarget ? '#f0fdf4' : '#fef2f2', borderRadius: 10, padding: 10 }}>
                               <div style={{ fontWeight: 700, marginBottom: 4 }}>{row.date}</div>
@@ -9321,7 +9357,7 @@ export default function App() {
                         {gridNotice}
                       </div>
                     ) : null}
-                    <div style={{ ...styles.tableWrap, marginBottom: 20, maxHeight: 'none', overflow: 'visible' }}>
+                    <div style={{ ...styles.tableWrap, marginBottom: 20, maxHeight: 'none', overflow: isAdminCompact ? 'auto' : 'visible' }}>
                       <table style={styles.table}>
                         <thead>
                           <tr>
@@ -9391,7 +9427,7 @@ export default function App() {
                     display: "grid",
                     gridTemplateColumns: isPublicMode
                       ? (isMobilePublic ? "1fr" : "repeat(3, minmax(0,1fr))")
-                      : "220px 280px 1fr",
+                      : (isAdminCompact ? "1fr" : "220px 280px 1fr"),
                     gap: 16,
                     marginBottom: 16
                   }}
@@ -9484,7 +9520,7 @@ export default function App() {
 
                 {isPublicMode ? null : (
                   <div style={{ marginBottom: 20, border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 12, marginBottom: 14 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 12, marginBottom: 14 }}>
                       <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
                         <div style={{ fontSize: 12, color: "#64748b" }}>Reports submitted</div>
                         <div style={{ fontSize: 24, fontWeight: 700 }}>{scoreReports.length}</div>
@@ -10538,7 +10574,7 @@ export default function App() {
 
         {activeTab === "audit" && !isPublicMode ? (
           <div style={{ display: "grid", gap: 24 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0,1fr))", gap: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 16 }}>
               <StatCard label="All teams scheduled" value={result ? (result.auditSummary.allTeamsScheduled ? "Yes" : "No") : "—"} />
               <StatCard label="Missing teams" value={result ? result.auditSummary.missingTeams : "—"} />
               <StatCard label="Early violations" value={result ? result.auditSummary.earlyViolations : "—"} />
@@ -10635,7 +10671,7 @@ export default function App() {
                   <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>Generate a schedule to inspect the debug snapshot.</div>
                 ) : (
                   <div style={{ display: "grid", gap: 16 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 16 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 16 }}>
                       <StatCard label="Season phase" value={String(debugScheduleSnapshot.seasonPhase || "—").replace(/^./, (c) => c.toUpperCase())} />
                       <StatCard label="Scheduled games" value={debugScheduleSnapshot.totalScheduledGames} />
                       <StatCard label="Unscheduled games" value={debugScheduleSnapshot.totalUnscheduledGames} />
