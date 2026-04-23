@@ -9919,26 +9919,43 @@ export default function App() {
                         <span>{bracket.division}</span>
                         <span style={{ color: "#1d4ed8" }}>{bracket.teamCount || bracket.teams.length} teams • {bracket.bracketSize}-team bracket</span>
                       </div>
-                      <div style={{ overflowX: "auto", padding: 14, background: "#ffffff" }}>
-                        <div style={{ display: "grid", gridAutoFlow: "column", gridAutoColumns: "minmax(220px, 1fr)", gap: 14, alignItems: "start", minWidth: Math.max(680, activeTournamentRounds.length * 240) }}>
-                          {activeTournamentRounds.map((round) => (
-                            <div key={round.label} style={{ display: "grid", gap: 12 }}>
+                      <div style={{ overflowX: "auto", padding: 18, background: "#ffffff" }}>
+                        <div style={{ display: "grid", gridAutoFlow: "column", gridAutoColumns: "minmax(250px, 1fr)", gap: 44, alignItems: "start", minWidth: Math.max(760, activeTournamentRounds.length * 294) }}>
+                          {activeTournamentRounds.map((round, roundIndex) => {
+                            const isGuaranteeRound = round.label === "Guarantee Game";
+                            const nextIsGuaranteeRound = activeTournamentRounds[roundIndex + 1]?.label === "Guarantee Game";
+                            const roundGap = isGuaranteeRound ? 18 : Math.max(18, 26 * Math.pow(2, Math.min(roundIndex, 3)));
+                            const topPad = isGuaranteeRound ? 0 : Math.max(0, 26 * (Math.pow(2, Math.min(roundIndex, 3)) - 1));
+                            return (
+                            <div key={round.label} style={{ display: "grid", gap: roundGap, paddingTop: topPad }}>
                               <div style={{ fontWeight: 800, color: "#0f172a", textAlign: "center", borderBottom: "2px solid #e2e8f0", paddingBottom: 8 }}>{round.label}</div>
-                              {round.games.map((game) => (
-                                <div key={game.id} style={{ border: "1px solid #cbd5e1", borderRadius: 8, background: "#f8fafc", overflow: "hidden" }}>
+                              {round.games.map((game, gameIndex) => (
+                                <div key={game.id} style={{ position: "relative" }}>
+                                  {roundIndex > 0 && !isGuaranteeRound ? (
+                                    <div style={{ position: "absolute", left: -24, top: "50%", width: 24, borderTop: "2px solid #94a3b8" }} />
+                                  ) : null}
+                                  {roundIndex > 0 && !isGuaranteeRound && gameIndex % 2 === 0 ? (
+                                    <div style={{ position: "absolute", left: -24, top: "50%", height: roundGap + 106, borderLeft: "2px solid #94a3b8" }} />
+                                  ) : null}
+                                  {roundIndex < activeTournamentRounds.length - 1 && !isGuaranteeRound && !nextIsGuaranteeRound ? (
+                                    <div style={{ position: "absolute", right: -24, top: "50%", width: 24, borderTop: "2px solid #94a3b8" }} />
+                                  ) : null}
+                                  <div style={{ border: "2px solid #cbd5e1", borderRadius: 6, background: "#ffffff", overflow: "hidden", boxShadow: "0 6px 14px rgba(15,23,42,0.08)", position: "relative", zIndex: 1 }}>
                                   <div style={{ padding: "7px 9px", fontSize: 12, fontWeight: 800, color: "#475569", display: "flex", justifyContent: "space-between", gap: 8, background: "#e2e8f0" }}>
                                     <span>Game {game.gameNumber}</span>
                                     <span>{game.date || "—"} {game.time ? formatTimeDisplay(game.time) : ""}</span>
                                   </div>
                                   <div style={{ display: "grid" }}>
-                                    <div style={{ padding: "9px 10px", borderBottom: "1px solid #e2e8f0", fontWeight: 700, minHeight: 38 }}>{game.teamA || "TBD"}</div>
-                                    <div style={{ padding: "9px 10px", fontWeight: 700, minHeight: 38 }}>{game.teamB || "TBD"}</div>
+                                    <div style={{ padding: "10px 12px", borderBottom: "1px solid #cbd5e1", fontWeight: 800, minHeight: 40, background: "#f8fafc" }}>{game.teamA || "TBD"}</div>
+                                    <div style={{ padding: "10px 12px", fontWeight: 800, minHeight: 40, background: "#ffffff" }}>{game.teamB || "TBD"}</div>
                                   </div>
                                   <div style={{ padding: "7px 9px", fontSize: 12, color: "#64748b", borderTop: "1px solid #e2e8f0" }}>{game.court || "Court TBD"}</div>
+                                  </div>
                                 </div>
                               ))}
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                       <div style={{ overflowX: "auto" }}>
