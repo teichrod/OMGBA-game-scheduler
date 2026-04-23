@@ -62,6 +62,7 @@ const PUBLIC_BTN_TECHNICALS = "/courtrax_btn_technicals.png";
 const PUBLIC_BTN_TOURNAMENTS = "/courtrax_btn_tournaments.png";
 
 const TOURNAMENT_COURTS = ["MGMS-AB", "MGMS-DE", "MGCG-FG", "MGCG-HI", "MGCG-JK"];
+const TOURNAMENT_LAST_START_MINUTES = 21 * 60;
 const TOURNAMENT_WEEKEND_OPTIONS = [
   { value: "third", label: "3rd weekend in January", saturdayOrdinal: 3 },
   { value: "fourth", label: "4th weekend in January", saturdayOrdinal: 4 },
@@ -6446,6 +6447,15 @@ function formatClockMinutes(totalMinutes) {
   return `${hour}:${String(minute).padStart(2, "0")}`;
 }
 
+function parseTournamentStartMinutes(time, dayLabel) {
+  const raw = String(time || "").trim();
+  const hasSuffix = /\b(AM|PM)\b/i.test(raw);
+  const base = parseClockMinutes(raw);
+  if (hasSuffix || dayLabel !== "Friday") return base;
+  const hour = Math.floor(base / 60);
+  return hour < 12 ? base + 12 * 60 : base;
+}
+
 function getJanuaryTournamentWeekendDates(seasonYear, optionValue) {
   const januaryYear = Number(seasonYear || createInitialState().seasonYear) + 1;
   const ordinal = TOURNAMENT_WEEKEND_OPTIONS.find((entry) => entry.value === optionValue)?.saturdayOrdinal || 3;
@@ -6490,13 +6500,15 @@ function buildTournamentSlots(config, setup) {
   const slots = [];
   const addDaySlots = (date, dayLabel, startForCourt, rounds = 12) => {
     for (const court of TOURNAMENT_COURTS) {
-      const start = parseClockMinutes(startForCourt(court));
+      const start = parseTournamentStartMinutes(startForCourt(court), dayLabel);
       for (let i = 0; i < rounds; i += 1) {
+        const startMinutes = start + i * 65;
+        if (startMinutes > TOURNAMENT_LAST_START_MINUTES) continue;
         slots.push({
-          id: `${date}|${formatClockMinutes(start + i * 65)}|${court}`,
+          id: `${date}|${formatClockMinutes(startMinutes)}|${court}`,
           date,
           dayLabel,
-          time: formatClockMinutes(start + i * 65),
+          time: formatClockMinutes(startMinutes),
           court,
           slotIndex: i,
         });
@@ -6529,27 +6541,36 @@ function createTournamentBracketForDivision(division, teams, slotQueue, options 
   const bracketSize = getNextPowerOfTwo(Math.max(2, entrants.length));
   const byes = bracketSize - entrants.length;
   const firstRoundPairs = [];
-  let teamIndex = 0;
+  const byePairs = [];
+  const playInPairs = [];
+  let teamIndex = byes;
   for (let i = 0; i < byes; i += 1) {
-    firstRoundPairs.push([entrants[teamIndex] || null, null]);
-    teamIndex += 1;
+    byePairs.push([entrants[i] || null, null]);
   }
   while (teamIndex < entrants.length) {
-    firstRoundPairs.push([entrants[teamIndex] || null, entrants[teamIndex + 1] || null]);
+    playInPairs.push([entrants[teamIndex] || null, entrants[teamIndex + 1] || null]);
     teamIndex += 2;
   }
+  const pairCount = Math.max(byePairs.length, playInPairs.length);
+  for (let i = 0; i < pairCount; i += 1) {
+    if (byePairs[i]) firstRoundPairs.push(byePairs[i]);
+    if (playInPairs[i]) firstRoundPairs.push(playInPairs[i]);
+  }
   const games = [];
-  let previousRoundGameIds = [];
+  const guaranteeSources = [];
+  let previousRoundEntries = [];
   let gameNumber = 1;
 
   for (let roundSize = bracketSize, round = 1; roundSize >= 2; roundSize /= 2, round += 1) {
-    const gamesThisRound = [];
+    const entriesThisRound = [];
     const gameCount = roundSize / 2;
     for (let i = 0; i < gameCount; i += 1) {
       const gameId = `${division.replace(/[^A-Za-z0-9]/g, "_")}_R${round}_G${i + 1}`;
       let teamA = "TBD";
       let teamB = "TBD";
       let isBye = false;
+      let minGamesBeforeA = 0;
+      let minGamesBeforeB = 0;
 
       if (round === 1) {
         const pair = firstRoundPairs[i] || [null, null];
@@ -6557,20 +6578,23 @@ function createTournamentBracketForDivision(division, teams, slotQueue, options 
         teamB = pair[1] || "BYE";
         isBye = teamA === "BYE" || teamB === "BYE";
       } else {
-        const left = previousRoundGameIds[i * 2] || "";
-        const right = previousRoundGameIds[i * 2 + 1] || "";
-        teamA = String(left).includes("_R") ? `Winner ${left}` : left;
-        teamB = String(right).includes("_R") ? `Winner ${right}` : right;
+        const left = previousRoundEntries[i * 2] || { ref: "", minGamesForWinner: 0 };
+        const right = previousRoundEntries[i * 2 + 1] || { ref: "", minGamesForWinner: 0 };
+        teamA = String(left.ref).includes("_R") ? `Winner ${left.ref}` : left.ref;
+        teamB = String(right.ref).includes("_R") ? `Winner ${right.ref}` : right.ref;
+        minGamesBeforeA = left.minGamesForWinner || 0;
+        minGamesBeforeB = right.minGamesForWinner || 0;
       }
 
       if (!isBye) {
         const slot = slotQueue.shift() || {};
+        const label = roundSize === 2 ? "Championship" : `Round ${round}`;
         games.push({
           id: gameId,
           division,
           round,
           gameNumber: gameNumber,
-          label: roundSize === 2 ? "Championship" : `Round ${round}`,
+          label,
           teamA: seeded ? teamA : teamA.replace(/^Seed TBD /, "Seed TBD "),
           teamB: seeded ? teamB : teamB.replace(/^Seed TBD /, "Seed TBD "),
           date: slot.date || "",
@@ -6578,13 +6602,37 @@ function createTournamentBracketForDivision(division, teams, slotQueue, options 
           time: slot.time || "",
           court: slot.court || "",
         });
+        if (Math.min(minGamesBeforeA, minGamesBeforeB) + 1 < 2) {
+          guaranteeSources.push({ id: gameId, label: `${division} Game ${gameNumber}` });
+        }
         gameNumber += 1;
-        gamesThisRound.push(gameId);
+        entriesThisRound.push({ ref: gameId, minGamesForWinner: Math.min(minGamesBeforeA, minGamesBeforeB) + 1 });
       } else {
-        gamesThisRound.push(teamA === "BYE" ? teamB : teamA);
+        entriesThisRound.push({ ref: teamA === "BYE" ? teamB : teamA, minGamesForWinner: 0 });
       }
     }
-    previousRoundGameIds = gamesThisRound;
+    previousRoundEntries = entriesThisRound;
+  }
+
+  for (let i = 0; i < guaranteeSources.length; i += 2) {
+    const left = guaranteeSources[i];
+    const right = guaranteeSources[i + 1];
+    const gameId = `${division.replace(/[^A-Za-z0-9]/g, "_")}_G${Math.floor(i / 2) + 1}`;
+    const slot = slotQueue.shift() || {};
+    games.push({
+      id: gameId,
+      division,
+      round: "G",
+      gameNumber,
+      label: "Guarantee Game",
+      teamA: `Loser ${left.id}`,
+      teamB: right ? `Loser ${right.id}` : "Consolation opponent TBD",
+      date: slot.date || "",
+      dayLabel: slot.dayLabel || "",
+      time: slot.time || "",
+      court: slot.court || "",
+    });
+    gameNumber += 1;
   }
 
   return { division, teams: seeded ? entrants : [], teamCount: entrants.length, seeded, bracketSize, games };
@@ -6606,12 +6654,25 @@ function getTournamentDivisionTeams(config, division, standingsRows = [], seeded
   ];
 }
 
+function getTournamentBracketGroups(config, division, standingsRows = [], seeded = false) {
+  const orderedTeams = getTournamentDivisionTeams(config, division, standingsRows, seeded);
+  if (orderedTeams.length <= 12) {
+    return [{ division, teams: orderedTeams }];
+  }
+
+  const goldCount = Math.ceil(orderedTeams.length / 2);
+  return [
+    { division: `${division} Gold`, teams: orderedTeams.slice(0, goldCount) },
+    { division: `${division} Silver`, teams: orderedTeams.slice(goldCount) },
+  ];
+}
+
 function buildMidseasonTournament(config, setup, options = {}) {
   const { seeded = false, schedule = [], scoreReports = [] } = options;
   const normalized = normalizeConfig(config);
   const tournamentSetup = setup || createDefaultTournamentSetup(normalized);
   const slots = buildTournamentSlots(normalized, tournamentSetup);
-  const slotQueue = [...slots];
+  const slotQueue = [];
   const brackets = [];
   const lockDate = getTournamentSeedingLockDate(normalized, tournamentSetup);
   const seedingSchedule = (Array.isArray(schedule) ? schedule : []).filter((game) => parseShortDate(game.date) <= parseShortDate(lockDate));
@@ -6621,11 +6682,27 @@ function buildMidseasonTournament(config, setup, options = {}) {
     if (!tournamentSetup.divisions?.[division]) continue;
     const count = Number(normalized.divisions?.[division] || 0);
     if (count < 2) continue;
-    const teams = getTournamentDivisionTeams(normalized, division, standingsByDivision[division] || [], seeded);
-    brackets.push(createTournamentBracketForDivision(division, teams, slotQueue, { seeded }));
+    const bracketGroups = getTournamentBracketGroups(normalized, division, standingsByDivision[division] || [], seeded);
+    for (const group of bracketGroups) {
+      brackets.push(createTournamentBracketForDivision(group.division, group.teams, slotQueue, { seeded }));
+    }
   }
 
   const scheduledGames = brackets.flatMap((bracket) => bracket.games);
+  const orderedGamesForSlots = [...scheduledGames].sort((a, b) => {
+    const phaseA = typeof a.round === "number" ? a.round : 99;
+    const phaseB = typeof b.round === "number" ? b.round : 99;
+    if (phaseA !== phaseB) return phaseA - phaseB;
+    if (a.division !== b.division) return String(a.division || "").localeCompare(String(b.division || ""), undefined, { numeric: true });
+    return Number(a.gameNumber || 0) - Number(b.gameNumber || 0);
+  });
+  orderedGamesForSlots.forEach((game, index) => {
+    const slot = slots[index] || {};
+    game.date = slot.date || "";
+    game.dayLabel = slot.dayLabel || "";
+    game.time = slot.time || "";
+    game.court = slot.court || "";
+  });
   return {
     name: "Mid-Season Tournament",
     generatedAt: new Date().toLocaleString(),
