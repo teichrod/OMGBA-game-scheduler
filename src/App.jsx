@@ -2680,14 +2680,18 @@ function buildTeams(config) {
     const targetGames = Number(config.divisionGames[division] || 8);
     const isOddDivision = count % 2 === 1;
     const details = syncDivisionTeamDetails(config.divisionTeamDetails?.[division], count);
+    const playableDates = getPlayableDateCountForDivision(config, division);
+    const extraGamesNeededBeyondDates = Math.max(0, targetGames - playableDates);
 
     let maxDoubleheadersPerTeam = 0;
     if (config.globalAllowDoubleheaders) {
       maxDoubleheadersPerTeam = 99;
     } else if (division === "5th Boys") {
-      maxDoubleheadersPerTeam = (config.fifthBoysDoubleheaderDate ? 1 : 0) + (isOddDivision ? 1 : 0);
+      maxDoubleheadersPerTeam =
+        (config.fifthBoysDoubleheaderDate ? 1 : 0) +
+        (isOddDivision ? Math.min(1, extraGamesNeededBeyondDates) : 0);
     } else {
-      maxDoubleheadersPerTeam = isOddDivision ? 1 : 0;
+      maxDoubleheadersPerTeam = isOddDivision ? Math.min(1, extraGamesNeededBeyondDates) : 0;
     }
 
     for (let i = 0; i < count; i += 1) {
@@ -5056,6 +5060,12 @@ function getEnabledGameDates(config) {
     .filter((entry) => entry.enabled)
     .map((entry) => entry.date)
     .sort((a, b) => parseShortDate(a) - parseShortDate(b));
+}
+
+function getPlayableDateCountForDivision(config, division) {
+  const dates = getEnabledGameDates(config);
+  if (division === "5th Boys") return dates.length;
+  return dates.filter((date) => date !== config?.fifthBoysDoubleheaderDate).length;
 }
 
 function getFinalEnabledDate(config) {
