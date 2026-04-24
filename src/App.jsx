@@ -8645,7 +8645,7 @@ export default function App() {
 
   function renderStandingsHeader(label, key, align = "center") {
     const isActive = standingsSort.key === key;
-    const arrow = isActive ? (standingsSort.direction === "desc" ? " â–¼" : " â–²") : "";
+    const arrow = isActive ? (standingsSort.direction === "desc" ? " v" : " ^") : "";
     const tooltipMap = {
       Team: "Team name",
       W: "Wins",
@@ -8664,7 +8664,7 @@ export default function App() {
       <th
         style={{ ...styles.th, textAlign: align, cursor: "pointer", userSelect: "none" }}
         onClick={() => handleStandingsSort(key)}
-        title={`${tooltip} â€” click to sort`}
+        title={`${tooltip} - click to sort`}
       >
         {label}{arrow}
       </th>
