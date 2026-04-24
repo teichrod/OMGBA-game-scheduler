@@ -2207,8 +2207,6 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
   pushFinishTrace('Regular start', schedule);
   let finalizedSchedule = repairMissingTeamGamesInSchedule(schedule, normalized);
   pushFinishTrace('After repair missing', finalizedSchedule);
-  finalizedSchedule = rebalanceScheduleTimes(finalizedSchedule, normalized);
-  pushFinishTrace('After rebalance times', finalizedSchedule);
   finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
   pushFinishTrace('After compact earlier', finalizedSchedule);
   finalizedSchedule = repairMissingTeamGamesInSchedule(finalizedSchedule, normalized);
@@ -4411,8 +4409,6 @@ function generateScheduleEngine(config, lockedGames = []) {
   pushFinishTrace('After repeat-opponent repair', improvedSchedule);
   improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
   pushFinishTrace('After repair missing', improvedSchedule);
-  improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-  pushFinishTrace('After rebalance times', improvedSchedule);
   improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
   pushFinishTrace('After compact earlier', improvedSchedule);
   improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
