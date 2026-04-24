@@ -3944,6 +3944,102 @@ function validateManualSwap(schedule, gameA, gameB, config) {
   return '';
 }
 
+function getGameDoubleheaderPartner(schedule, sourceGame) {
+  if (!sourceGame) return null;
+  const sourceTeams = [sourceGame.home, sourceGame.away];
+  const candidates = (Array.isArray(schedule) ? schedule : [])
+    .filter((game) =>
+      game &&
+      !sameGameKey(game, sourceGame) &&
+      game.date === sourceGame.date &&
+      game.court === sourceGame.court &&
+      areBackToBackTimes(game.time, sourceGame.time) &&
+      sourceTeams.some((teamName) => game.home === teamName || game.away === teamName)
+    )
+    .map((game) => ({
+      game,
+      sharedTeamCount: sourceTeams.filter((teamName) => game.home === teamName || game.away === teamName).length,
+      offset: getTimeIndex(game.time) - getTimeIndex(sourceGame.time),
+    }))
+    .sort((a, b) => {
+      if (b.sharedTeamCount !== a.sharedTeamCount) return b.sharedTeamCount - a.sharedTeamCount;
+      return Math.abs(a.offset) - Math.abs(b.offset);
+    });
+
+  if (!candidates.length) return null;
+  if (
+    candidates.length > 1 &&
+    candidates[0].sharedTeamCount === candidates[1].sharedTeamCount &&
+    Math.abs(candidates[0].offset) === Math.abs(candidates[1].offset)
+  ) {
+    return null;
+  }
+  return candidates[0].game;
+}
+
+function buildManualMovePlan(schedule, sourceGame, target, config) {
+  if (!sourceGame || !target) return { error: 'Missing move target.' };
+  const partnerGame = getGameDoubleheaderPartner(schedule, sourceGame);
+  const plan = [{ game: sourceGame, target }];
+  if (!partnerGame) {
+    return { moves: plan, partnerGame: null };
+  }
+
+  const enabledTimes = config.timeSlots.filter((entry) => entry.enabled).map((entry) => entry.time);
+  const sourceIndex = enabledTimes.indexOf(sourceGame.time);
+  const partnerIndex = enabledTimes.indexOf(partnerGame.time);
+  const targetIndex = enabledTimes.indexOf(target.time);
+  if (sourceIndex < 0 || partnerIndex < 0 || targetIndex < 0) {
+    return { error: 'That time is not enabled.' };
+  }
+
+  const offset = partnerIndex - sourceIndex;
+  const nextPartnerIndex = targetIndex + offset;
+  if (nextPartnerIndex < 0 || nextPartnerIndex >= enabledTimes.length) {
+    return { error: 'That doubleheader would move outside the available time slots.' };
+  }
+
+  plan.push({
+    game: partnerGame,
+    target: {
+      date: target.date,
+      time: enabledTimes[nextPartnerIndex],
+      court: target.court,
+    },
+  });
+  return { moves: plan, partnerGame };
+}
+
+function validateManualMovePlan(schedule, movePlan, config) {
+  const moves = Array.isArray(movePlan?.moves) ? movePlan.moves : [];
+  if (!moves.length) return 'Missing game.';
+
+  const movingGames = moves.map((entry) => entry.game);
+  let working = (Array.isArray(schedule) ? schedule : [])
+    .filter((game) => !movingGames.some((movingGame) => sameGameKey(game, movingGame)))
+    .map((game) => ({ ...game }));
+
+  for (const entry of moves) {
+    const movedGame = { ...entry.game, date: entry.target.date, time: entry.target.time, court: entry.target.court };
+    const message = validateManualMove(working, movedGame, entry.target, config);
+    if (message) return message;
+    working = [...working, movedGame];
+  }
+
+  return '';
+}
+
+function applyManualMovePlan(schedule, movePlan) {
+  const moves = Array.isArray(movePlan?.moves) ? movePlan.moves : [];
+  if (!moves.length) return (Array.isArray(schedule) ? schedule : []).map((game) => ({ ...game }));
+
+  return (Array.isArray(schedule) ? schedule : []).map((game) => {
+    const matched = moves.find((entry) => sameGameKey(game, entry.game));
+    if (!matched) return { ...game };
+    return { ...game, date: matched.target.date, time: matched.target.time, court: matched.target.court };
+  });
+}
+
 function shouldPrioritizeMorning(team) {
   return (
     (team.morningGames || 0) < getMinimumMorningGames(team) ||
@@ -7801,8 +7897,17 @@ export default function App() {
     if (isPublicMode || !result) return;
     const game = getGameAtCell(result, date, time, court);
     if (!game) return;
-    setDragState({ date, time, court, label: `${game.away} @ ${game.home}`, game });
-    setGridNotice(`Dragging ${game.away} @ ${game.home}`);
+    const movePlan = buildManualMovePlan(result.schedule, game, { date, time, court }, config);
+    const partnerGame = movePlan.partnerGame || null;
+    const label = partnerGame
+      ? `${game.away} @ ${game.home} + ${partnerGame.away} @ ${partnerGame.home}`
+      : `${game.away} @ ${game.home}`;
+    setDragState({ date, time, court, label, game, partnerGame });
+    setGridNotice(
+      partnerGame
+        ? `Dragging doubleheader: ${game.away} @ ${game.home} with ${partnerGame.away} @ ${partnerGame.home}.`
+        : `Dragging ${game.away} @ ${game.home}`
+    );
   }
 
   function clearGridDrag() {
@@ -7827,19 +7932,31 @@ export default function App() {
       return;
     }
 
-    const validationMessage = validateManualMove(result.schedule, sourceGame, { date, time, court }, config);
+    const movePlan = buildManualMovePlan(result.schedule, sourceGame, { date, time, court }, config);
+    if (movePlan.error) {
+      setGridNotice(movePlan.error);
+      setDragState(null);
+      return;
+    }
+
+    const validationMessage = validateManualMovePlan(result.schedule, movePlan, config);
     if (validationMessage) {
       setGridNotice(validationMessage);
       setDragState(null);
       return;
     }
 
-    const nextSchedule = result.schedule.map((game) =>
-      game === sourceGame ? { ...game, date, time, court } : { ...game }
-    );
+    const nextSchedule = applyManualMovePlan(result.schedule, movePlan);
     const nextResult = buildResultFromSchedule(nextSchedule, config, result.unscheduled);
     setResult(nextResult);
-    setGridNotice(`Moved ${sourceGame.away} @ ${sourceGame.home} to ${date} ${formatTimeDisplay(time)} ${court}.`);
+    if (movePlan.partnerGame) {
+      const partnerMove = movePlan.moves.find((entry) => sameGameKey(entry.game, movePlan.partnerGame));
+      setGridNotice(
+        `Moved doubleheader ${sourceGame.away} @ ${sourceGame.home} and ${movePlan.partnerGame.away} @ ${movePlan.partnerGame.home} to ${date} ${formatTimeDisplay(time)} ${court} and ${formatTimeDisplay(partnerMove?.target?.time || '')} ${court}.`
+      );
+    } else {
+      setGridNotice(`Moved ${sourceGame.away} @ ${sourceGame.home} to ${date} ${formatTimeDisplay(time)} ${court}.`);
+    }
     setDragState(null);
   }
 
@@ -9645,7 +9762,7 @@ export default function App() {
                         </select>
                       </div>
                       <div style={{ fontSize: 14, color: "#475569" }}>
-                        Drag a scheduled game to another open slot on this date to manually adjust the grid. Use the lock buttons in the schedule list below, then regenerate to rebuild around those fixed games. The drop is blocked if it would break daily limits, 8:00 caps, or same-court back-to-back doubleheader rules.
+                        Drag a scheduled game to another open slot on this date to manually adjust the grid. If the game is part of a doubleheader, its paired game moves with it and keeps the same back-to-back order on the same court. Use the lock buttons in the schedule list below, then regenerate to rebuild around those fixed games. The drop is blocked if it would break daily limits, 8:00 caps, or same-court back-to-back doubleheader rules.
                       </div>
                     </div>
                     <div style={{ marginBottom: 16, border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
@@ -9716,7 +9833,7 @@ export default function App() {
                                           padding: 10,
                                           fontWeight: 600,
                                         }}
-                                        title="Drag to another open slot"
+                                        title={dragState?.partnerGame && sameGameKey(dragState.game, cellGame) ? "Drag to another open slot with its doubleheader pair" : "Drag to another open slot"}
                                       >
                                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                                           <div>{cellGame.away} @ {cellGame.home}</div>
