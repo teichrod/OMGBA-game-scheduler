@@ -2207,6 +2207,9 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
   finalizedSchedule = repairMissingTeamGamesInSchedule(finalizedSchedule, normalized);
   finalizedSchedule = rebalanceScheduleTimes(finalizedSchedule, normalized);
   finalizedSchedule = enforceMinimumDayPartBalance(finalizedSchedule, normalized);
+  finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
+  finalizedSchedule = repairMissingTeamGamesInSchedule(finalizedSchedule, normalized);
+  finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
   finalizedSchedule = sortScheduleGames(finalizedSchedule);
 
   const unresolvedUnscheduled = teams.some((team) => getNeed(team) > 0) ? unscheduled : [];
@@ -4396,6 +4399,9 @@ function generateScheduleEngine(config, lockedGames = []) {
   improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
   improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
   improvedSchedule = enforceMinimumDayPartBalance(improvedSchedule, config);
+  improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+  improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+  improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
   improvedSchedule = sortScheduleGames(improvedSchedule);
   pushRepeatTrace('Final schedule', improvedSchedule);
 
