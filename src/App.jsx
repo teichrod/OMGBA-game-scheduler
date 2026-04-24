@@ -2673,9 +2673,9 @@ function buildTeams(config) {
     if (config.globalAllowDoubleheaders) {
       maxDoubleheadersPerTeam = 99;
     } else if (division === "5th Boys") {
-      maxDoubleheadersPerTeam = (config.fifthBoysDoubleheaderDate ? 1 : 0) + (isOddDivision ? Math.max(1, Math.ceil(targetGames / 4)) : 0);
+      maxDoubleheadersPerTeam = (config.fifthBoysDoubleheaderDate ? 1 : 0) + (isOddDivision ? 1 : 0);
     } else {
-      maxDoubleheadersPerTeam = isOddDivision ? Math.max(1, Math.ceil(targetGames / 4)) : 0;
+      maxDoubleheadersPerTeam = isOddDivision ? 1 : 0;
     }
 
     for (let i = 0; i < count; i += 1) {
