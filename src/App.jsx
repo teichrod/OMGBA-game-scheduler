@@ -2109,6 +2109,10 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
   const openSlots = buildOpenSlots(normalized);
   const schedule = [];
   const unscheduled = [];
+  const finishTrace = [];
+  const pushFinishTrace = (label, sourceSchedule = schedule) => {
+    finishTrace.push(buildFinishTraceEntry(label, sourceSchedule, normalized));
+  };
 
   const carryForwardGames = (Array.isArray(existingSchedule) ? existingSchedule : [])
     .filter((game) => isPreseasonDate(game.date, normalized) || game.locked)
@@ -2200,12 +2204,19 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     });
   }
 
+  pushFinishTrace('Regular start', schedule);
   let finalizedSchedule = repairMissingTeamGamesInSchedule(schedule, normalized);
+  pushFinishTrace('After repair missing', finalizedSchedule);
   finalizedSchedule = rebalanceScheduleTimes(finalizedSchedule, normalized);
+  pushFinishTrace('After rebalance times', finalizedSchedule);
   finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
+  pushFinishTrace('After compact earlier', finalizedSchedule);
   finalizedSchedule = repairMissingTeamGamesInSchedule(finalizedSchedule, normalized);
+  pushFinishTrace('After second repair', finalizedSchedule);
   finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
+  pushFinishTrace('Regular final compact', finalizedSchedule);
   finalizedSchedule = sortScheduleGames(finalizedSchedule);
+  pushFinishTrace('Regular sorted', finalizedSchedule);
 
   let result = buildResultFromSchedule(finalizedSchedule, normalized, []);
   const unresolvedUnscheduled = result.auditSummary.missingTeams > 0 ? unscheduled : [];
@@ -2215,6 +2226,7 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     seasonPhase: 'regular',
     tierSummary,
     preseasonGameCount: preseasonSchedule.length,
+    finishTrace,
   };
 }
 
@@ -4313,8 +4325,12 @@ function generateScheduleEngine(config, lockedGames = []) {
   const schedule = [];
   const unscheduled = [];
   const repeatTrace = [];
+  const finishTrace = [];
   const pushRepeatTrace = (label, sourceSchedule = schedule) => {
     repeatTrace.push(buildRepeatTraceEntry(label, sourceSchedule, config));
+  };
+  const pushFinishTrace = (label, sourceSchedule = schedule) => {
+    finishTrace.push(buildFinishTraceEntry(label, sourceSchedule, config));
   };
 
   pushRepeatTrace('Start');
@@ -4353,7 +4369,9 @@ function generateScheduleEngine(config, lockedGames = []) {
   pushRepeatTrace('After completion fallback');
 
   let improvedSchedule = schedule.map((game) => ({ ...game }));
+  pushFinishTrace('Preseason start', improvedSchedule);
   improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+  pushFinishTrace('After repair missing', improvedSchedule);
 
   let previewTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
   let previewRows = Object.values(previewTeamMap);
@@ -4384,17 +4402,26 @@ function generateScheduleEngine(config, lockedGames = []) {
   }
 
   pushRepeatTrace('Before repeat repair', improvedSchedule);
+  pushFinishTrace('Before repeat repair', improvedSchedule);
   improvedSchedule = rebuildAvoidableRepeatDivisions(improvedSchedule, config);
   pushRepeatTrace('After avoidable-repeat rebuild', improvedSchedule);
+  pushFinishTrace('After avoidable-repeat rebuild', improvedSchedule);
   improvedSchedule = tryReduceRepeatedOpponents(improvedSchedule, config);
   pushRepeatTrace('After repeat-opponent repair', improvedSchedule);
+  pushFinishTrace('After repeat-opponent repair', improvedSchedule);
   improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+  pushFinishTrace('After repair missing', improvedSchedule);
   improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
+  pushFinishTrace('After rebalance times', improvedSchedule);
   improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+  pushFinishTrace('After compact earlier', improvedSchedule);
   improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+  pushFinishTrace('After second repair', improvedSchedule);
   improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+  pushFinishTrace('Preseason final compact', improvedSchedule);
   improvedSchedule = sortScheduleGames(improvedSchedule);
   pushRepeatTrace('Final schedule', improvedSchedule);
+  pushFinishTrace('Preseason sorted', improvedSchedule);
 
   const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
   const finalTeams = Object.values(finalTeamMap);
@@ -4477,7 +4504,7 @@ function generateScheduleEngine(config, lockedGames = []) {
     });
   }
 
-  return { schedule: improvedSchedule, auditRows, auditSummary, unscheduled, repeatTrace: annotateRepeatTrace(repeatTrace), divisionRepeatMath: buildDivisionRepeatMath(config) };
+  return { schedule: improvedSchedule, auditRows, auditSummary, unscheduled, repeatTrace: annotateRepeatTrace(repeatTrace), finishTrace, divisionRepeatMath: buildDivisionRepeatMath(config) };
 }
 
 
@@ -10966,6 +10993,48 @@ export default function App() {
             ) : null}
 
             <Card>
+              <SectionTitle>Finish Pass Trace</SectionTitle>
+              {!result ? (
+                <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>Generate a schedule to inspect the final cleanup passes.</div>
+              ) : !(result.finishTrace || []).length ? (
+                <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 24, textAlign: "center", color: "#64748b" }}>No finish-pass trace captured for this result.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 16 }}>
+                  {(result.finishTrace || []).map((phase) => (
+                    <div key={phase.label} style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16, display: "grid", gap: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 700 }}>{phase.label}</div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <Badge>{phase.totalGames} games</Badge>
+                          <Badge danger={phase.missingTeams > 0}>{phase.missingTeams} missing teams</Badge>
+                          <Badge danger={phase.middleGapCount > 0}>{phase.middleGapCount} middle gaps</Badge>
+                          <Badge danger={phase.doubleheaderIssues > 0}>{phase.doubleheaderIssues} DH issues</Badge>
+                          <Badge danger={phase.dayPartIssues > 0}>{phase.dayPartIssues} day-part issues</Badge>
+                        </div>
+                      </div>
+
+                      {phase.missingTeamList.length ? (
+                        <div style={{ fontSize: 13, color: "#475569" }}>
+                          Missing: {phase.missingTeamList.map((row) => `${row.team} (${row.games}/${row.target})`).join('; ')}
+                        </div>
+                      ) : null}
+                      {phase.doubleheaderTeamList.length ? (
+                        <div style={{ fontSize: 13, color: "#475569" }}>
+                          Doubleheaders: {phase.doubleheaderTeamList.map((row) => `${row.team} (${row.doubleHeaders}/${row.allowedDoubleheaders})`).join('; ')}
+                        </div>
+                      ) : null}
+                      {phase.dayPartTeamList.length ? (
+                        <div style={{ fontSize: 13, color: "#475569" }}>
+                          Day-part shortages: {phase.dayPartTeamList.map((row) => `${row.team} (M-${row.morningShortage}, A-${row.afternoonShortage})`).join('; ')}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            <Card>
               <SectionTitle>Repeat Opponent Trace</SectionTitle>
               {!result ? (
                 <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>Generate a schedule to trace when repeat opponents appear.</div>
@@ -11084,6 +11153,48 @@ function buildRepeatTraceEntry(label, schedule, config) {
         meetings: meetingMap[key] || [],
       };
     }),
+  };
+}
+
+function buildFinishTraceEntry(label, schedule, config) {
+  const builtTeams = buildTeams(config);
+  const teamMap = makeTeamMapFromSchedule(schedule, config);
+  const rows = builtTeams.map((team) => {
+    const current = teamMap[team.name] || team;
+    const missing = Math.max(0, (team.targetGames || 0) - (current.gamesScheduled || 0));
+    const doubleheaderExcess = Math.max(0, (current.doubleHeaders || 0) - (team.maxDoubleheadersPerTeam || 0));
+    const morningShortage = Math.max(0, getMinimumMorningGames(team) - (current.morningGames || 0));
+    const afternoonShortage = Math.max(0, getMinimumAfternoonGames(team) - (current.afternoonGames || 0));
+    return {
+      team: team.name,
+      division: team.division,
+      missing,
+      doubleheaderExcess,
+      morningShortage,
+      afternoonShortage,
+      games: current.gamesScheduled || 0,
+      target: team.targetGames || 0,
+      morning: current.morningGames || 0,
+      afternoon: current.afternoonGames || 0,
+      doubleHeaders: current.doubleHeaders || 0,
+      allowedDoubleheaders: team.maxDoubleheadersPerTeam || 0,
+    };
+  });
+
+  const missingTeams = rows.filter((row) => row.missing > 0);
+  const doubleheaderTeams = rows.filter((row) => row.doubleheaderExcess > 0);
+  const dayPartTeams = rows.filter((row) => row.morningShortage > 0 || row.afternoonShortage > 0);
+
+  return {
+    label,
+    totalGames: (schedule || []).length,
+    middleGapCount: getMiddleGapCount(schedule, config),
+    missingTeams: missingTeams.length,
+    doubleheaderIssues: doubleheaderTeams.length,
+    dayPartIssues: dayPartTeams.length,
+    missingTeamList: missingTeams.slice(0, 12),
+    doubleheaderTeamList: doubleheaderTeams.slice(0, 12),
+    dayPartTeamList: dayPartTeams.slice(0, 12),
   };
 }
 
