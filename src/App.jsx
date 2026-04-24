@@ -8645,7 +8645,7 @@ export default function App() {
 
   function renderStandingsHeader(label, key, align = "center") {
     const isActive = standingsSort.key === key;
-    const arrow = isActive ? (standingsSort.direction === "desc" ? " v" : " ^") : "";
+    const arrow = isActive ? (standingsSort.direction === "desc" ? " \u25BE" : " \u25B4") : "";
     const tooltipMap = {
       Team: "Team name",
       W: "Wins",
