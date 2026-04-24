@@ -421,6 +421,61 @@ publicGraphicTabImage: {
     borderRadius: 14,
     padding: 14,
   },
+  publicHeroShell: {
+    border: "1px solid #bfdbfe",
+    background: "linear-gradient(145deg, rgba(239,246,255,0.96) 0%, rgba(255,255,255,0.98) 52%, rgba(240,253,244,0.96) 100%)",
+    borderRadius: 20,
+    padding: "clamp(16px, 2vw, 24px)",
+    boxShadow: "0 18px 40px rgba(15,23,42,0.10)",
+    display: "grid",
+    gap: 18,
+  },
+  publicHeroTop: {
+    display: "grid",
+    gap: 16,
+  },
+  publicHeroStats: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+    gap: 12,
+  },
+  publicHeroStat: {
+    border: "1px solid rgba(191,219,254,0.85)",
+    borderRadius: 16,
+    background: "rgba(255,255,255,0.82)",
+    padding: 14,
+    display: "grid",
+    gap: 4,
+  },
+  publicTeamHub: {
+    border: "1px solid #bfdbfe",
+    borderRadius: 18,
+    background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(239,246,255,0.9) 100%)",
+    padding: 18,
+    display: "grid",
+    gap: 16,
+  },
+  publicTeamHero: {
+    display: "grid",
+    gap: 12,
+  },
+  publicChipRow: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  publicQuickChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "7px 10px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 700,
+    border: "1px solid #cbd5e1",
+    background: "#ffffff",
+    color: "#334155",
+  },
   publicFilterCard: {
     border: "1px solid #e2e8f0",
     borderRadius: 14,
@@ -429,17 +484,69 @@ publicGraphicTabImage: {
   },
   publicNextGameCard: {
     border: "1px solid #bfdbfe",
-    borderRadius: 16,
-    padding: 16,
-    background: "#eff6ff",
+    borderRadius: 18,
+    padding: 18,
+    background: "linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)",
+    display: "grid",
+    gap: 14,
   },
   publicGameCard: {
     border: "1px solid #e2e8f0",
-    borderRadius: 14,
+    borderRadius: 16,
+    padding: 16,
+    background: "#ffffff",
+    display: "grid",
+    gap: 12,
+    boxShadow: "0 8px 22px rgba(15,23,42,0.05)",
+  },
+  publicDateSection: {
+    border: "1px solid #dbeafe",
+    borderRadius: 18,
+    background: "rgba(255,255,255,0.92)",
+    overflow: "hidden",
+    boxShadow: "0 8px 24px rgba(15,23,42,0.05)",
+  },
+  publicDateHeader: {
+    padding: "12px 16px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    flexWrap: "wrap",
+    background: "linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)",
+    borderBottom: "1px solid #dbeafe",
+  },
+  publicScheduleGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    gap: 14,
+    padding: 14,
+  },
+  publicStandingsSummary: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    gap: 12,
+  },
+  publicStandingsSummaryCard: {
+    border: "1px solid #e2e8f0",
+    borderRadius: 16,
     padding: 14,
     background: "#ffffff",
     display: "grid",
-    gap: 10,
+    gap: 4,
+  },
+  publicStandingsCard: {
+    border: "1px solid #dbeafe",
+    borderRadius: 16,
+    overflow: "hidden",
+    background: "#ffffff",
+    boxShadow: "0 8px 24px rgba(15,23,42,0.05)",
+  },
+  publicStandingsRowTop: {
+    background: "linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)",
+  },
+  publicStandingsRowSelected: {
+    background: "linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%)",
   },
   grid2: {
     display: "grid",
@@ -6506,6 +6613,33 @@ function getGameScoreDisplay(game, scoreReports) {
   return "\u2014";
 }
 
+function getPublicGameStatus(game, scoreReports) {
+  const status = getOfficialScoreFromReports(game, scoreReports);
+  if (status.verified) {
+    return { label: "Final", color: "#166534", background: "#dcfce7" };
+  }
+  if (status.status === "awaiting_opponent") {
+    return { label: "1 report", color: "#92400e", background: "#fef3c7" };
+  }
+  if (status.status === "mismatch") {
+    return { label: "Needs review", color: "#991b1b", background: "#fee2e2" };
+  }
+  return { label: "Scheduled", color: "#1d4ed8", background: "#dbeafe" };
+}
+
+function getRelativeScheduleDateLabel(dateText) {
+  if (!dateText) return "";
+  const target = new Date(parseShortDate(dateText));
+  target.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Tomorrow";
+  if (diffDays > 1 && diffDays < 7) return "This week";
+  return "";
+}
+
 function getPublishedScheduleOutcomeParts(game, scoreReports) {
   const status = getOfficialScoreFromReports(game, scoreReports);
   if (!(status?.verified && status?.official)) {
@@ -7727,6 +7861,41 @@ export default function App() {
       ? `${publicSelectedTeamStanding.wins}-${publicSelectedTeamStanding.losses}-${ties}`
       : `${publicSelectedTeamStanding.wins}-${publicSelectedTeamStanding.losses}`;
   }, [publicSelectedTeamStanding]);
+  const publicFilteredScheduleSections = useMemo(() => {
+    const sections = [];
+    let currentSection = null;
+    for (const game of filteredSchedule) {
+      if (!currentSection || currentSection.date !== game.date) {
+        currentSection = { date: game.date, label: getRelativeScheduleDateLabel(game.date), games: [] };
+        sections.push(currentSection);
+      }
+      currentSection.games.push(game);
+    }
+    return sections;
+  }, [filteredSchedule]);
+  const publicVerifiedGameCount = useMemo(
+    () => (result?.schedule || []).filter((game) => getOfficialScoreFromReports(game, scoreReports).verified).length,
+    [result, scoreReports]
+  );
+  const publicUpcomingGameCount = useMemo(
+    () => filteredSchedule.filter((game) => !getOfficialScoreFromReports(game, scoreReports).verified).length,
+    [filteredSchedule, scoreReports]
+  );
+  const publicSelectedTeamSummary = useMemo(() => {
+    if (scheduleTeamFilter === "all") return null;
+    const totalGames = filteredSchedule.length;
+    const verifiedGames = filteredSchedule.filter((game) => getOfficialScoreFromReports(game, scoreReports).verified).length;
+    return {
+      totalGames,
+      verifiedGames,
+      remainingGames: Math.max(0, totalGames - verifiedGames),
+    };
+  }, [scheduleTeamFilter, filteredSchedule, scoreReports]);
+  const publicDivisionLeaders = useMemo(() => {
+    if (scheduleDivisionFilter === "all") return [];
+    const groups = publicStandingsGroups[scheduleDivisionFilter] || [{ rows: divisionStandings[scheduleDivisionFilter] || [] }];
+    return groups.map((group) => (group.rows || [])[0]).filter(Boolean);
+  }, [scheduleDivisionFilter, publicStandingsGroups, divisionStandings]);
 
   const shareableTeamUrl = useMemo(() => {
     if (scheduleTeamFilter === "all") return "";
@@ -9166,31 +9335,80 @@ export default function App() {
         ) : null}
 
         {isPublicMode ? (
-          <div style={styles.publicBanner}>
-            <div style={{ display: "grid", gap: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 4 }}></div>
-                  <div style={{ color: "#334155" }}>Browse published games, check standings, and report final scores.</div>
+          <div style={styles.publicHeroShell}>
+            <div style={styles.publicHeroTop}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "start" }}>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 12, color: "#1d4ed8", fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                    Public League Hub
+                  </div>
+                  <div style={{ fontSize: isMobilePublic ? 24 : 32, fontWeight: 800, color: "#0f172a" }}>
+                    COURTrax {config.seasonYear}-{String(config.seasonYear + 1).slice(-2)}
+                  </div>
+                  <div style={{ color: "#334155", fontSize: 15, maxWidth: 720 }}>
+                    Follow the season, track your team, check standings, and report final scores without digging through spreadsheets.
+                  </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ ...styles.badge, background: "#dbeafe", color: "#1d4ed8" }}>Schedule</span>
-                  <span style={{ ...styles.badge, background: "#dcfce7", color: "#166534" }}>Standings</span>
-                  <span style={{ ...styles.badge, background: "#fef3c7", color: "#92400e" }}>Score Reporting</span>
+                <div style={{ display: "grid", gap: 8, justifyItems: "start" }}>
+                  {publishedMeta?.publishedAt ? (
+                    <span style={{ ...styles.publicQuickChip, background: "#ffffff", borderColor: "#bfdbfe", color: "#1d4ed8" }}>
+                      Updated {publishedMeta.publishedAt}
+                    </span>
+                  ) : null}
+                  <div style={styles.publicChipRow}>
+                    <span style={{ ...styles.publicQuickChip, background: "#dbeafe", borderColor: "#bfdbfe", color: "#1d4ed8" }}>Schedule</span>
+                    <span style={{ ...styles.publicQuickChip, background: "#dcfce7", borderColor: "#bbf7d0", color: "#166534" }}>Standings</span>
+                    <span style={{ ...styles.publicQuickChip, background: "#fef3c7", borderColor: "#fde68a", color: "#92400e" }}>Score Reporting</span>
+                  </div>
                 </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-                <div style={styles.publicStatCard}>
-                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Published games</div>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: "#0f172a" }}>{result?.schedule?.length || 0}</div>
+              <div style={styles.publicHeroStats}>
+                <div style={styles.publicHeroStat}>
+                  <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Published games</div>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>{result?.schedule?.length || 0}</div>
                 </div>
-                <div style={styles.publicStatCard}>
-                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Verified scores</div>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: "#0f172a" }}>{result?.schedule?.filter((game) => getOfficialScoreFromReports(game, scoreReports).verified).length || 0}</div>
+                <div style={styles.publicHeroStat}>
+                  <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Verified finals</div>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>{publicVerifiedGameCount}</div>
                 </div>
-                <div style={styles.publicStatCard}>
-                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Active divisions</div>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: "#0f172a" }}>{publicDivisionOptions.length}</div>
+                <div style={styles.publicHeroStat}>
+                  <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Active divisions</div>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>{publicDivisionOptions.length}</div>
+                </div>
+                <div style={styles.publicHeroStat}>
+                  <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Current view</div>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>{filteredSchedule.length || 0}</div>
+                </div>
+              </div>
+            </div>
+            <div style={styles.publicTeamHub}>
+              <div style={styles.publicTeamHero}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "start" }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+                      Team Focus
+                    </div>
+                    <div style={{ fontSize: isMobilePublic ? 20 : 24, fontWeight: 800, color: "#0f172a" }}>
+                      {scheduleTeamFilter === "all" ? "Choose a team to personalize this view" : scheduleTeamFilter}
+                    </div>
+                    <div style={{ fontSize: 14, color: "#475569", marginTop: 4 }}>
+                      {scheduleTeamFilter === "all"
+                        ? "Pick a team below to spotlight its next game, record, and full season path."
+                        : publicSelectedTeamStanding
+                          ? `${publicSelectedTeamStanding.division} • Rank #${publicSelectedTeamStanding.rank} • Record ${publicTeamRecordLabel}`
+                          : "Showing this team’s schedule and score activity."}
+                    </div>
+                  </div>
+                  {shareableTeamUrl ? (
+                    <button style={styles.button} onClick={() => navigator.clipboard.writeText(shareableTeamUrl)}>Copy Team Link</button>
+                  ) : null}
+                </div>
+                <div style={styles.publicChipRow}>
+                  {publicSelectedTeamStanding ? <span style={{ ...styles.publicQuickChip, background: "#dbeafe", borderColor: "#bfdbfe", color: "#1d4ed8" }}>Rank #{publicSelectedTeamStanding.rank}</span> : null}
+                  {publicTeamRecordLabel ? <span style={{ ...styles.publicQuickChip, background: "#dcfce7", borderColor: "#bbf7d0", color: "#166534" }}>Record {publicTeamRecordLabel}</span> : null}
+                  {publicSelectedTeamStanding ? <span style={styles.publicQuickChip}>PR {Number(publicSelectedTeamStanding.performanceRating || 0).toFixed(1)}</span> : null}
+                  {publicSelectedTeamSummary ? <span style={styles.publicQuickChip}>{publicSelectedTeamSummary.remainingGames} games left</span> : null}
+                  {publicNextGame ? <span style={styles.publicQuickChip}>Next {publicNextGame.date}</span> : null}
                 </div>
               </div>
             </div>
@@ -9879,77 +10097,82 @@ export default function App() {
                       {availableScheduleTeams.map((team) => <option key={team} value={team}>{team}</option>)}
                     </select>
                   </div>
-                  <div style={{ display: "flex", alignItems: "stretch", gap: 12, flexWrap: "wrap" }}>
-                    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, background: isPublicMode ? "#ffffff" : "#f8fafc", padding: "12px 16px", fontSize: 14, color: "#475569", flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>{isPublicMode ? "Current view" : "View summary"}</div>
+                  <div style={isPublicMode ? styles.publicFilterCard : { display: "flex", alignItems: "stretch", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4, fontWeight: 700 }}>{isPublicMode ? "Current view" : "View summary"}</div>
+                    <div style={{ fontSize: 15, color: "#334155" }}>
                       Showing <strong style={{ color: "#0f172a" }}>{filteredSchedule.length}</strong> games
-                      {scheduleTeamFilter !== "all" ? (
-                        <div style={{ marginTop: 8, color: "#1d4ed8", fontWeight: 600 }}>
-                          My Team view for <strong>{scheduleTeamFilter}</strong>
-                        </div>
-                      ) : null}
-                      {isPublicMode && publicSelectedTeamStanding ? (
-                        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <span style={{ ...styles.badge, background: "#dbeafe", color: "#1d4ed8" }}>Rank #{publicSelectedTeamStanding.rank}</span>
-                          <span style={{ ...styles.badge, background: "#dcfce7", color: "#166534" }}>Record {publicTeamRecordLabel}</span>
-                          <span style={styles.badge}>PR {Number(publicSelectedTeamStanding.performanceRating || 0).toFixed(1)}</span>
-                        </div>
-                      ) : null}
                     </div>
+                    {isPublicMode ? (
+                      <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                        <div style={styles.publicChipRow}>
+                          <span style={{ ...styles.publicQuickChip, background: "#dbeafe", borderColor: "#bfdbfe", color: "#1d4ed8" }}>{publicUpcomingGameCount} upcoming</span>
+                          <span style={{ ...styles.publicQuickChip, background: "#dcfce7", borderColor: "#bbf7d0", color: "#166534" }}>{filteredSchedule.length - publicUpcomingGameCount} finals</span>
+                        </div>
+                        {scheduleTeamFilter !== "all" ? (
+                          <div style={{ color: "#1d4ed8", fontWeight: 700 }}>
+                            Team view for <strong>{scheduleTeamFilter}</strong>
+                          </div>
+                        ) : (
+                          <div style={{ color: "#475569" }}>
+                            Choose a team to highlight its next game and season snapshot.
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
 
                 {isPublicMode && publicNextGame ? (
-  <div style={{ ...styles.publicNextGameCard, marginBottom: 16 }}>
-    
-     <div
-        style={{
-          fontSize: 12,
-          color: "#1d4ed8",
-          fontWeight: 700,
-          letterSpacing: "0.04em",
-          textTransform: "uppercase",
-          marginBottom: 6,
-          textAlign: "left", // ðŸ”‘ key fix
-        }}
-      >
-        Next game
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a" }}>
-            {publicNextGame.away} @ {publicNextGame.home}
-          </div>
-          <div style={{ fontSize: 14, color: "#334155", marginTop: 4 }}>
-            {publicNextGame.date} \u2022 {formatTimeDisplay(publicNextGame.time)} \u2022 {publicNextGame.court}
-          </div>
-        </div>
-
-        <div
-          style={{
-            ...styles.badge,
-            background: "#ffffff",
-            color: "#1d4ed8",
-            border: "1px solid #bfdbfe",
-          }}
-        >
-          {getGameScoreDisplay(publicNextGame, scoreReports)}
-        </div>
-      </div>
-
-   
-  </div>
-) : null}
+                  <div style={{ ...styles.publicNextGameCard, marginBottom: 18 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontSize: 12, color: "#1d4ed8", fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>
+                          Next Game
+                        </div>
+                        <div style={{ fontSize: isMobilePublic ? 22 : 28, fontWeight: 800, color: "#0f172a" }}>
+                          {publicNextGame.away} @ {publicNextGame.home}
+                        </div>
+                        <div style={{ fontSize: 15, color: "#334155", marginTop: 6 }}>
+                          {publicNextGame.date} • {formatTimeDisplay(publicNextGame.time)} • {publicNextGame.court}
+                        </div>
+                        <div style={{ fontSize: 13, color: "#64748b", marginTop: 6 }}>
+                          {publicNextGame.division}
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gap: 8, justifyItems: "start" }}>
+                        <span style={{ ...styles.publicQuickChip, background: getPublicGameStatus(publicNextGame, scoreReports).background, borderColor: "transparent", color: getPublicGameStatus(publicNextGame, scoreReports).color }}>
+                          {getPublicGameStatus(publicNextGame, scoreReports).label}
+                        </span>
+                        {publicSelectedTeamSummary ? (
+                          <span style={styles.publicQuickChip}>
+                            {publicSelectedTeamSummary.remainingGames} remaining
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    {publicSelectedTeamStanding ? (
+                      <div style={styles.publicStandingsSummary}>
+                        <div style={styles.publicStandingsSummaryCard}>
+                          <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Team rank</div>
+                          <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a" }}>#{publicSelectedTeamStanding.rank}</div>
+                        </div>
+                        <div style={styles.publicStandingsSummaryCard}>
+                          <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Record</div>
+                          <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{publicTeamRecordLabel}</div>
+                        </div>
+                        <div style={styles.publicStandingsSummaryCard}>
+                          <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Performance Rating</div>
+                          <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{Number(publicSelectedTeamStanding.performanceRating || 0).toFixed(1)}</div>
+                        </div>
+                        <div style={styles.publicStandingsSummaryCard}>
+                          <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Point diff</div>
+                          <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{Number(publicSelectedTeamStanding.pointDiff || 0)}</div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 {isPublicMode ? null : (
                   <div style={{ marginBottom: 20, border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
@@ -10040,40 +10263,86 @@ export default function App() {
                   </div>
                 )}
 
-                {isPublicMode && isMobilePublic ? (
-                  <div style={{ display: "grid", gap: 12 }}>
-                    {filteredSchedule.map((game, idx) => {
-                      const outcomeParts = getPublishedScheduleOutcomeParts(game, scoreReports);
-                      const scoreStatus = getOfficialScoreFromReports(game, scoreReports);
-                      return (
-                        <div key={`${game.date}-${game.time}-${game.court}-${idx}`} style={styles.publicGameCard}>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-                            <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>{game.division}</div>
-                            <div style={{ fontSize: 12, color: "#64748b" }}>{game.date} \u2022 {formatTimeDisplay(game.time)}</div>
+                {isPublicMode ? (
+                  <div style={{ display: "grid", gap: 16 }}>
+                    {publicFilteredScheduleSections.map((section) => (
+                      <div key={section.date} style={styles.publicDateSection}>
+                        <div style={styles.publicDateHeader}>
+                          <div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{section.date}</div>
+                            <div style={{ fontSize: 13, color: "#64748b" }}>
+                              {section.games.length} game{section.games.length === 1 ? "" : "s"}
+                            </div>
                           </div>
-                          <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a", textAlign: "center" }}>
-                            <span style={{ color: outcomeParts.verified ? outcomeParts.homeColor : "#0f172a" }}>{game.home}</span>
-                            <span style={{ margin: "0 8px", color: "#94a3b8", fontWeight: 600 }}>vs</span>
-                            <span style={{ color: outcomeParts.verified ? outcomeParts.awayColor : "#0f172a" }}>{game.away}</span>
-                          </div>
-                          <div style={{ textAlign: "center", fontSize: 22, fontWeight: 800 }}>
-                            {outcomeParts.verified ? (
-                              <span>
-                                <span style={{ color: outcomeParts.homeColor }}>{outcomeParts.homeScoreText}</span>
-                                <span style={{ color: "#94a3b8" }}> - </span>
-                                <span style={{ color: outcomeParts.awayColor }}>{outcomeParts.awayScoreText}</span>
-                              </span>
-                            ) : (
-                              <span style={{ color: "#334155" }}>{getGameScoreDisplay(game, scoreReports)}</span>
-                            )}
-                          </div>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", fontSize: 13, color: "#475569" }}>
-                            <div>Court: <strong style={{ color: "#0f172a" }}>{game.court}</strong></div>
-                            <div>Status: <strong style={{ color: "#0f172a" }}>{scoreStatus.verified ? "Final" : "Scheduled"}</strong></div>
+                          <div style={styles.publicChipRow}>
+                            {section.label ? <span style={{ ...styles.publicQuickChip, background: "#dbeafe", borderColor: "#bfdbfe", color: "#1d4ed8" }}>{section.label}</span> : null}
+                            <span style={styles.publicQuickChip}>{section.games.filter((game) => !getOfficialScoreFromReports(game, scoreReports).verified).length} upcoming</span>
                           </div>
                         </div>
-                      );
-                    })}
+                        <div style={styles.publicScheduleGrid}>
+                          {section.games.map((game, idx) => {
+                            const outcomeParts = getPublishedScheduleOutcomeParts(game, scoreReports);
+                            const statusChip = getPublicGameStatus(game, scoreReports);
+                            const teamFocused = scheduleTeamFilter !== "all" && (game.home === scheduleTeamFilter || game.away === scheduleTeamFilter);
+                            return (
+                              <div
+                                key={`${game.date}-${game.time}-${game.court}-${idx}`}
+                                style={{
+                                  ...styles.publicGameCard,
+                                  borderColor: teamFocused ? "#93c5fd" : "#e2e8f0",
+                                  background: teamFocused ? "linear-gradient(180deg, #ffffff 0%, #eff6ff 100%)" : "#ffffff",
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                                  <div style={{ display: "grid", gap: 3 }}>
+                                    <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>{game.division}</div>
+                                    <div style={{ fontSize: 14, color: "#334155" }}>{formatTimeDisplay(game.time)} • {game.court}</div>
+                                  </div>
+                                  <span style={{ ...styles.publicQuickChip, background: statusChip.background, borderColor: "transparent", color: statusChip.color }}>
+                                    {statusChip.label}
+                                  </span>
+                                </div>
+                                <div style={{ display: "grid", gap: 8 }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                                    <div style={{ fontSize: 16, fontWeight: 800, color: teamFocused && game.away === scheduleTeamFilter ? "#1d4ed8" : (outcomeParts.verified ? outcomeParts.awayColor : "#0f172a") }}>
+                                      {game.away}
+                                    </div>
+                                    <div style={{ fontSize: 14, color: "#94a3b8", fontWeight: 700 }}>AWAY</div>
+                                  </div>
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                                    <div style={{ fontSize: 16, fontWeight: 800, color: teamFocused && game.home === scheduleTeamFilter ? "#1d4ed8" : (outcomeParts.verified ? outcomeParts.homeColor : "#0f172a") }}>
+                                      {game.home}
+                                    </div>
+                                    <div style={{ fontSize: 14, color: "#94a3b8", fontWeight: 700 }}>HOME</div>
+                                  </div>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                                  <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>
+                                    {teamFocused ? "Selected team matchup" : "League game"}
+                                  </div>
+                                  <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a" }}>
+                                    {outcomeParts.verified ? (
+                                      <span>
+                                        <span style={{ color: outcomeParts.awayColor }}>{outcomeParts.awayScoreText}</span>
+                                        <span style={{ color: "#94a3b8" }}> - </span>
+                                        <span style={{ color: outcomeParts.homeColor }}>{outcomeParts.homeScoreText}</span>
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: "#334155", fontSize: 15, fontWeight: 700 }}>{getGameScoreDisplay(game, scoreReports)}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                    {!publicFilteredScheduleSections.length ? (
+                      <div style={{ border: "1px dashed #cbd5e1", borderRadius: 16, padding: 28, textAlign: "center", color: "#64748b", background: "#ffffff" }}>
+                        No games match the current filters.
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div style={styles.tableWrap}>
@@ -10503,6 +10772,24 @@ export default function App() {
               <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>No published schedule found yet.</div>
             ) : (
               <div style={{ display: "grid", gap: 14 }}>
+                <div style={styles.publicStandingsSummary}>
+                  <div style={styles.publicStandingsSummaryCard}>
+                    <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Divisions shown</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{scheduleDivisionFilter === "all" ? publicDivisionOptions.length : 1}</div>
+                  </div>
+                  <div style={styles.publicStandingsSummaryCard}>
+                    <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Selected team</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{scheduleTeamFilter === "all" ? "None" : scheduleTeamFilter}</div>
+                  </div>
+                  <div style={styles.publicStandingsSummaryCard}>
+                    <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Selected record</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{publicTeamRecordLabel || "\u2014"}</div>
+                  </div>
+                  <div style={styles.publicStandingsSummaryCard}>
+                    <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>Division leaders</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{publicDivisionLeaders.length || "\u2014"}</div>
+                  </div>
+                </div>
                 {(scheduleDivisionFilter === "all" ? DIVISIONS : [scheduleDivisionFilter]).map((division) => {
                   const groups = publicStandingsGroups[division] || [{ key: division, label: division, sublabel: "", rows: divisionStandings[division] || [] }];
                   return (
@@ -10511,15 +10798,19 @@ export default function App() {
                         const rows = group.rows || [];
                         const sortedRows = getSortedStandingsRows(rows);
                         return (
-                          <div key={group.key} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
-                            <div style={{ padding: "10px 12px", fontWeight: 700, background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                              <span>{group.label}</span>
+                          <div key={group.key} style={styles.publicStandingsCard}>
+                            <div style={{ padding: "12px 14px", fontWeight: 700, background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                              <div style={{ display: "grid", gap: 4 }}>
+                                <span style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{group.label}</span>
+                                <span style={{ fontSize: 13, color: "#64748b" }}>{rows.length} teams</span>
+                              </div>
                               {group.sublabel ? <span style={{ color: "#1d4ed8" }}>{group.sublabel}</span> : null}
                             </div>
                             <div style={{ overflowX: "auto" }}>
                               <table style={styles.table}>
                                 <thead>
                                   <tr>
+                                    <th style={{ ...styles.th, textAlign: "center" }}>#</th>
                                     {renderStandingsHeader("Team", "team", "left")}
                                     {renderStandingsHeader("W", "wins")}
                                     {renderStandingsHeader("L", "losses")}
@@ -10532,9 +10823,15 @@ export default function App() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {sortedRows.map((row) => (
-                                    <tr key={`${group.key}-${row.team}`}>
-                                      <td style={{ ...styles.td, textAlign: "left" }}>{row.team}</td>
+                                  {sortedRows.map((row, index) => {
+                                    const isSelectedTeam = scheduleTeamFilter !== "all" && row.team === scheduleTeamFilter;
+                                    const rowStyle = index < 3
+                                      ? styles.publicStandingsRowTop
+                                      : (isSelectedTeam ? styles.publicStandingsRowSelected : null);
+                                    return (
+                                    <tr key={`${group.key}-${row.team}`} style={rowStyle || undefined}>
+                                      <td style={{ ...styles.td, textAlign: "center", fontWeight: 800, color: index < 3 ? "#1d4ed8" : "#0f172a" }}>{index + 1}</td>
+                                      <td style={{ ...styles.td, textAlign: "left", fontWeight: isSelectedTeam ? 800 : 600, color: isSelectedTeam ? "#1d4ed8" : "#0f172a" }}>{row.team}</td>
                                       <td style={{ ...styles.td, textAlign: "center" }}>{row.wins}</td>
                                       <td style={{ ...styles.td, textAlign: "center" }}>{row.losses}</td>
                                       <td style={{ ...styles.td, textAlign: "center" }}>{row.ties}</td>
@@ -10544,9 +10841,9 @@ export default function App() {
                                       <td style={{ ...styles.td, textAlign: "center" }}>{row.pointDiff}</td>
                                       <td style={{ ...styles.td, textAlign: "center", fontWeight: 700 }}>{(row.performanceRating || 0).toFixed(1)}</td>
                                     </tr>
-                                  ))}
+                                  )})}
                                   {!rows.length ? (
-                                    <tr><td style={styles.td} colSpan={9}>No verified scores yet.</td></tr>
+                                    <tr><td style={styles.td} colSpan={10}>No verified scores yet.</td></tr>
                                   ) : null}
                                 </tbody>
                               </table>
