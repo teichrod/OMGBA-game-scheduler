@@ -2200,20 +2200,16 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     });
   }
 
-  let finalizedSchedule = rebalanceScheduleTimes(schedule, normalized);
-  finalizedSchedule = enforceMinimumDayPartBalance(finalizedSchedule, normalized);
-  finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
-  finalizedSchedule = enforceMinimumDayPartBalance(finalizedSchedule, normalized);
-  finalizedSchedule = repairMissingTeamGamesInSchedule(finalizedSchedule, normalized);
+  let finalizedSchedule = repairMissingTeamGamesInSchedule(schedule, normalized);
   finalizedSchedule = rebalanceScheduleTimes(finalizedSchedule, normalized);
-  finalizedSchedule = enforceMinimumDayPartBalance(finalizedSchedule, normalized);
   finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
   finalizedSchedule = repairMissingTeamGamesInSchedule(finalizedSchedule, normalized);
   finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
   finalizedSchedule = sortScheduleGames(finalizedSchedule);
 
-  const unresolvedUnscheduled = teams.some((team) => getNeed(team) > 0) ? unscheduled : [];
-  const result = buildResultFromSchedule(finalizedSchedule, normalized, unresolvedUnscheduled);
+  let result = buildResultFromSchedule(finalizedSchedule, normalized, []);
+  const unresolvedUnscheduled = result.auditSummary.missingTeams > 0 ? unscheduled : [];
+  result = buildResultFromSchedule(finalizedSchedule, normalized, unresolvedUnscheduled);
   return {
     ...result,
     seasonPhase: 'regular',
@@ -4392,13 +4388,8 @@ function generateScheduleEngine(config, lockedGames = []) {
   pushRepeatTrace('After avoidable-repeat rebuild', improvedSchedule);
   improvedSchedule = tryReduceRepeatedOpponents(improvedSchedule, config);
   pushRepeatTrace('After repeat-opponent repair', improvedSchedule);
-  improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-  improvedSchedule = enforceMinimumDayPartBalance(improvedSchedule, config);
-  improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
-  improvedSchedule = enforceMinimumDayPartBalance(improvedSchedule, config);
   improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
   improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-  improvedSchedule = enforceMinimumDayPartBalance(improvedSchedule, config);
   improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
   improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
   improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
