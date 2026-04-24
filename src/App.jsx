@@ -5820,7 +5820,7 @@ function normalizeTimeValue(time) {
 
 function getTechnicalReturnGameLabel(game) {
   if (!game) return "Not selected";
-  return `${game.date} • ${formatTimeDisplay(game.time)} • ${game.away} @ ${game.home}`;
+  return `${game.date} â€¢ ${formatTimeDisplay(game.time)} â€¢ ${game.away} @ ${game.home}`;
 }
 
 function compareGamesChronologically(a, b) {
@@ -5892,7 +5892,7 @@ function buildTechnicalParticipantRows(schedule, scoreReports) {
         ? returnGame
           ? getTechnicalReturnGameLabel(returnGame)
           : "Admin has not selected a return game yet"
-        : "—";
+        : "â€”";
 
       return {
         key: group.key,
@@ -6007,7 +6007,7 @@ function getOfficialScoreFromReports(game, scoreReports) {
       reportCount: 0,
       verified: false,
       official: null,
-      officialLabel: "—",
+      officialLabel: "â€”",
       reportSummary: "No score reports yet.",
     };
   }
@@ -6036,7 +6036,7 @@ function getOfficialScoreFromReports(game, scoreReports) {
       reportCount: 0,
       verified: false,
       official: null,
-      officialLabel: "—",
+      officialLabel: "â€”",
       reportSummary: "No score reports yet.",
     };
   }
@@ -6132,7 +6132,7 @@ function getGameScoreDisplay(game, scoreReports) {
   }
   if (status.status === "awaiting_opponent") return "1 report";
   if (status.status === "mismatch") return "Needs review";
-  return "—";
+  return "â€”";
 }
 
 function getPublishedScheduleOutcomeParts(game, scoreReports) {
@@ -6142,8 +6142,8 @@ function getPublishedScheduleOutcomeParts(game, scoreReports) {
       verified: false,
       homeColor: "#0f172a",
       awayColor: "#0f172a",
-      homeScoreText: "—",
-      awayScoreText: "—",
+      homeScoreText: "â€”",
+      awayScoreText: "â€”",
     };
   }
 
@@ -8645,7 +8645,7 @@ export default function App() {
 
   function renderStandingsHeader(label, key, align = "center") {
     const isActive = standingsSort.key === key;
-    const arrow = isActive ? (standingsSort.direction === "desc" ? " ▼" : " ▲") : "";
+    const arrow = isActive ? (standingsSort.direction === "desc" ? " â–¼" : " â–²") : "";
     const tooltipMap = {
       Team: "Team name",
       W: "Wins",
@@ -8655,7 +8655,6 @@ export default function App() {
       PF: "Points For",
       PA: "Points Against",
       PD: "Point Differential",
-      SOS: "Strength of Schedule rank (#1 is hardest schedule)",
       PR: "Performance Rating (iterative opponent-adjusted game rating)",
     };
     const tooltip = label === "PR"
@@ -8665,7 +8664,7 @@ export default function App() {
       <th
         style={{ ...styles.th, textAlign: align, cursor: "pointer", userSelect: "none" }}
         onClick={() => handleStandingsSort(key)}
-        title={`${tooltip} — click to sort`}
+        title={`${tooltip} â€” click to sort`}
       >
         {label}{arrow}
       </th>
@@ -9353,7 +9352,7 @@ export default function App() {
                             <div key={row.date} style={{ border: `1px solid ${row.meetsTarget ? '#bbf7d0' : '#fecaca'}`, background: row.meetsTarget ? '#f0fdf4' : '#fef2f2', borderRadius: 10, padding: 10 }}>
                               <div style={{ fontWeight: 700, marginBottom: 4 }}>{row.date}</div>
                               <div style={{ fontSize: 13, color: '#475569' }}>Actual: <strong style={{ color: '#0f172a' }}>{row.actual}</strong></div>
-                              <div style={{ fontSize: 13, color: '#475569' }}>Target: <strong style={{ color: '#0f172a' }}>{row.included ? row.target : '—'}</strong></div>
+                              <div style={{ fontSize: 13, color: '#475569' }}>Target: <strong style={{ color: '#0f172a' }}>{row.included ? row.target : 'â€”'}</strong></div>
                               <div style={{ fontSize: 12, marginTop: 4, color: row.meetsTarget ? '#166534' : '#991b1b' }}>
                                 {row.included ? (row.meetsTarget ? 'At or above minimum' : `${Math.abs(row.delta)} below minimum`) : 'Excluded from weekly minimum'}
                               </div>
@@ -9488,7 +9487,7 @@ export default function App() {
           letterSpacing: "0.04em",
           textTransform: "uppercase",
           marginBottom: 6,
-          textAlign: "left", // 🔑 key fix
+          textAlign: "left", // ðŸ”‘ key fix
         }}
       >
         Next game
@@ -9508,7 +9507,7 @@ export default function App() {
             {publicNextGame.away} @ {publicNextGame.home}
           </div>
           <div style={{ fontSize: 14, color: "#334155", marginTop: 4 }}>
-            {publicNextGame.date} • {formatTimeDisplay(publicNextGame.time)} • {publicNextGame.court}
+            {publicNextGame.date} â€¢ {formatTimeDisplay(publicNextGame.time)} â€¢ {publicNextGame.court}
           </div>
         </div>
 
@@ -9568,7 +9567,7 @@ export default function App() {
                               <td style={styles.td}>{new Date(report.submittedAt || "").toLocaleString()}</td>
                               <td style={styles.td}>{report.reporterEmail}</td>
                               <td style={styles.td}>{report.reportingTeam}</td>
-                              <td style={styles.td}>{game ? `${game.date} • ${formatTimeDisplay(game.time)} • ${game.away} @ ${game.home}` : `${report.date} • ${formatTimeDisplay(report.time)} • ${report.away} @ ${report.home}`}</td>
+                              <td style={styles.td}>{game ? `${game.date} â€¢ ${formatTimeDisplay(game.time)} â€¢ ${game.away} @ ${game.home}` : `${report.date} â€¢ ${formatTimeDisplay(report.time)} â€¢ ${report.away} @ ${report.home}`}</td>
                               <td style={styles.td}>{`${report.teamScore}-${report.opponentScore}`}</td>
                               <td style={styles.td}>{status?.verified ? `Verified (${status.officialLabel})` : status?.status === "awaiting_opponent" ? "Waiting on other coach" : status?.status === "mismatch" ? "Needs review" : "Pending"}</td>
                               <td style={styles.td}>
@@ -9581,7 +9580,7 @@ export default function App() {
                                       {status?.verified ? "Edit verified" : "Admin verify"}
                                     </button>
                                   ) : null}
-                                  {!game ? "—" : null}
+                                  {!game ? "â€”" : null}
                                 </div>
                               </td>
                             </tr>
@@ -9599,9 +9598,9 @@ export default function App() {
                           <div key={`${entry.reportId}_${entry.id}`} style={styles.techAdminCard}>
                             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "start" }}>
                               <div style={{ display: "grid", gap: 4 }}>
-                                <div style={{ fontWeight: 700 }}>{entry.date} • {formatTimeDisplay(entry.time)} • {entry.away} @ {entry.home}</div>
-                                <div style={{ fontSize: 14, color: "#334155" }}>Charged to <strong>{entry.team}</strong> • Player #<strong>{entry.playerNumber}</strong> • {entry.flagrant ? "Flagrant" : "Non-flagrant"}</div>
-                                <div style={{ fontSize: 13, color: "#64748b" }}>Description: {entry.description || "—"}</div>
+                                <div style={{ fontWeight: 700 }}>{entry.date} â€¢ {formatTimeDisplay(entry.time)} â€¢ {entry.away} @ {entry.home}</div>
+                                <div style={{ fontSize: 14, color: "#334155" }}>Charged to <strong>{entry.team}</strong> â€¢ Player #<strong>{entry.playerNumber}</strong> â€¢ {entry.flagrant ? "Flagrant" : "Non-flagrant"}</div>
+                                <div style={{ fontSize: 13, color: "#64748b" }}>Description: {entry.description || "â€”"}</div>
                               </div>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                 <button style={styles.button} onClick={() => adminEditTechnicalFoul(entry)}>Edit</button>
@@ -9626,7 +9625,7 @@ export default function App() {
                         <div key={`${game.date}-${game.time}-${game.court}-${idx}`} style={styles.publicGameCard}>
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
                             <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>{game.division}</div>
-                            <div style={{ fontSize: 12, color: "#64748b" }}>{game.date} • {formatTimeDisplay(game.time)}</div>
+                            <div style={{ fontSize: 12, color: "#64748b" }}>{game.date} â€¢ {formatTimeDisplay(game.time)}</div>
                           </div>
                           <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a", textAlign: "center" }}>
                             <span style={{ color: outcomeParts.verified ? outcomeParts.homeColor : "#0f172a" }}>{game.home}</span>
@@ -9722,7 +9721,7 @@ export default function App() {
                                   const status = getOfficialScoreFromReports(game, scoreReports);
                                   return status?.status === "awaiting_opponent" && (status.homeReport || status.awayReport) ? (
                                     <button style={styles.button} onClick={() => sendPendingApprovalReminder(game)}>Send reminder</button>
-                                  ) : "—";
+                                  ) : "â€”";
                                 })()}
                               </td>
                             ) : null}
@@ -9793,7 +9792,6 @@ export default function App() {
                                             {renderStandingsHeader("PF", "pointsFor")}
                                             {renderStandingsHeader("PA", "pointsAgainst")}
                                             {renderStandingsHeader("PD", "pointDiff")}
-                                            {renderStandingsHeader("SOS", "sos")}
                                             {renderStandingsHeader("PR", "performanceRating")}
                                           </tr>
                                         </thead>
@@ -9808,12 +9806,11 @@ export default function App() {
                                               <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsFor}</td>
                                               <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsAgainst}</td>
                                               <td style={{ ...styles.td, textAlign: "center" }}>{row.pointDiff}</td>
-                                              <td style={{ ...styles.td, textAlign: "center" }}>{row.sos ? `#${row.sos}` : "—"}</td>
                                               <td style={{ ...styles.td, textAlign: "center", fontWeight: 700 }}>{(row.performanceRating || 0).toFixed(1)}</td>
                                             </tr>
                                           ))}
                                           {!rows.length ? (
-                                            <tr><td style={styles.td} colSpan={10}>No verified scores yet.</td></tr>
+                                            <tr><td style={styles.td} colSpan={9}>No verified scores yet.</td></tr>
                                           ) : null}
                                         </tbody>
                                       </table>
@@ -9978,7 +9975,7 @@ export default function App() {
                     <div key={bracket.division} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
                       <div style={{ padding: "10px 12px", fontWeight: 800, background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                         <span>{bracket.division}</span>
-                        <span style={{ color: "#1d4ed8" }}>{bracket.teamCount || bracket.teams.length} teams • {bracket.bracketSize}-team bracket</span>
+                        <span style={{ color: "#1d4ed8" }}>{bracket.teamCount || bracket.teams.length} teams â€¢ {bracket.bracketSize}-team bracket</span>
                       </div>
                       <div style={{ overflowX: "auto", padding: 18, background: "#ffffff" }}>
                         <div style={{ display: "grid", gridAutoFlow: "column", gridAutoColumns: "minmax(250px, 1fr)", gap: 44, alignItems: "start", minWidth: Math.max(760, activeTournamentRounds.length * 294) }}>
@@ -10004,7 +10001,7 @@ export default function App() {
                                   <div style={{ border: "2px solid #cbd5e1", borderRadius: 6, background: "#ffffff", overflow: "hidden", boxShadow: "0 6px 14px rgba(15,23,42,0.08)", position: "relative", zIndex: 1 }}>
                                   <div style={{ padding: "7px 9px", fontSize: 12, fontWeight: 800, color: "#475569", display: "flex", justifyContent: "space-between", gap: 8, background: "#e2e8f0" }}>
                                     <span>Game {game.gameNumber}</span>
-                                    <span>{game.date || "—"} {game.time ? formatTimeDisplay(game.time) : ""}</span>
+                                    <span>{game.date || "â€”"} {game.time ? formatTimeDisplay(game.time) : ""}</span>
                                   </div>
                                   <div style={{ display: "grid" }}>
                                     <div style={{ padding: "10px 12px", borderBottom: "1px solid #cbd5e1", fontWeight: 800, minHeight: 40, background: "#f8fafc" }}>{game.teamA || "TBD"}</div>
@@ -10036,9 +10033,9 @@ export default function App() {
                               <tr key={game.id}>
                                 <td style={styles.td}>{game.gameNumber}</td>
                                 <td style={styles.td}>{game.label}</td>
-                                <td style={styles.td}>{game.date || "—"}</td>
-                                <td style={styles.td}>{game.time ? formatTimeDisplay(game.time) : "—"}</td>
-                                <td style={styles.td}>{game.court || "—"}</td>
+                                <td style={styles.td}>{game.date || "â€”"}</td>
+                                <td style={styles.td}>{game.time ? formatTimeDisplay(game.time) : "â€”"}</td>
+                                <td style={styles.td}>{game.court || "â€”"}</td>
                                 <td style={styles.td}>{game.teamA} vs {game.teamB}</td>
                               </tr>
                             ))}
@@ -10054,7 +10051,7 @@ export default function App() {
                     <div style={{ fontWeight: 800, marginBottom: 8 }}>Coach requests captured</div>
                     <div style={{ display: "grid", gap: 6, fontSize: 14, color: "#334155" }}>
                       {displayedTournament.coachRequests.map((entry) => (
-                        <div key={entry.id}><strong>{entry.team || "Unassigned"}:</strong> {entry.request || "—"}</div>
+                        <div key={entry.id}><strong>{entry.team || "Unassigned"}:</strong> {entry.request || "â€”"}</div>
                       ))}
                     </div>
                   </div>
@@ -10107,7 +10104,6 @@ export default function App() {
                                     {renderStandingsHeader("PF", "pointsFor")}
                                     {renderStandingsHeader("PA", "pointsAgainst")}
                                     {renderStandingsHeader("PD", "pointDiff")}
-                                    {renderStandingsHeader("SOS", "sos")}
                                     {renderStandingsHeader("PR", "performanceRating")}
                                   </tr>
                                 </thead>
@@ -10122,12 +10118,11 @@ export default function App() {
                                       <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsFor}</td>
                                       <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsAgainst}</td>
                                       <td style={{ ...styles.td, textAlign: "center" }}>{row.pointDiff}</td>
-                                      <td style={{ ...styles.td, textAlign: "center" }}>{row.sos ? `#${row.sos}` : "—"}</td>
                                       <td style={{ ...styles.td, textAlign: "center", fontWeight: 700 }}>{(row.performanceRating || 0).toFixed(1)}</td>
                                     </tr>
                                   ))}
                                   {!rows.length ? (
-                                    <tr><td style={styles.td} colSpan={10}>No verified scores yet.</td></tr>
+                                    <tr><td style={styles.td} colSpan={9}>No verified scores yet.</td></tr>
                                   ) : null}
                                 </tbody>
                               </table>
@@ -10199,7 +10194,7 @@ export default function App() {
                       <option value="">{scoreReportableGames.length ? "Select game" : "Choose team first"}</option>
                       {scoreReportableGames.map((game) => (
                         <option key={getGameScoreKey(game)} value={getGameScoreKey(game)}>
-                          {`${game.date} • ${formatTimeDisplay(game.time)} • ${game.away} @ ${game.home}`}
+                          {`${game.date} â€¢ ${formatTimeDisplay(game.time)} â€¢ ${game.away} @ ${game.home}`}
                         </option>
                       ))}
                     </select>
@@ -10410,7 +10405,7 @@ export default function App() {
                 ) : null}
                 {selectedScoreGame && selectedScoreGameStatus ? (
                   <div style={{ fontSize: 13, color: "#475569" }}>
-                    Current status: <strong style={{ color: "#0f172a" }}>{selectedScoreGameStatus.officialLabel}</strong> — {selectedScoreGameStatus.reportSummary}
+                    Current status: <strong style={{ color: "#0f172a" }}>{selectedScoreGameStatus.officialLabel}</strong> â€” {selectedScoreGameStatus.reportSummary}
                     {selectedScoreGameStatus.verified ? " Verified scores are locked and can no longer be edited by coaches." : ""}
                     {!selectedScoreGameStatus.verified ? " A forfeit auto-verifies at 15-0 and does not need approval." : ""}
                   </div>
@@ -10431,7 +10426,7 @@ export default function App() {
                   <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Technical foul rules</div>
                   <div style={{ display: "grid", gap: 6, color: "#334155", fontSize: 14 }}>
                     {getTechnicalSuspensionRuleText().map((rule) => (
-                      <div key={rule}>• {rule}</div>
+                      <div key={rule}>â€¢ {rule}</div>
                     ))}
                   </div>
                 </div>
@@ -10469,7 +10464,7 @@ export default function App() {
                               <td style={{ ...styles.td, textAlign: "left" }}>
                                 {row.suspensionTriggered
                                   ? row.nextEligibleLabel
-                                  : "—"}
+                                  : "â€”"}
                               </td>
                               {!isPublicMode ? (
                                 <td style={styles.td}>
@@ -10487,7 +10482,7 @@ export default function App() {
                                       ))}
                                     </select>
                                   ) : (
-                                    <span style={{ color: "#94a3b8" }}>—</span>
+                                    <span style={{ color: "#94a3b8" }}>â€”</span>
                                   )}
                                 </td>
                               ) : null}
@@ -10509,7 +10504,7 @@ export default function App() {
                         <div key={`susp_${row.key}`} style={styles.techSuspensionCard}>
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
                             <div>
-                              <div style={{ fontWeight: 800, color: "#0f172a" }}>{row.team} • #{row.playerNumber}</div>
+                              <div style={{ fontWeight: 800, color: "#0f172a" }}>{row.team} â€¢ #{row.playerNumber}</div>
                               <div style={{ marginTop: 4, fontSize: 14, color: "#334155" }}>
                                 Suspension:
                                 {" "}
@@ -10554,12 +10549,12 @@ export default function App() {
                         <div key={`${entry.reportId}_${entry.id}`} style={styles.techPublicCard}>
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
                             <div>
-                              <div style={{ fontWeight: 700, color: "#0f172a" }}>{entry.date} • {formatTimeDisplay(entry.time)} • {entry.away} @ {entry.home}</div>
-                              <div style={{ marginTop: 6, fontSize: 14, color: "#334155" }}>Team: <strong>{entry.team}</strong> • Player #: <strong>{entry.playerNumber}</strong></div>
+                              <div style={{ fontWeight: 700, color: "#0f172a" }}>{entry.date} â€¢ {formatTimeDisplay(entry.time)} â€¢ {entry.away} @ {entry.home}</div>
+                              <div style={{ marginTop: 6, fontSize: 14, color: "#334155" }}>Team: <strong>{entry.team}</strong> â€¢ Player #: <strong>{entry.playerNumber}</strong></div>
                               <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: entry.flagrant ? "#b91c1c" : "#15803d" }}>{entry.flagrant ? "Flagrant technical" : "Non-flagrant technical"}</div>
                               {!isPublicMode ? (
                                 <div style={{ marginTop: 6, fontSize: 13, color: "#475569" }}>
-                                  Description: {entry.description || "—"}
+                                  Description: {entry.description || "â€”"}
                                 </div>
                               ) : null}
                             </div>
@@ -10585,12 +10580,12 @@ export default function App() {
         {activeTab === "audit" && !isPublicMode ? (
           <div style={{ display: "grid", gap: 24 }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 16 }}>
-              <StatCard label="All teams scheduled" value={result ? (result.auditSummary.allTeamsScheduled ? "Yes" : "No") : "—"} />
-              <StatCard label="Missing teams" value={result ? result.auditSummary.missingTeams : "—"} />
-              <StatCard label="Early violations" value={result ? result.auditSummary.earlyViolations : "—"} />
-              <StatCard label="Min/week issues" value={result ? result.auditSummary.weeklyMinimumIssues : "—"} />
-              <StatCard label="Home/away issues" value={result ? result.auditSummary.homeAwayIssues : "—"} />
-              <StatCard label="Time variety issues" value={result ? result.auditSummary.timeVarietyIssues : "—"} />
+              <StatCard label="All teams scheduled" value={result ? (result.auditSummary.allTeamsScheduled ? "Yes" : "No") : "â€”"} />
+              <StatCard label="Missing teams" value={result ? result.auditSummary.missingTeams : "â€”"} />
+              <StatCard label="Early violations" value={result ? result.auditSummary.earlyViolations : "â€”"} />
+              <StatCard label="Min/week issues" value={result ? result.auditSummary.weeklyMinimumIssues : "â€”"} />
+              <StatCard label="Home/away issues" value={result ? result.auditSummary.homeAwayIssues : "â€”"} />
+              <StatCard label="Time variety issues" value={result ? result.auditSummary.timeVarietyIssues : "â€”"} />
             </div>
             <Card>
               <SectionTitle>Team Audit</SectionTitle>
@@ -10682,7 +10677,7 @@ export default function App() {
                 ) : (
                   <div style={{ display: "grid", gap: 16 }}>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 16 }}>
-                      <StatCard label="Season phase" value={String(debugScheduleSnapshot.seasonPhase || "—").replace(/^./, (c) => c.toUpperCase())} />
+                      <StatCard label="Season phase" value={String(debugScheduleSnapshot.seasonPhase || "â€”").replace(/^./, (c) => c.toUpperCase())} />
                       <StatCard label="Scheduled games" value={debugScheduleSnapshot.totalScheduledGames} />
                       <StatCard label="Unscheduled games" value={debugScheduleSnapshot.totalUnscheduledGames} />
                       <StatCard label="Teams still short" value={debugScheduleSnapshot.missingTeams} />
@@ -10744,7 +10739,7 @@ export default function App() {
                                   <td style={styles.td}>{row.missing}</td>
                                   <td style={styles.td}>{row.home}</td>
                                   <td style={styles.td}>{row.away}</td>
-                                  <td style={{ ...styles.td, textAlign: "left" }}>{row.issues?.join(', ') || '—'}</td>
+                                  <td style={{ ...styles.td, textAlign: "left" }}>{row.issues?.join(', ') || 'â€”'}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -10798,7 +10793,7 @@ export default function App() {
                                   <td style={styles.td}>{pair.allowed}</td>
                                   <td style={styles.td}>{pair.introducedHere ? "Yes" : "No"}</td>
                                   <td style={{ ...styles.td, textAlign: "left", fontSize: 12 }}>
-                                    {pair.meetings.map((meeting) => `${meeting.date} ${formatTimeDisplay(meeting.time)} ${meeting.court}`).join(' • ')}
+                                    {pair.meetings.map((meeting) => `${meeting.date} ${formatTimeDisplay(meeting.time)} ${meeting.court}`).join(' â€¢ ')}
                                   </td>
                                 </tr>
                               ))}
@@ -10833,7 +10828,7 @@ export default function App() {
                 {highlightedIssues.map((row) => (
                   <div key={row.team} style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16 }}>
                     <div style={{ fontWeight: 700 }}>{row.team}</div>
-                    <div style={{ fontSize: 14, color: "#475569", marginTop: 6 }}>{row.issues.join(" • ")}</div>
+                    <div style={{ fontSize: 14, color: "#475569", marginTop: 6 }}>{row.issues.join(" â€¢ ")}</div>
                   </div>
                 ))}
               </div>
@@ -10905,4 +10900,5 @@ function buildDivisionRepeatMath(config) {
     };
   });
 }
+
 
