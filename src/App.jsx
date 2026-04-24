@@ -6167,6 +6167,125 @@ async function clearPublishedPayload() {
   }
 }
 
+function buildSeasonArchiveId(config, meta) {
+  const seasonYear = Number(config?.seasonYear || createInitialState().seasonYear);
+  const stampSource = String(meta?.seasonCompletedAt || meta?.publishedAt || new Date().toISOString());
+  const safeStamp = stampSource.replace(/[^\dA-Za-z]+/g, "").slice(0, 14) || String(Date.now());
+  return `season_${seasonYear}_${safeStamp}`;
+}
+
+function buildSeasonArchiveLabel(config) {
+  const seasonYear = Number(config?.seasonYear || createInitialState().seasonYear);
+  return `${seasonYear}-${String(seasonYear + 1).slice(-2)}`;
+}
+
+function normalizePublishedSeasonEntry(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  if (!entry.result) return null;
+  const config = entry.config ? normalizeConfig(entry.config) : normalizeConfig(createInitialState());
+  const meta = entry.meta && typeof entry.meta === "object" ? { ...entry.meta } : {};
+  return {
+    id: String(entry.id || buildSeasonArchiveId(config, meta)),
+    label: String(entry.label || buildSeasonArchiveLabel(config)),
+    result: entry.result || null,
+    meta,
+    scoreReports: normalizeScoreReportsCollection(Array.isArray(entry.scoreReports) ? entry.scoreReports : []),
+    config,
+    coachDirectory: entry.coachDirectory && typeof entry.coachDirectory === "object" ? entry.coachDirectory : buildCoachDirectoryFromConfig(config),
+    tournament: entry.tournament || null,
+  };
+}
+
+function normalizePublishedStore(payload) {
+  if (!payload || typeof payload !== "object") {
+    return { current: null, archives: [] };
+  }
+
+  if (payload.current || Array.isArray(payload.archives)) {
+    const current = normalizePublishedSeasonEntry(payload.current);
+    const archives = (Array.isArray(payload.archives) ? payload.archives : [])
+      .map(normalizePublishedSeasonEntry)
+      .filter(Boolean)
+      .sort((a, b) => String(b.meta?.seasonCompletedAt || b.meta?.publishedAt || "").localeCompare(String(a.meta?.seasonCompletedAt || a.meta?.publishedAt || "")));
+    return { current, archives };
+  }
+
+  const legacyCurrent = normalizePublishedSeasonEntry({
+    id: buildSeasonArchiveId(payload.config, payload.meta),
+    label: buildSeasonArchiveLabel(payload.config),
+    result: payload.result || null,
+    meta: payload.meta || {},
+    scoreReports: payload.scoreReports || [],
+    config: payload.config,
+    coachDirectory: payload.coachDirectory,
+    tournament: payload.tournament || null,
+  });
+  return { current: legacyCurrent, archives: [] };
+}
+
+function seasonEntryToPayload(entry) {
+  if (!entry) return null;
+  return {
+    id: entry.id,
+    label: entry.label,
+    result: entry.result,
+    meta: entry.meta,
+    scoreReports: entry.scoreReports,
+    config: entry.config,
+    coachDirectory: entry.coachDirectory,
+    tournament: entry.tournament,
+  };
+}
+
+function publishedStoreToPayload(store) {
+  const normalized = normalizePublishedStore(store);
+  return {
+    current: seasonEntryToPayload(normalized.current),
+    archives: normalized.archives.map(seasonEntryToPayload),
+  };
+}
+
+function getCurrentPublishedSeason(payload) {
+  return normalizePublishedStore(payload).current;
+}
+
+function getArchivedPublishedSeasons(payload) {
+  return normalizePublishedStore(payload).archives;
+}
+
+function upsertCurrentPublishedSeason(payload, seasonEntry) {
+  const normalized = normalizePublishedStore(payload);
+  return {
+    current: normalizePublishedSeasonEntry(seasonEntry),
+    archives: normalized.archives,
+  };
+}
+
+function archiveCurrentPublishedSeason(payload, overrides = {}) {
+  const normalized = normalizePublishedStore(payload);
+  if (!normalized.current) return normalized;
+  const current = normalizePublishedSeasonEntry({
+    ...normalized.current,
+    ...overrides,
+    meta: {
+      ...(normalized.current.meta || {}),
+      ...(overrides.meta || {}),
+    },
+  });
+  const archives = [
+    current,
+    ...normalized.archives.filter((entry) => entry.id !== current.id),
+  ].sort((a, b) => String(b.meta?.seasonCompletedAt || b.meta?.publishedAt || "").localeCompare(String(a.meta?.seasonCompletedAt || a.meta?.publishedAt || "")));
+  return {
+    current: normalized.current,
+    archives,
+  };
+}
+
+function isPublishedSeasonLocked(season) {
+  return Boolean(season?.meta?.seasonLocked);
+}
+
 function runSelfChecks() {
   const initial = createInitialState();
   const firstDate = initial.saturdays[0]?.date || "";
@@ -7308,6 +7427,7 @@ export default function App() {
   const [scheduleTeamFilter, setScheduleTeamFilter] = useState(initialTeamParam);
   const [publishedMeta, setPublishedMeta] = useState(null);
   const [publishedSnapshot, setPublishedSnapshot] = useState(null);
+  const [selectedPublicSeasonId, setSelectedPublicSeasonId] = useState("current");
   const [publishNotice, setPublishNotice] = useState("");
   const [tournamentSetup, setTournamentSetup] = useState(() => createDefaultTournamentSetup(normalizeConfig(createInitialState())));
   const [tournamentResult, setTournamentResult] = useState(null);
@@ -7345,16 +7465,17 @@ export default function App() {
 
   async function refreshPublishedSnapshot() {
     try {
-      const published = await loadPublishedPayload();
-      setPublishedSnapshot(published || null);
+      const published = normalizePublishedStore(await loadPublishedPayload());
+      setPublishedSnapshot(published);
       if (!isPublicMode) {
-        setPublishedMeta(published?.meta || null);
+        setPublishedMeta(published.current?.meta || null);
       }
-      return published || null;
+      return published;
     } catch (error) {
       console.error("Could not refresh published snapshot", error);
-      setPublishedSnapshot(null);
-      return null;
+      const empty = { current: null, archives: [] };
+      setPublishedSnapshot(empty);
+      return empty;
     }
   }
 
@@ -7363,12 +7484,14 @@ export default function App() {
 
     async function loadPublicSchedule() {
       if (!isPublicMode) return;
-      const published = await loadPublishedPayload();
+      const published = normalizePublishedStore(await loadPublishedPayload());
+      const currentSeason = published.current;
       if (cancelled) return;
-      setResult(published?.result || null);
-      setPublishedMeta(published?.meta || null);
-      setScoreReports(normalizeScoreReportsCollection(Array.isArray(published?.scoreReports) ? published.scoreReports : []));
-      setTournamentResult(published?.tournament || null);
+      setPublishedSnapshot(published);
+      setResult(currentSeason?.result || null);
+      setPublishedMeta(currentSeason?.meta || null);
+      setScoreReports(currentSeason?.scoreReports || []);
+      setTournamentResult(currentSeason?.tournament || null);
     }
 
     loadPublicSchedule();
@@ -7396,6 +7519,26 @@ export default function App() {
     if (isPublicMode) return;
     refreshPublishedSnapshot();
   }, [isPublicMode]);
+
+  useEffect(() => {
+    if (!isPublicMode) return;
+    if (!publicSeasonOptions.length) return;
+    const optionIds = publicSeasonOptions.map((entry) => entry.id);
+    if (!optionIds.includes(selectedPublicSeasonId)) {
+      setSelectedPublicSeasonId(publicSeasonOptions[0].id);
+    }
+  }, [isPublicMode, publicSeasonOptions, selectedPublicSeasonId]);
+
+  useEffect(() => {
+    if (!isPublicMode) return;
+    const selectedSeason = publicSeasonOptions.find((entry) => entry.id === selectedPublicSeasonId)?.season
+      || publicSeasonOptions[0]?.season
+      || null;
+    setResult(selectedSeason?.result || null);
+    setPublishedMeta(selectedSeason?.meta || null);
+    setScoreReports(selectedSeason?.scoreReports || []);
+    setTournamentResult(selectedSeason?.tournament || null);
+  }, [isPublicMode, selectedPublicSeasonId, publicSeasonOptions]);
 
   useEffect(() => {
     if (isPublicMode) return undefined;
@@ -7655,11 +7798,11 @@ export default function App() {
 
   const divisionStandings = useMemo(() => (result ? buildDivisionStandings(result.schedule, scoreReports) : {}), [result, scoreReports]);
   const publishedSnapshotReports = useMemo(
-    () => normalizeScoreReportsCollection(Array.isArray(publishedSnapshot?.scoreReports) ? publishedSnapshot.scoreReports : []),
+    () => publishedSnapshot?.current?.scoreReports || [],
     [publishedSnapshot]
   );
   const publishedDivisionStandings = useMemo(
-    () => (publishedSnapshot?.result ? buildDivisionStandings(publishedSnapshot.result.schedule, publishedSnapshotReports) : {}),
+    () => (publishedSnapshot?.current?.result ? buildDivisionStandings(publishedSnapshot.current.result.schedule, publishedSnapshotReports) : {}),
     [publishedSnapshot, publishedSnapshotReports]
   );
   const publicStandingsGroups = useMemo(
@@ -7667,12 +7810,32 @@ export default function App() {
     [result, divisionStandings]
   );
   const publishedStandingsGroups = useMemo(
-    () => buildStandingsDisplayGroups(publishedSnapshot?.result || null, publishedDivisionStandings),
+    () => buildStandingsDisplayGroups(publishedSnapshot?.current?.result || null, publishedDivisionStandings),
     [publishedSnapshot, publishedDivisionStandings]
   );
+  const publicViewingArchivedSeason = isPublicMode && selectedPublicSeasonId !== "current";
+  const publicSeasonOptions = useMemo(() => {
+    const store = normalizePublishedStore(publishedSnapshot);
+    const options = [];
+    if (store.current) {
+      options.push({
+        id: "current",
+        label: `${store.current.label} (Current)`,
+        season: store.current,
+      });
+    }
+    for (const archived of store.archives) {
+      options.push({
+        id: archived.id,
+        label: `${archived.label}${archived.meta?.seasonCompletedAt ? " (Archived)" : ""}`,
+        season: archived,
+      });
+    }
+    return options;
+  }, [publishedSnapshot]);
   const displayedTournament = isPublicMode
     ? tournamentResult
-    : tournamentResult || publishedSnapshot?.tournament || null;
+    : tournamentResult || publishedSnapshot?.current?.tournament || null;
   const tournamentBracketOptions = displayedTournament?.brackets || [];
   const activeTournamentBracket = tournamentBracketOptions.find((bracket) => bracket.division === selectedTournamentBracket)
     || tournamentBracketOptions[0]
@@ -7690,7 +7853,7 @@ export default function App() {
     }
   }, [displayedTournament, selectedTournamentBracket]);
   const adminDisplayedStandings = adminStandingsSource === "published" ? publishedDivisionStandings : divisionStandings;
-  const adminDisplayedStandingsResult = adminStandingsSource === "published" ? (publishedSnapshot?.result || null) : result;
+  const adminDisplayedStandingsResult = adminStandingsSource === "published" ? (publishedSnapshot?.current?.result || null) : result;
   const adminDisplayedStandingsGroups = useMemo(
     () => buildStandingsDisplayGroups(adminDisplayedStandingsResult, adminDisplayedStandings),
     [adminDisplayedStandingsResult, adminDisplayedStandings]
@@ -8449,14 +8612,17 @@ export default function App() {
       totalGames: result.schedule.length,
       verifiedGames: result.schedule.filter((game) => getOfficialScoreFromReports(game, retainedReports).verified).length,
     };
-    const ok = await savePublishedPayload({
+    const storeToSave = upsertCurrentPublishedSeason(await loadPublishedPayload(), {
+      id: buildSeasonArchiveId(normalizedConfig, meta),
+      label: buildSeasonArchiveLabel(normalizedConfig),
       result,
       meta,
       scoreReports: retainedReports,
       config: normalizedConfig,
       coachDirectory,
-      tournament: tournamentResult || publishedSnapshot?.tournament || null,
+      tournament: tournamentResult || publishedSnapshot?.current?.tournament || null,
     });
+    const ok = await savePublishedPayload(publishedStoreToPayload(storeToSave));
     if (ok) {
       setPublishedMeta(meta);
       setScoreReports(retainedReports);
@@ -8469,23 +8635,31 @@ export default function App() {
 
   async function publishTournament() {
     const tournament = tournamentResult || buildMidseasonTournament(config, tournamentSetup);
-    const existing = await loadPublishedPayload();
+    const existing = normalizePublishedStore(await loadPublishedPayload());
+    const currentPublished = existing.current;
+    if (isPublishedSeasonLocked(currentPublished)) {
+      setPublishNotice("The published season is marked complete and locked.");
+      return;
+    }
     const normalizedConfig = normalizeConfig(config);
     const coachDirectory = buildCoachDirectoryFromConfig(normalizedConfig);
-    const scheduleResult = existing?.result || result || null;
-    const retainedReports = Array.isArray(existing?.scoreReports)
-      ? existing.scoreReports
+    const scheduleResult = currentPublished?.result || result || null;
+    const retainedReports = Array.isArray(currentPublished?.scoreReports)
+      ? currentPublished.scoreReports
       : Array.isArray(scoreReports)
         ? scoreReports
         : [];
     const meta = {
-      ...(existing?.meta || publishedMeta || {}),
-      publishedAt: existing?.meta?.publishedAt || new Date().toLocaleString(),
+      ...(currentPublished?.meta || publishedMeta || {}),
+      publishedAt: currentPublished?.meta?.publishedAt || new Date().toLocaleString(),
       tournamentPublishedAt: new Date().toLocaleString(),
       tournamentGames: tournament.games.length,
     };
 
-    const ok = await savePublishedPayload({
+    const storeToSave = upsertCurrentPublishedSeason(existing, {
+      ...(currentPublished || {}),
+      id: currentPublished?.id || buildSeasonArchiveId(normalizedConfig, meta),
+      label: currentPublished?.label || buildSeasonArchiveLabel(normalizedConfig),
       result: scheduleResult,
       meta,
       scoreReports: retainedReports,
@@ -8493,6 +8667,7 @@ export default function App() {
       coachDirectory,
       tournament,
     });
+    const ok = await savePublishedPayload(publishedStoreToPayload(storeToSave));
 
     if (ok) {
       setTournamentResult(tournament);
@@ -8505,9 +8680,14 @@ export default function App() {
   }
 
   async function updatePublishedCoachInfo() {
-    const published = await loadPublishedPayload();
+    const publishedStore = normalizePublishedStore(await loadPublishedPayload());
+    const published = publishedStore.current;
     if (!published?.result) {
       setPublishNotice("Publish the schedule once before updating coach info only.");
+      return;
+    }
+    if (isPublishedSeasonLocked(published)) {
+      setPublishNotice("The published season is marked complete and locked.");
       return;
     }
 
@@ -8541,7 +8721,8 @@ export default function App() {
             : 0,
         };
 
-    const ok = await savePublishedPayload({
+    const storeToSave = upsertCurrentPublishedSeason(publishedStore, {
+      ...published,
       result: updatedResult,
       meta: updatedMeta,
       scoreReports: updatedScoreReports,
@@ -8549,6 +8730,7 @@ export default function App() {
       coachDirectory,
       tournament: published?.tournament || tournamentResult || null,
     });
+    const ok = await savePublishedPayload(publishedStoreToPayload(storeToSave));
 
     if (ok) {
       setResult(updatedResult);
@@ -8564,13 +8746,14 @@ export default function App() {
 
   async function loadPublishedSchedule() {
     const published = await refreshPublishedSnapshot();
-    if (published?.result) {
-      setResult(published.result);
-      setPublishedMeta(published.meta || null);
-      setScoreReports(normalizeScoreReportsCollection(Array.isArray(published.scoreReports) ? published.scoreReports : []));
-      setTournamentResult(published.tournament || null);
-      if (published.config || published.coachDirectory) {
-        setConfig(applyCoachDirectoryToConfig(published.config || config, getPublishedCoachDirectory(published, config)));
+    const currentPublished = published?.current;
+    if (currentPublished?.result) {
+      setResult(currentPublished.result);
+      setPublishedMeta(currentPublished.meta || null);
+      setScoreReports(currentPublished.scoreReports || []);
+      setTournamentResult(currentPublished.tournament || null);
+      if (currentPublished.config || currentPublished.coachDirectory) {
+        setConfig(applyCoachDirectoryToConfig(currentPublished.config || config, getPublishedCoachDirectory(currentPublished, config)));
       }
       setActiveTab("schedule");
       setPublishNotice("Published schedule loaded.");
@@ -8593,6 +8776,48 @@ export default function App() {
     }
   }
 
+  async function completePublishedSeason() {
+    const publishedStore = normalizePublishedStore(await loadPublishedPayload());
+    const currentPublished = publishedStore.current;
+    if (!currentPublished?.result) {
+      setPublishNotice("Publish the season first before marking it complete.");
+      return;
+    }
+    if (isPublishedSeasonLocked(currentPublished)) {
+      setPublishNotice("That season is already complete and archived.");
+      return;
+    }
+
+    const completedAt = new Date().toLocaleString();
+    const archivedId = buildSeasonArchiveId(currentPublished.config, {
+      ...(currentPublished.meta || {}),
+      seasonCompletedAt: completedAt,
+    });
+    const archivedLabel = buildSeasonArchiveLabel(currentPublished.config);
+    const nextCurrent = {
+      ...currentPublished,
+      id: archivedId,
+      label: archivedLabel,
+      meta: {
+        ...(currentPublished.meta || {}),
+        seasonLocked: true,
+        seasonCompletedAt: completedAt,
+      },
+    };
+    const nextStore = {
+      current: nextCurrent,
+      archives: archiveCurrentPublishedSeason(publishedStore, nextCurrent).archives,
+    };
+    const ok = await savePublishedPayload(publishedStoreToPayload(nextStore));
+    if (ok) {
+      setPublishedMeta(nextCurrent.meta);
+      await refreshPublishedSnapshot();
+      setPublishNotice(`Season ${archivedLabel} marked complete and archived.`);
+    } else {
+      setPublishNotice("Could not archive the completed season.");
+    }
+  }
+
  async function sendScoreConfirmationEmail(
   game,
   report,
@@ -8602,7 +8827,7 @@ export default function App() {
   options = {}
 ) {
   try {
-    const published = await loadPublishedPayload();
+    const published = getCurrentPublishedSeason(await loadPublishedPayload());
     const lookupConfig = normalizeConfig(published?.config || config);
     const coachDirectory = getPublishedCoachDirectory(published, lookupConfig);
     const homeCoachEmail = getCoachEmailForTeamFromDirectory(coachDirectory, lookupConfig, game.home, game.division);
@@ -8656,7 +8881,11 @@ export default function App() {
   async function sendPendingApprovalReminder(game) {
     if (!game) return;
 
-    const published = await loadPublishedPayload();
+    const published = getCurrentPublishedSeason(await loadPublishedPayload());
+    if (isPublishedSeasonLocked(published)) {
+      setScoreNotice("The published season is complete and locked.");
+      return;
+    }
     const payloadResult = published?.result || result;
     const currentGameInPayload = (payloadResult?.schedule || []).find(
       (entry) => getGameScoreKey(entry) === getGameScoreKey(game)
@@ -8724,7 +8953,11 @@ export default function App() {
   async function adminVerifyOrEditScore(game, options = {}) {
     if (!game || isPublicMode) return;
 
-    const published = await loadPublishedPayload();
+    const published = getCurrentPublishedSeason(await loadPublishedPayload());
+    if (isPublishedSeasonLocked(published)) {
+      setScoreNotice("The published season is complete and locked.");
+      return;
+    }
     const payloadResult = published?.result || result;
     const currentGameInPayload = (payloadResult?.schedule || []).find(
       (entry) => getGameScoreKey(entry) === getGameScoreKey(game)
@@ -8809,14 +9042,19 @@ export default function App() {
     const lookupConfig = normalizeConfig(published?.config || config);
     const coachDirectory = getPublishedCoachDirectory(published, lookupConfig);
 
-    const ok = await savePublishedPayload({
-      result: payloadResult,
-      meta: published?.meta || publishedMeta || null,
-      scoreReports: nextReports,
-      config: lookupConfig,
-      coachDirectory,
-      tournament: published?.tournament || tournamentResult || null,
-    });
+    const ok = await savePublishedPayload(
+      publishedStoreToPayload(
+        upsertCurrentPublishedSeason(await loadPublishedPayload(), {
+          ...published,
+          result: payloadResult,
+          meta: published?.meta || publishedMeta || null,
+          scoreReports: nextReports,
+          config: lookupConfig,
+          coachDirectory,
+          tournament: published?.tournament || tournamentResult || null,
+        })
+      )
+    );
 
     if (!ok) {
       setScoreNotice("Could not save the admin verified score.");
@@ -8852,7 +9090,11 @@ export default function App() {
   async function adminEditTechnicalFoul(technicalRow) {
     if (!technicalRow || isPublicMode) return;
 
-    const published = await loadPublishedPayload();
+    const published = getCurrentPublishedSeason(await loadPublishedPayload());
+    if (isPublishedSeasonLocked(published)) {
+      setScoreNotice("The published season is complete and locked.");
+      return;
+    }
     const payloadResult = published?.result || result;
     const existingReports = normalizeScoreReportsCollection(Array.isArray(published?.scoreReports) ? published.scoreReports : scoreReports);
 
@@ -8898,14 +9140,20 @@ export default function App() {
           }
     );
 
-    const ok = await savePublishedPayload({
-      result: payloadResult,
-      meta: published?.meta || publishedMeta || null,
-      scoreReports: updatedReports,
-      config: normalizeConfig(published?.config || config),
-      coachDirectory: getPublishedCoachDirectory(published, normalizeConfig(published?.config || config)),
-      tournament: published?.tournament || tournamentResult || null,
-    });
+    const savedConfig = normalizeConfig(published?.config || config);
+    const ok = await savePublishedPayload(
+      publishedStoreToPayload(
+        upsertCurrentPublishedSeason(await loadPublishedPayload(), {
+          ...published,
+          result: payloadResult,
+          meta: published?.meta || publishedMeta || null,
+          scoreReports: updatedReports,
+          config: savedConfig,
+          coachDirectory: getPublishedCoachDirectory(published, savedConfig),
+          tournament: published?.tournament || tournamentResult || null,
+        })
+      )
+    );
 
     if (!ok) {
       setScoreNotice("Could not save the technical foul edit.");
@@ -8921,7 +9169,11 @@ export default function App() {
     const shouldDelete = typeof window === "undefined" ? true : window.confirm(`Delete technical foul for ${technicalRow.team || "team"} #${technicalRow.playerNumber || "?"}?`);
     if (!shouldDelete) return;
 
-    const published = await loadPublishedPayload();
+    const published = getCurrentPublishedSeason(await loadPublishedPayload());
+    if (isPublishedSeasonLocked(published)) {
+      setScoreNotice("The published season is complete and locked.");
+      return;
+    }
     const payloadResult = published?.result || result;
     const existingReports = normalizeScoreReportsCollection(Array.isArray(published?.scoreReports) ? published.scoreReports : scoreReports);
 
@@ -8934,14 +9186,20 @@ export default function App() {
           }
     );
 
-    const ok = await savePublishedPayload({
-      result: payloadResult,
-      meta: published?.meta || publishedMeta || null,
-      scoreReports: updatedReports,
-      config: normalizeConfig(published?.config || config),
-      coachDirectory: getPublishedCoachDirectory(published, normalizeConfig(published?.config || config)),
-      tournament: published?.tournament || tournamentResult || null,
-    });
+    const deleteConfig = normalizeConfig(published?.config || config);
+    const ok = await savePublishedPayload(
+      publishedStoreToPayload(
+        upsertCurrentPublishedSeason(await loadPublishedPayload(), {
+          ...published,
+          result: payloadResult,
+          meta: published?.meta || publishedMeta || null,
+          scoreReports: updatedReports,
+          config: deleteConfig,
+          coachDirectory: getPublishedCoachDirectory(published, deleteConfig),
+          tournament: published?.tournament || tournamentResult || null,
+        })
+      )
+    );
 
     if (!ok) {
       setScoreNotice("Could not delete the technical foul.");
@@ -8955,7 +9213,11 @@ export default function App() {
   async function adminSetTechnicalReturnGame(row, returnGameId) {
     if (!row || isPublicMode) return;
 
-    const published = await loadPublishedPayload();
+    const published = getCurrentPublishedSeason(await loadPublishedPayload());
+    if (isPublishedSeasonLocked(published)) {
+      setScoreNotice("The published season is complete and locked.");
+      return;
+    }
     const payloadResult = published?.result || result;
     const existingReports = normalizeScoreReportsCollection(
       Array.isArray(published?.scoreReports) ? published.scoreReports : scoreReports
@@ -8980,14 +9242,19 @@ export default function App() {
     }));
 
     const normalizedConfig = normalizeConfig(published?.config || config);
-    const ok = await savePublishedPayload({
-      result: payloadResult,
-      meta: published?.meta || publishedMeta || null,
-      scoreReports: updatedReports,
-      config: normalizedConfig,
-      coachDirectory: getPublishedCoachDirectory(published, normalizedConfig),
-      tournament: published?.tournament || tournamentResult || null,
-    });
+    const ok = await savePublishedPayload(
+      publishedStoreToPayload(
+        upsertCurrentPublishedSeason(await loadPublishedPayload(), {
+          ...published,
+          result: payloadResult,
+          meta: published?.meta || publishedMeta || null,
+          scoreReports: updatedReports,
+          config: normalizedConfig,
+          coachDirectory: getPublishedCoachDirectory(published, normalizedConfig),
+          tournament: published?.tournament || tournamentResult || null,
+        })
+      )
+    );
 
     if (!ok) {
       setScoreNotice("Could not save the suspension return game.");
@@ -9038,7 +9305,11 @@ export default function App() {
       return;
     }
 
-    const published = await loadPublishedPayload();
+    const published = getCurrentPublishedSeason(await loadPublishedPayload());
+    if (isPublishedSeasonLocked(published)) {
+      setScoreNotice("That season is complete and no longer accepts score reports.");
+      return;
+    }
     const lookupConfig = normalizeConfig(published?.config || config);
     const coachDirectory = getPublishedCoachDirectory(published, lookupConfig);
 
@@ -9173,14 +9444,19 @@ export default function App() {
       );
     }
 
-    const ok = await savePublishedPayload({
-      result: payloadResult,
-      meta: published?.meta || publishedMeta || null,
-      scoreReports: nextReports,
-      config: lookupConfig,
-      coachDirectory,
-      tournament: published?.tournament || tournamentResult || null,
-    });
+    const ok = await savePublishedPayload(
+      publishedStoreToPayload(
+        upsertCurrentPublishedSeason(await loadPublishedPayload(), {
+          ...published,
+          result: payloadResult,
+          meta: published?.meta || publishedMeta || null,
+          scoreReports: nextReports,
+          config: lookupConfig,
+          coachDirectory,
+          tournament: published?.tournament || tournamentResult || null,
+        })
+      )
+    );
 
     if (ok) {
       setScoreReports(normalizeScoreReportsCollection(nextReports));
@@ -9286,6 +9562,9 @@ export default function App() {
               <button style={debugMode ? styles.successButton : styles.button} onClick={() => setDebugMode((prev) => !prev)}>{debugMode ? "Debug Mode: On" : "Debug Mode: Off"}</button>
               {lockedGameCount ? <span style={styles.badge}>{lockedGameCount} locked game{lockedGameCount === 1 ? "" : "s"}</span> : null}
               <button style={styles.successButton} onClick={publishSchedule} disabled={!result}>Publish Schedule</button>
+              <button style={styles.button} onClick={completePublishedSeason} disabled={!publishedSnapshot?.current?.result || isPublishedSeasonLocked(publishedSnapshot?.current)}>
+                {isPublishedSeasonLocked(publishedSnapshot?.current) ? "Season Archived" : "Complete Season"}
+              </button>
               <button style={styles.button} onClick={updatePublishedCoachInfo}>Update Coach Info Only</button>
               <button style={styles.button} onClick={loadPublishedSchedule}>Load Published</button>
               <button style={styles.dangerButton} onClick={clearPublishedSchedule}>Clear Published</button>
@@ -9355,6 +9634,11 @@ export default function App() {
                       Updated {publishedMeta.publishedAt}
                     </span>
                   ) : null}
+                  {publishedMeta?.seasonCompletedAt ? (
+                    <span style={{ ...styles.publicQuickChip, background: "#dcfce7", borderColor: "#bbf7d0", color: "#166534" }}>
+                      Completed {publishedMeta.seasonCompletedAt}
+                    </span>
+                  ) : null}
                   <div style={styles.publicChipRow}>
                     <span style={{ ...styles.publicQuickChip, background: "#dbeafe", borderColor: "#bfdbfe", color: "#1d4ed8" }}>Schedule</span>
                     <span style={{ ...styles.publicQuickChip, background: "#dcfce7", borderColor: "#bbf7d0", color: "#166534" }}>Standings</span>
@@ -9383,6 +9667,21 @@ export default function App() {
             </div>
             <div style={styles.publicTeamHub}>
               <div style={styles.publicTeamHero}>
+                {publicSeasonOptions.length ? (
+                  <div style={{ maxWidth: 280 }}>
+                    <label style={styles.smallLabel}>Season</label>
+                    <select style={styles.select} value={selectedPublicSeasonId} onChange={(e) => setSelectedPublicSeasonId(e.target.value)}>
+                      {publicSeasonOptions.map((entry) => (
+                        <option key={entry.id} value={entry.id}>{entry.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+                {publicViewingArchivedSeason || publishedMeta?.seasonLocked ? (
+                  <div style={{ ...styles.publicQuickChip, background: "#f8fafc", borderColor: "#cbd5e1", color: "#475569", width: "fit-content" }}>
+                    {publicViewingArchivedSeason ? "Archived season view" : "Season complete"}
+                  </div>
+                ) : null}
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "start" }}>
                   <div>
                     <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
@@ -10864,6 +11163,12 @@ export default function App() {
             <SectionTitle icon={CalendarDays}>Coach Score Reporting</SectionTitle>
             {!result ? (
               <div style={{ border: "1px dashed #cbd5e1", borderRadius: 14, padding: 40, textAlign: "center", color: "#64748b" }}>No published schedule found yet.</div>
+            ) : (publicViewingArchivedSeason || publishedMeta?.seasonLocked) ? (
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 28, textAlign: "center", color: "#475569", background: "#f8fafc" }}>
+                {publicViewingArchivedSeason
+                  ? "Archived seasons are view-only. Switch back to the current season to report scores."
+                  : "This season is complete and locked. Score reporting is closed."}
+              </div>
             ) : (
               <div style={{ display: "grid", gap: 16 }}>
                 <div style={{ fontSize: 13, color: "#475569" }}>
