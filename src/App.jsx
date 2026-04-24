@@ -5896,7 +5896,7 @@ function buildTechnicalParticipantRows(schedule, scoreReports) {
         ? returnGame
           ? getTechnicalReturnGameLabel(returnGame)
           : "Admin has not selected a return game yet"
-        : "â€”";
+        : "\u2014";
 
       return {
         key: group.key,
@@ -6011,7 +6011,7 @@ function getOfficialScoreFromReports(game, scoreReports) {
       reportCount: 0,
       verified: false,
       official: null,
-      officialLabel: "â€”",
+      officialLabel: "\u2014",
       reportSummary: "No score reports yet.",
     };
   }
@@ -6040,7 +6040,7 @@ function getOfficialScoreFromReports(game, scoreReports) {
       reportCount: 0,
       verified: false,
       official: null,
-      officialLabel: "â€”",
+      officialLabel: "\u2014",
       reportSummary: "No score reports yet.",
     };
   }
@@ -6136,7 +6136,7 @@ function getGameScoreDisplay(game, scoreReports) {
   }
   if (status.status === "awaiting_opponent") return "1 report";
   if (status.status === "mismatch") return "Needs review";
-  return "â€”";
+  return "\u2014";
 }
 
 function getPublishedScheduleOutcomeParts(game, scoreReports) {
@@ -6146,8 +6146,8 @@ function getPublishedScheduleOutcomeParts(game, scoreReports) {
       verified: false,
       homeColor: "#0f172a",
       awayColor: "#0f172a",
-      homeScoreText: "â€”",
-      awayScoreText: "â€”",
+      homeScoreText: "\u2014",
+      awayScoreText: "\u2014",
     };
   }
 
