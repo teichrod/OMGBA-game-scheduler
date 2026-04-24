@@ -5190,6 +5190,7 @@ function getDateMiddleGapCount(schedule, date, config) {
 
 function fillDateGapsBySearch(schedule, date, config, maxDepth = 6) {
   const baseDeficit = getWeeklyMinimumDeficit(schedule, config);
+  const baseMissingTeams = buildResultFromSchedule(schedule, config, []).auditSummary.missingTeams || 0;
   const otherGames = schedule.filter((game) => game.date !== date).map((game) => ({ ...game }));
   const dateSlots = buildOpenSlots(config)
     .filter((slot) => slot.date === date)
@@ -5257,7 +5258,7 @@ function fillDateGapsBySearch(schedule, date, config, maxDepth = 6) {
       const nextSchedule = [...otherGames, ...nextDateGames].sort(compareSlotLike);
       if (getWeeklyMinimumDeficit(nextSchedule, config) > baseDeficit) continue;
       const result = buildResultFromSchedule(nextSchedule, config, []);
-      if (result.auditSummary.missingTeams !== 0) continue;
+      if ((result.auditSummary.missingTeams || 0) > baseMissingTeams) continue;
       if (result.auditSummary.earlyViolations > 0) continue;
 
       const recursive = helper(nextDateGames, depth - 1);
@@ -5295,6 +5296,7 @@ function repackSingleDateEarlier(schedule, date, config) {
 
   const originalSignature = getDateOccupancySignature(schedule, date, config);
   const originalGapCount = getMiddleGapCount(schedule, config);
+  const baseMissingTeams = buildResultFromSchedule(schedule, config, []).auditSummary.missingTeams || 0;
 
   const buildAttempt = (orderedGames) => {
     let workingSchedule = [...otherGames];
@@ -5325,7 +5327,7 @@ function repackSingleDateEarlier(schedule, date, config) {
 
     const candidateSchedule = workingSchedule.sort(compareSlotLike);
     const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
-    if (candidateResult.auditSummary.missingTeams !== 0) return null;
+    if ((candidateResult.auditSummary.missingTeams || 0) > baseMissingTeams) return null;
     if (candidateResult.auditSummary.earlyViolations > 0) return null;
     if (getWeeklyMinimumDeficit(candidateSchedule, config) > getWeeklyMinimumDeficit(schedule, config)) {
       return null;
@@ -5398,6 +5400,7 @@ function repackSingleDateEarlier(schedule, date, config) {
 
 function compactSingleCourtEarlier(schedule, date, courtName, config) {
   let working = schedule.map((game) => ({ ...game }));
+  const baseMissingTeams = buildResultFromSchedule(schedule, config, []).auditSummary.missingTeams || 0;
   const courtSlots = buildOpenSlots(config)
     .filter((slot) => slot.date === date && slot.court === courtName)
     .sort(compareSlotLike);
@@ -5447,7 +5450,7 @@ function compactSingleCourtEarlier(schedule, date, courtName, config) {
         const candidateSchedule = [...baseSchedule, movedGame].sort(compareSlotLike);
         if (getWeeklyMinimumDeficit(candidateSchedule, config) > getWeeklyMinimumDeficit(working, config)) continue;
         const result = buildResultFromSchedule(candidateSchedule, config, []);
-        if (result.auditSummary.missingTeams !== 0) continue;
+        if ((result.auditSummary.missingTeams || 0) > baseMissingTeams) continue;
         if (result.auditSummary.earlyViolations > 0) continue;
 
         working = candidateSchedule;
@@ -5484,6 +5487,7 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
 
   let nextSchedule = schedule.map((game) => ({ ...game }));
   let currentDeficit = getWeeklyMinimumDeficit(nextSchedule, config);
+  const baseMissingTeams = buildResultFromSchedule(schedule, config, []).auditSummary.missingTeams || 0;
   const allSlots = buildOpenSlots(config);
   let safety = 0;
 
@@ -5555,7 +5559,7 @@ function rebalanceToMinimumWeeklyGames(schedule, config) {
               g === game ? { ...g, date: target.date, time: target.time, court: target.court } : g
             );
             const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
-            if (candidateResult.auditSummary.missingTeams !== 0) continue;
+            if ((candidateResult.auditSummary.missingTeams || 0) > baseMissingTeams) continue;
             if (candidateResult.auditSummary.earlyViolations > 0) continue;
 
             const candidateDeficit = getWeeklyMinimumDeficit(candidateSchedule, config);
@@ -5634,6 +5638,7 @@ function rebalanceTowardFinalSaturday(schedule, config) {
 
   let nextSchedule = schedule.map((game) => ({ ...game }));
   let currentPenalty = schedulePenaltyScore(buildResultFromSchedule(nextSchedule, config, []), config);
+  const baseMissingTeams = buildResultFromSchedule(schedule, config, []).auditSummary.missingTeams || 0;
 
   const dateCounts = enabledDates.map((date) => countGamesOnDate(nextSchedule, date));
   const averageGames = Math.round((nextSchedule.length || 0) / enabledDates.length);
@@ -5674,7 +5679,7 @@ function rebalanceTowardFinalSaturday(schedule, config) {
           g === game ? { ...g, date: target.date, time: target.time, court: target.court } : g
         );
         const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
-        if (candidateResult.auditSummary.missingTeams !== 0) continue;
+        if ((candidateResult.auditSummary.missingTeams || 0) > baseMissingTeams) continue;
         if (candidateResult.auditSummary.earlyViolations > 0) continue;
 
         const candidatePenalty = schedulePenaltyScore(candidateResult, config);
