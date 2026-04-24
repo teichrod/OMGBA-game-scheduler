@@ -2200,8 +2200,11 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     });
   }
 
+  let finalizedSchedule = compactScheduleEarlier(schedule, normalized);
+  finalizedSchedule = sortScheduleGames(finalizedSchedule);
+
   const unresolvedUnscheduled = teams.some((team) => getNeed(team) > 0) ? unscheduled : [];
-  const result = buildResultFromSchedule(schedule, normalized, unresolvedUnscheduled);
+  const result = buildResultFromSchedule(finalizedSchedule, normalized, unresolvedUnscheduled);
   return {
     ...result,
     seasonPhase: 'regular',
@@ -4182,6 +4185,7 @@ function generateScheduleEngine(config, lockedGames = []) {
   pushRepeatTrace('After avoidable-repeat rebuild', improvedSchedule);
   improvedSchedule = tryReduceRepeatedOpponents(improvedSchedule, config);
   pushRepeatTrace('After repeat-opponent repair', improvedSchedule);
+  improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
   improvedSchedule = sortScheduleGames(improvedSchedule);
   pushRepeatTrace('Final schedule', improvedSchedule);
 
