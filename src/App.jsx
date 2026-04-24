@@ -5850,6 +5850,21 @@ function exportCsv(filename, rows) {
   }
 }
 
+function downloadJson(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8;" });
+  const link = document.createElement("a");
+  const objectUrl = URL.createObjectURL(blob);
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  try {
+    link.click();
+  } finally {
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
+}
+
 const SETUP_STORAGE_KEY = "youth-sports-scheduler-setups-v1";
 const ADMIN_SANDBOX_STORAGE_KEY = "youth-sports-scheduler-admin-sandbox-v1";
 
@@ -7838,6 +7853,35 @@ export default function App() {
     setPublishNotice(`Setup saved: ${trimmed}`);
   }
 
+  function exportCurrentSetup() {
+    if (isPublicMode) return;
+
+    const normalizedConfig = normalizeConfig(config);
+    const setupLabel = String(savedSetupName || selectedSavedSetup || "scheduler_setup").trim() || "scheduler_setup";
+    const safeLabel = setupLabel.replace(/[^\w\-]+/g, "_");
+    const exportPayload = {
+      kind: "courtrax_setup_bundle",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      setupName: setupLabel,
+      config: normalizedConfig,
+      currentResult: result
+        ? {
+            seasonPhase: result.seasonPhase || "",
+            schedule: result.schedule || [],
+            unscheduled: result.unscheduled || [],
+            auditSummary: result.auditSummary || {},
+            finishTrace: result.finishTrace || [],
+            repeatTrace: result.repeatTrace || [],
+          }
+        : null,
+      scoreReports: Array.isArray(scoreReports) ? scoreReports : [],
+    };
+
+    downloadJson(`${safeLabel || "scheduler_setup"}_bundle.json`, exportPayload);
+    setPublishNotice(`Exported setup bundle: ${setupLabel}`);
+  }
+
   function loadSelectedSetup() {
     if (isPublicMode) return;
     const target = savedSetups.find((entry) => entry.name === selectedSavedSetup);
@@ -9144,8 +9188,11 @@ export default function App() {
                       <button style={styles.dangerButton} onClick={deleteSelectedSetup}>Delete</button>
                     </div>
                   </div>
+                  <div>
+                    <button style={styles.button} onClick={exportCurrentSetup}>Export Current Setup</button>
+                  </div>
                   <div style={{ fontSize: 13, color: "#64748b" }}>
-                    Saves your admin configuration in this browser: season year, Saturdays, courts, start times, division team counts, game counts, rule settings, coaching conflicts.
+                    Saves your admin configuration in this browser and can export a JSON bundle with the current setup, generated schedule result, and debug traces.
                   </div>
                 </div>
               </Card>
