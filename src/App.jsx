@@ -2201,7 +2201,9 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
   }
 
   let finalizedSchedule = rebalanceScheduleTimes(schedule, normalized);
+  finalizedSchedule = enforceMinimumDayPartBalance(finalizedSchedule, normalized);
   finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
+  finalizedSchedule = enforceMinimumDayPartBalance(finalizedSchedule, normalized);
   finalizedSchedule = sortScheduleGames(finalizedSchedule);
 
   const unresolvedUnscheduled = teams.some((team) => getNeed(team) > 0) ? unscheduled : [];
@@ -3948,6 +3950,38 @@ function shouldPrioritizeAfternoon(team) {
   );
 }
 
+function getDayPartShortage(team) {
+  return {
+    morning: Math.max(0, getMinimumMorningGames(team) - (team.morningGames || 0)),
+    afternoon: Math.max(0, getMinimumAfternoonGames(team) - (team.afternoonGames || 0)),
+  };
+}
+
+function totalDayPartShortage(teamMap) {
+  return Object.values(teamMap || {}).reduce((sum, team) => {
+    const shortage = getDayPartShortage(team);
+    return sum + shortage.morning + shortage.afternoon;
+  }, 0);
+}
+
+function getTargetedGamesForDayPartFix(schedule, team, targetPart) {
+  const wantsMorning = targetPart === "morning";
+  return schedule
+    .filter((game) => !game.locked && (game.home === team.name || game.away === team.name))
+    .sort((a, b) => {
+      const aScore =
+        (wantsMorning && isAfternoonTime(a.time) ? 40 : 0) +
+        (!wantsMorning && isMorningTime(a.time) ? 40 : 0) +
+        parseShortDate(b.date) * 0.0001;
+      const bScore =
+        (wantsMorning && isAfternoonTime(b.time) ? 40 : 0) +
+        (!wantsMorning && isMorningTime(b.time) ? 40 : 0) +
+        parseShortDate(a.date) * 0.0001;
+      if (bScore !== aScore) return bScore - aScore;
+      return compareSlotLike(b, a);
+    });
+}
+
 function getTargetedGamesForRebalance(schedule, team) {
   const timeCounts = Object.entries(team.gamesByTime || {}).sort((a, b) => b[1] - a[1]);
   const mostUsedTime = timeCounts[0]?.[0] || '';
@@ -4073,6 +4107,129 @@ function rebalanceScheduleTimes(schedule, config) {
     if (timeDiff !== 0) return timeDiff;
     return a.court.localeCompare(b.court);
   });
+}
+
+function enforceMinimumDayPartBalance(schedule, config) {
+  let nextSchedule = schedule.map((game) => ({ ...game }));
+  const allOpenSlots = buildOpenSlots(config);
+  const maxIterations = 120;
+  const startedAt = Date.now();
+  const maxMillis = 3500;
+
+  let currentResult = buildResultFromSchedule(nextSchedule, config, []);
+  let currentScore = schedulePenaltyScore(currentResult, config);
+  let currentTeamMap = makeTeamMapFromSchedule(nextSchedule, config);
+  let currentShortage = totalDayPartShortage(currentTeamMap);
+
+  for (let iter = 0; iter < maxIterations; iter += 1) {
+    if (Date.now() - startedAt > maxMillis) break;
+    if (currentShortage <= 0) break;
+
+    const problemTeams = Object.values(currentTeamMap)
+      .map((team) => ({ team, shortage: getDayPartShortage(team) }))
+      .filter((entry) => entry.shortage.morning > 0 || entry.shortage.afternoon > 0)
+      .sort((a, b) => {
+        const aTotal = a.shortage.morning + a.shortage.afternoon;
+        const bTotal = b.shortage.morning + b.shortage.afternoon;
+        if (bTotal !== aTotal) return bTotal - aTotal;
+        return teamIssueSeverity(b.team, config) - teamIssueSeverity(a.team, config);
+      });
+
+    if (!problemTeams.length) break;
+
+    let bestCandidateSchedule = null;
+    let bestCandidateScore = currentScore;
+    let bestCandidateShortage = currentShortage;
+
+    for (const entry of problemTeams.slice(0, 8)) {
+      if (Date.now() - startedAt > maxMillis) break;
+
+      const team = entry.team;
+      const targetPart = entry.shortage.morning >= entry.shortage.afternoon ? "morning" : "afternoon";
+      const targetedGames = getTargetedGamesForDayPartFix(nextSchedule, team, targetPart).slice(0, 6);
+      const occupiedKeys = new Set(nextSchedule.map((game) => `${game.date}|${game.time}|${game.court}`));
+
+      const emptyTargets = allOpenSlots
+        .filter((slot) => !occupiedKeys.has(`${slot.date}|${slot.time}|${slot.court}`))
+        .filter((slot) => targetPart === "morning" ? isMorningTime(slot.time) : isAfternoonTime(slot.time))
+        .sort(compareSlotLike)
+        .slice(0, 24);
+
+      for (const gameA of targetedGames) {
+        if (Date.now() - startedAt > maxMillis) break;
+
+        for (const target of emptyTargets) {
+          const message = validateManualMove(nextSchedule.filter((g) => g !== gameA), { ...gameA }, target, config);
+          if (message) continue;
+
+          const candidateSchedule = nextSchedule.map((game) =>
+            game === gameA ? { ...game, date: target.date, time: target.time, court: target.court } : game
+          );
+          const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
+          if (candidateResult.auditSummary.missingTeams !== 0) continue;
+
+          const candidateTeamMap = makeTeamMapFromSchedule(candidateSchedule, config);
+          const candidateShortage = totalDayPartShortage(candidateTeamMap);
+          if (candidateShortage > bestCandidateShortage) continue;
+
+          const candidateScore = schedulePenaltyScore(candidateResult, config);
+          const improves =
+            candidateShortage < bestCandidateShortage ||
+            (candidateShortage === bestCandidateShortage && candidateScore < bestCandidateScore);
+
+          if (improves) {
+            bestCandidateSchedule = candidateSchedule.map((game) => ({ ...game }));
+            bestCandidateScore = candidateScore;
+            bestCandidateShortage = candidateShortage;
+          }
+        }
+
+        const swapPool = nextSchedule
+          .filter((gameB) => gameB !== gameA && !gameB.locked)
+          .filter((gameB) => targetPart === "morning" ? isMorningTime(gameB.time) : isAfternoonTime(gameB.time))
+          .sort(compareSlotLike)
+          .slice(0, 36);
+
+        for (const gameB of swapPool) {
+          const swapMessage = validateManualSwap(nextSchedule, gameA, gameB, config);
+          if (swapMessage) continue;
+
+          const candidateSchedule = nextSchedule.map((game) => {
+            if (game === gameA) return { ...game, date: gameB.date, time: gameB.time, court: gameB.court };
+            if (game === gameB) return { ...game, date: gameA.date, time: gameA.time, court: gameA.court };
+            return game;
+          });
+          const candidateResult = buildResultFromSchedule(candidateSchedule, config, []);
+          if (candidateResult.auditSummary.missingTeams !== 0) continue;
+
+          const candidateTeamMap = makeTeamMapFromSchedule(candidateSchedule, config);
+          const candidateShortage = totalDayPartShortage(candidateTeamMap);
+          if (candidateShortage > bestCandidateShortage) continue;
+
+          const candidateScore = schedulePenaltyScore(candidateResult, config);
+          const improves =
+            candidateShortage < bestCandidateShortage ||
+            (candidateShortage === bestCandidateShortage && candidateScore < bestCandidateScore);
+
+          if (improves) {
+            bestCandidateSchedule = candidateSchedule.map((game) => ({ ...game }));
+            bestCandidateScore = candidateScore;
+            bestCandidateShortage = candidateShortage;
+          }
+        }
+      }
+    }
+
+    if (!bestCandidateSchedule) break;
+
+    nextSchedule = bestCandidateSchedule;
+    currentResult = buildResultFromSchedule(nextSchedule, config, []);
+    currentScore = bestCandidateScore;
+    currentTeamMap = makeTeamMapFromSchedule(nextSchedule, config);
+    currentShortage = bestCandidateShortage;
+  }
+
+  return nextSchedule.sort(compareSlotLike);
 }
 
 
@@ -4230,7 +4387,9 @@ function generateScheduleEngine(config, lockedGames = []) {
   improvedSchedule = tryReduceRepeatedOpponents(improvedSchedule, config);
   pushRepeatTrace('After repeat-opponent repair', improvedSchedule);
   improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
+  improvedSchedule = enforceMinimumDayPartBalance(improvedSchedule, config);
   improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+  improvedSchedule = enforceMinimumDayPartBalance(improvedSchedule, config);
   improvedSchedule = sortScheduleGames(improvedSchedule);
   pushRepeatTrace('Final schedule', improvedSchedule);
 
