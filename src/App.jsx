@@ -2200,7 +2200,8 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     });
   }
 
-  let finalizedSchedule = compactScheduleEarlier(schedule, normalized);
+  let finalizedSchedule = rebalanceScheduleTimes(schedule, normalized);
+  finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
   finalizedSchedule = sortScheduleGames(finalizedSchedule);
 
   const unresolvedUnscheduled = teams.some((team) => getNeed(team) > 0) ? unscheduled : [];
@@ -2592,6 +2593,14 @@ function getIdealAfternoonGames(team) {
   return Math.ceil((team.targetGames || 0) / 2);
 }
 
+function getMinimumMorningGames(team) {
+  return Math.min(2, Math.floor((team?.targetGames || 0) / 2));
+}
+
+function getMinimumAfternoonGames(team) {
+  return Math.min(2, Math.floor((team?.targetGames || 0) / 2));
+}
+
 function maxSameTimeSlot(gamesByTime) {
   const values = Object.values(gamesByTime || {});
   return values.length ? Math.max(...values) : 0;
@@ -2619,14 +2628,20 @@ function getProjectedDayPartPenalty(team, slotTime) {
   const targetGames = team.targetGames || 0;
   const idealMorning = Math.floor(targetGames / 2);
   const idealAfternoon = Math.ceil(targetGames / 2);
+  const minimumMorning = getMinimumMorningGames(team);
+  const minimumAfternoon = getMinimumAfternoonGames(team);
   const imbalance = Math.abs(projectedMorning - projectedAfternoon);
   const maxAllowedBias = Math.ceil(targetGames * 0.62);
   const hardBiasPenalty = Math.max(0, Math.max(projectedMorning, projectedAfternoon) - maxAllowedBias) * 140;
+  const minimumPenalty =
+    Math.max(0, minimumMorning - projectedMorning) * 220 +
+    Math.max(0, minimumAfternoon - projectedAfternoon) * 220;
   return (
     imbalance * 40 +
     Math.abs(projectedMorning - idealMorning) * 34 +
     Math.abs(projectedAfternoon - idealAfternoon) * 34 +
-    hardBiasPenalty
+    hardBiasPenalty +
+    minimumPenalty
   );
 }
 
@@ -3845,6 +3860,8 @@ function hardViolationsForTeam(team, config) {
   if ((team.earlyGames || 0) > Number(config.maxEarlyGames)) violations += 10;
   if ((team.doubleHeaders || 0) > (team.maxDoubleheadersPerTeam || 0)) violations += 10;
   if ((team.maxSameTimeSlot || 0) > Math.ceil((team.targetGames || 0) / 2)) violations += 5;
+  if ((team.morningGames || 0) < getMinimumMorningGames(team)) violations += 6;
+  if ((team.afternoonGames || 0) < getMinimumAfternoonGames(team)) violations += 6;
   return violations;
 }
 
@@ -3865,11 +3882,15 @@ function teamIssueSeverity(team, config) {
   const worstCount = counts[0]?.[1] || 0;
   const morningTarget = getIdealMorningGames(team);
   const afternoonTarget = getIdealAfternoonGames(team);
+  const morningMinimumGap = Math.max(0, getMinimumMorningGames(team) - (team.morningGames || 0));
+  const afternoonMinimumGap = Math.max(0, getMinimumAfternoonGames(team) - (team.afternoonGames || 0));
   const morningImbalance = Math.abs((team.morningGames || 0) - morningTarget);
   const afternoonImbalance = Math.abs((team.afternoonGames || 0) - afternoonTarget);
   return (
     Math.max(0, worstCount - maxAllowedAtTime) * 120 +
     Math.max(0, (team.maxSameTimeSlot || 0) - maxAllowedAtTime) * 120 +
+    morningMinimumGap * 220 +
+    afternoonMinimumGap * 220 +
     morningImbalance * 20 +
     afternoonImbalance * 20 +
     hardViolationsForTeam(team, config) * 2000
@@ -3914,7 +3935,17 @@ function validateManualSwap(schedule, gameA, gameB, config) {
 }
 
 function shouldPrioritizeMorning(team) {
-  return (team.afternoonGames || 0) > getIdealAfternoonGames(team);
+  return (
+    (team.morningGames || 0) < getMinimumMorningGames(team) ||
+    (team.afternoonGames || 0) > getIdealAfternoonGames(team)
+  );
+}
+
+function shouldPrioritizeAfternoon(team) {
+  return (
+    (team.afternoonGames || 0) < getMinimumAfternoonGames(team) ||
+    (team.morningGames || 0) > getIdealMorningGames(team)
+  );
 }
 
 function getTargetedGamesForRebalance(schedule, team) {
@@ -3959,12 +3990,21 @@ function rebalanceScheduleTimes(schedule, config) {
       for (const gameA of targetedGames) {
         if (Date.now() - startedAt > maxMillis) break;
 
+        const prioritizeMorning = shouldPrioritizeMorning(team);
+        const prioritizeAfternoon = !prioritizeMorning && shouldPrioritizeAfternoon(team);
+
         const occupiedKeys = new Set(nextSchedule.map((game) => `${game.date}|${game.time}|${game.court}`));
         const emptyTargets = allOpenSlots
           .filter((slot) => !occupiedKeys.has(`${slot.date}|${slot.time}|${slot.court}`))
           .sort((a, b) => {
-            const aBias = (shouldPrioritizeMorning(team) && isMorningTime(a.time) ? -30 : 0) + (a.time === gameA.time ? 20 : 0);
-            const bBias = (shouldPrioritizeMorning(team) && isMorningTime(b.time) ? -30 : 0) + (b.time === gameA.time ? 20 : 0);
+            const aBias =
+              (prioritizeMorning && isMorningTime(a.time) ? -30 : 0) +
+              (prioritizeAfternoon && isAfternoonTime(a.time) ? -30 : 0) +
+              (a.time === gameA.time ? 20 : 0);
+            const bBias =
+              (prioritizeMorning && isMorningTime(b.time) ? -30 : 0) +
+              (prioritizeAfternoon && isAfternoonTime(b.time) ? -30 : 0) +
+              (b.time === gameA.time ? 20 : 0);
             if (aBias !== bBias) return aBias - bBias;
             const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
             if (dateDiff !== 0) return dateDiff;
@@ -3991,9 +4031,13 @@ function rebalanceScheduleTimes(schedule, config) {
         const swapPool = nextSchedule
           .filter((gameB) => gameB !== gameA && !gameB.locked)
           .sort((a, b) => {
-            const aMorning = shouldPrioritizeMorning(team) && isMorningTime(a.time) ? -20 : 0;
-            const bMorning = shouldPrioritizeMorning(team) && isMorningTime(b.time) ? -20 : 0;
-            if (aMorning !== bMorning) return aMorning - bMorning;
+            const aBias =
+              (prioritizeMorning && isMorningTime(a.time) ? -20 : 0) +
+              (prioritizeAfternoon && isAfternoonTime(a.time) ? -20 : 0);
+            const bBias =
+              (prioritizeMorning && isMorningTime(b.time) ? -20 : 0) +
+              (prioritizeAfternoon && isAfternoonTime(b.time) ? -20 : 0);
+            if (aBias !== bBias) return aBias - bBias;
             return 0;
           })
           .slice(0, 30);
@@ -4185,6 +4229,7 @@ function generateScheduleEngine(config, lockedGames = []) {
   pushRepeatTrace('After avoidable-repeat rebuild', improvedSchedule);
   improvedSchedule = tryReduceRepeatedOpponents(improvedSchedule, config);
   pushRepeatTrace('After repeat-opponent repair', improvedSchedule);
+  improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
   improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
   improvedSchedule = sortScheduleGames(improvedSchedule);
   pushRepeatTrace('Final schedule', improvedSchedule);
@@ -4215,6 +4260,8 @@ function generateScheduleEngine(config, lockedGames = []) {
       getHomeAwayIssueLabel(team),
       team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? 'Too many doubleheaders' : null,
       team.maxSameTimeSlot > (team.targetGames <= 8 ? 2 : 3) ? 'Time slot concentration' : null,
+      (team.morningGames || 0) < getMinimumMorningGames(team) ||
+      (team.afternoonGames || 0) < getMinimumAfternoonGames(team) ||
       Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.62)
         ? 'Poor AM/PM balance'
         : null,
@@ -4232,7 +4279,7 @@ function generateScheduleEngine(config, lockedGames = []) {
     earlyViolations: auditRows.filter((row) => row.early > Number(config.maxEarlyGames)).length,
     homeAwayIssues: finalTeams.filter((team) => hasHomeAwayIssue(team)).length,
     missingTeams: auditRows.filter((row) => row.games !== row.target).length,
-    timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
+    timeVarietyIssues: auditRows.filter((row) => row.issues.includes('Poor AM/PM balance') || row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
     weeklyMinimumIssues: weeklyMinimumViolations.length,
     weeklyMinimumDeficit,
     repeatedOpponentIssues: repeatedOpponentData.pairViolations.length,
@@ -4773,7 +4820,7 @@ function buildResultFromSchedule(schedule, config, priorUnscheduled = []) {
     earlyViolations: auditRows.filter((row) => row.early > Number(config.maxEarlyGames)).length,
     homeAwayIssues: finalTeams.filter((team) => hasHomeAwayIssue(team)).length,
     missingTeams: auditRows.filter((row) => row.games !== row.target).length,
-    timeVarietyIssues: auditRows.filter((row) => row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
+    timeVarietyIssues: auditRows.filter((row) => row.issues.includes('Poor AM/PM balance') || row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
     weeklyMinimumIssues: weeklyMinimumViolations.length,
     weeklyMinimumDeficit,
     repeatedOpponentIssues: repeatedOpponentData.pairViolations.length,
