@@ -602,23 +602,23 @@ function buildDateFilteredConfig(config, predicate) {
 function buildPreseasonConfig(config) {
   const normalized = normalizeConfig(config);
   const preseasonConfig = buildDateFilteredConfig(normalized, (date) => isPreseasonDate(date, normalized));
-  const totalEnabledDates = normalized.saturdays.filter((entry) => entry.enabled).length;
-  const preseasonEnabledDates = preseasonConfig.saturdays.filter((entry) => entry.enabled).length;
-  const postEnabledDates = Math.max(0, totalEnabledDates - preseasonEnabledDates);
 
   const nextDivisionGames = Object.fromEntries(
     DIVISIONS.map((division) => {
       const totalTarget = Number(normalized.divisionGames?.[division] || 0);
-      if (totalTarget <= 0 || preseasonEnabledDates <= 0) return [division, 0];
-      if (postEnabledDates <= 0 || totalEnabledDates <= 0) return [division, totalTarget];
-      let preseasonTarget = Math.round((totalTarget * preseasonEnabledDates) / totalEnabledDates);
+      const totalPlayableDates = getPlayableDateCountForDivision(normalized, division);
+      const preseasonPlayableDates = getPlayableDateCountForDivision(preseasonConfig, division);
+      const postPlayableDates = Math.max(0, totalPlayableDates - preseasonPlayableDates);
+      if (totalTarget <= 0 || preseasonPlayableDates <= 0) return [division, 0];
+      if (postPlayableDates <= 0 || totalPlayableDates <= 0) return [division, totalTarget];
+      let preseasonTarget = Math.round((totalTarget * preseasonPlayableDates) / totalPlayableDates);
       const isFifthBoys = division === "5th Boys";
       const hasFifthBoysPreseasonDoubleheader = Boolean(
         isFifthBoys &&
         normalized.fifthBoysDoubleheaderDate &&
         isPreseasonDate(normalized.fifthBoysDoubleheaderDate, normalized)
       );
-      const maxNoExtraRegularDoubleheaderGames = postEnabledDates;
+      const maxNoExtraRegularDoubleheaderGames = postPlayableDates;
       if (isFifthBoys && hasFifthBoysPreseasonDoubleheader) {
         preseasonTarget = Math.max(preseasonTarget, totalTarget - maxNoExtraRegularDoubleheaderGames);
       }
@@ -1048,9 +1048,7 @@ function canUseLastChanceSlot(team, slot, config) {
   if (onDate >= 2) return false;
   if (onDate === 0) return true;
   if ((team.doubleHeaders || 0) >= (team.maxDoubleheadersPerTeam || 0)) return false;
-  if (team.division === "5th Boys" && config?.fifthBoysDoubleheaderDate && slot.date !== config.fifthBoysDoubleheaderDate && (team.maxDoubleheadersPerTeam || 0) <= 1) {
-    return false;
-  }
+  if (!canTeamTakeDoubleheaderOnDate(team, slot, config)) return false;
   const existing = getScheduledGamesOnDate(team, slot.date)[0];
   return Boolean(existing && areBackToBackTimes(existing.time, slot.time) && existing.court === slot.court);
 }
@@ -1312,9 +1310,7 @@ function canStillUseTeamOnDateTrueForceFill(team, slot, config) {
 
   if (onDate >= 1) {
     if ((team.doubleHeaders || 0) >= (team.maxDoubleheadersPerTeam || 0)) return false;
-    if (team.division === "5th Boys" && config?.fifthBoysDoubleheaderDate && slot.date !== config.fifthBoysDoubleheaderDate && (team.maxDoubleheadersPerTeam || 0) <= 1) {
-      return false;
-    }
+    if (!canTeamTakeDoubleheaderOnDate(team, slot, config)) return false;
     const existing = getScheduledGamesOnDate(team, slot.date)[0];
     if (!existing) return false;
     if (!areBackToBackTimes(existing.time, slot.time)) return false;
@@ -1330,9 +1326,7 @@ function canStillUseTeamOnDateUltraLateRescue(team, slot, config) {
 
   if (onDate >= 1) {
     if ((team.doubleHeaders || 0) >= (team.maxDoubleheadersPerTeam || 0)) return false;
-    if (team.division === "5th Boys" && config?.fifthBoysDoubleheaderDate && slot.date !== config.fifthBoysDoubleheaderDate && (team.maxDoubleheadersPerTeam || 0) <= 1) {
-      return false;
-    }
+    if (!canTeamTakeDoubleheaderOnDate(team, slot, config)) return false;
     const existingGames = getScheduledGamesOnDate(team, slot.date);
     if ((existingGames || []).some((game) => game.time === slot.time)) return false;
   }
@@ -2680,18 +2674,13 @@ function buildTeams(config) {
     const targetGames = Number(config.divisionGames[division] || 8);
     const isOddDivision = count % 2 === 1;
     const details = syncDivisionTeamDetails(config.divisionTeamDetails?.[division], count);
-    const playableDates = getPlayableDateCountForDivision(config, division);
-    const extraGamesNeededBeyondDates = Math.max(0, targetGames - playableDates);
-
     let maxDoubleheadersPerTeam = 0;
     if (config.globalAllowDoubleheaders) {
       maxDoubleheadersPerTeam = 99;
     } else if (division === "5th Boys") {
-      maxDoubleheadersPerTeam =
-        (config.fifthBoysDoubleheaderDate ? 1 : 0) +
-        (isOddDivision ? Math.min(1, extraGamesNeededBeyondDates) : 0);
+      maxDoubleheadersPerTeam = (config.fifthBoysDoubleheaderDate ? 1 : 0) + (isOddDivision ? 1 : 0);
     } else {
-      maxDoubleheadersPerTeam = isOddDivision ? Math.min(1, extraGamesNeededBeyondDates) : 0;
+      maxDoubleheadersPerTeam = isOddDivision ? 1 : 0;
     }
 
     for (let i = 0; i < count; i += 1) {
@@ -2876,6 +2865,8 @@ function canPairInSlot(teamA, teamB, slot, config, options = {}) {
 
   if (aOnDate >= 1 && (teamA.doubleHeaders || 0) >= (teamA.maxDoubleheadersPerTeam || 0)) return false;
   if (bOnDate >= 1 && (teamB.doubleHeaders || 0) >= (teamB.maxDoubleheadersPerTeam || 0)) return false;
+  if (aOnDate >= 1 && !canTeamTakeDoubleheaderOnDate(teamA, slot, config)) return false;
+  if (bOnDate >= 1 && !canTeamTakeDoubleheaderOnDate(teamB, slot, config)) return false;
 
   if (aOnDate === 1) {
     const existingA = getScheduledGamesOnDate(teamA, slot.date)[0];
@@ -3662,6 +3653,7 @@ function canStillUseTeamOnDate(team, slot, config, options = {}) {
 
   if (onDate >= 1) {
     if ((team.doubleHeaders || 0) >= (team.maxDoubleheadersPerTeam || 0)) return false;
+    if (!canTeamTakeDoubleheaderOnDate(team, slot, config)) return false;
     const existing = getScheduledGamesOnDate(team, slot.date)[0];
     if (!existing) return false;
     if (!areBackToBackTimes(existing.time, slot.time)) return false;
@@ -5066,6 +5058,23 @@ function getPlayableDateCountForDivision(config, division) {
   const dates = getEnabledGameDates(config);
   if (division === "5th Boys") return dates.length;
   return dates.filter((date) => date !== config?.fifthBoysDoubleheaderDate).length;
+}
+
+function canTeamTakeDoubleheaderOnDate(team, slot, config) {
+  if (!slot?.date) return false;
+  const division = String(team?.baseDivision || team?.division || "").split("::")[0];
+  if (config?.globalAllowDoubleheaders) return true;
+  if (division === "5th Boys") {
+    if (
+      config?.fifthBoysDoubleheaderDate &&
+      slot.date !== config.fifthBoysDoubleheaderDate &&
+      (team?.maxDoubleheadersPerTeam || 0) <= 1
+    ) {
+      return false;
+    }
+    return true;
+  }
+  return !isPreseasonDate(slot.date, config);
 }
 
 function getFinalEnabledDate(config) {
