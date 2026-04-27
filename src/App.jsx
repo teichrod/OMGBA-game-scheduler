@@ -2390,14 +2390,17 @@ function buildTeamNamesFromConfig(config) {
 
 function normalizeConfig(config) {
   const initial = createInitialState();
+  const requestedSeasonYear = Number(config?.seasonYear || initial.seasonYear);
+  const defaultPreseasonEndDate = `12/31/${String(requestedSeasonYear).slice(-2)}`;
   const next = {
     ...initial,
     ...(config || {}),
-    preseasonEndDate: String(config?.preseasonEndDate || initial.preseasonEndDate || `12/31/${String(initial.seasonYear).slice(-2)}`),
+    seasonYear: requestedSeasonYear,
+    preseasonEndDate: String(config?.preseasonEndDate || defaultPreseasonEndDate),
     divisions: { ...initial.divisions, ...(config?.divisions || {}) },
     divisionGames: { ...initial.divisionGames, ...(config?.divisionGames || {}) },
     timeSlots: Array.isArray(config?.timeSlots) && config.timeSlots.length ? config.timeSlots : initial.timeSlots,
-    saturdays: Array.isArray(config?.saturdays) && config.saturdays.length ? config.saturdays : initial.saturdays,
+    saturdays: Array.isArray(config?.saturdays) && config.saturdays.length ? config.saturdays : getSeasonSaturdays(requestedSeasonYear).map((date) => ({ date, enabled: false })),
   };
 
   next.divisionTeamDetails = Object.fromEntries(
@@ -8206,6 +8209,7 @@ export default function App() {
       return {
         ...prev,
         seasonYear,
+        preseasonEndDate: `12/31/${String(seasonYear).slice(-2)}`,
         saturdays,
         selectedDateForCourts: saturdays[0]?.date || "",
         fifthBoysDoubleheaderDate: "",
