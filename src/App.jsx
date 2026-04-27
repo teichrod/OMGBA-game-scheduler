@@ -15,7 +15,7 @@ const DIVISIONS = [
   "7th Boys",
   "8th Boys",
   "5th/6th Girls",
-  "7th/89th Girls",
+  "7th/8th Girls",
 ];
 
 const DEFAULT_COURTS = [
@@ -677,6 +677,17 @@ function getConfiguredPreseasonEndDate(config) {
   return String(config?.preseasonEndDate || fallback);
 }
 
+function createSchedulerBudget(maxMs = 2500) {
+  const startedAt = Date.now();
+  return {
+    startedAt,
+    maxMs,
+    isExpired() {
+      return (Date.now() - startedAt) >= maxMs;
+    },
+  };
+}
+
 function isPreseasonDate(date, config) {
   if (!date) return false;
   return parseShortDate(date) <= parseShortDate(getConfiguredPreseasonEndDate(config));
@@ -970,7 +981,7 @@ function chooseBestRegularSeasonSlotForPair(teamA, teamB, openSlots, config, all
   return best;
 }
 
-function completeRegularSeasonWithinTiers(teams, openSlots, schedule, config) {
+function completeRegularSeasonWithinTiers(teams, openSlots, schedule, config, budget = null) {
   const teamsByTier = teams.reduce((acc, team) => {
     const key = team.division;
     if (!acc[key]) acc[key] = [];
@@ -987,6 +998,7 @@ function completeRegularSeasonWithinTiers(teams, openSlots, schedule, config) {
     });
 
   for (const tierTeams of tiers) {
+    if (budget?.isExpired?.()) break;
     const plannedPairs = buildRemainingPairPlanForGroup(tierTeams, config);
     for (const plan of plannedPairs) {
       const teamA = tierTeams.find((team) => team.id === plan.teamAId);
@@ -1005,6 +1017,7 @@ function completeRegularSeasonWithinTiers(teams, openSlots, schedule, config) {
     let safety = 0;
 
     while (progress && safety < 5000 && tierTeams.some((team) => getNeed(team) > 0)) {
+      if (budget?.isExpired?.()) break;
       safety += 1;
       progress = false;
 
@@ -1207,10 +1220,12 @@ function chooseLastChancePairForSlot(groupTeams, slot, config, allTeams) {
 
 function lastChanceCompleteShortTeamsWithinGroups(teams, openSlots, schedule, config, options = {}) {
   const { regularSeasonOnly = false } = options;
+  const budget = options?.budget || null;
   let progress = true;
   let safety = 0;
 
   while (progress && safety < 12000 && teams.some((team) => getNeed(team) > 0)) {
+    if (budget?.isExpired?.()) break;
     safety += 1;
     progress = false;
 
@@ -1249,7 +1264,7 @@ function lastChanceCompleteShortTeamsWithinGroups(teams, openSlots, schedule, co
   }
 }
 
-function completeShortFifthBoysByTier(teams, openSlots, schedule, config) {
+function completeShortFifthBoysByTier(teams, openSlots, schedule, config, budget = null) {
   const fifthGroups = Object.values(
     teams
       .filter((team) => team.baseDivision === "5th Boys" || team.division === "5th Boys")
@@ -1264,6 +1279,7 @@ function completeShortFifthBoysByTier(teams, openSlots, schedule, config) {
   for (const groupTeams of fifthGroups) {
     let safety = 0;
     while (groupTeams.some((team) => getNeed(team) > 0) && safety < 500) {
+      if (budget?.isExpired?.()) break;
       safety += 1;
       const shortTeams = groupTeams
         .filter((team) => getNeed(team) > 0)
@@ -1481,11 +1497,12 @@ function tryPlaceTrueForceFillGameForTeam(team, opponentPool, openSlots, schedul
   return false;
 }
 
-function trueForceFillShortTeamsWithinTier(teams, openSlots, schedule, config) {
+function trueForceFillShortTeamsWithinTier(teams, openSlots, schedule, config, budget = null) {
   let progress = true;
   let safety = 0;
 
   while (progress && safety < 12000) {
+    if (budget?.isExpired?.()) break;
     safety += 1;
     progress = false;
 
@@ -1594,7 +1611,7 @@ function tryPlaceUltraLateRescueGameForTeam(team, opponentPool, openSlots, sched
   return false;
 }
 
-function ultraLateRescueFillShortTeams(teams, openSlots, schedule, config) {
+function ultraLateRescueFillShortTeams(teams, openSlots, schedule, config, budget = null) {
   let progress = true;
   let safety = 0;
 
@@ -1604,6 +1621,7 @@ function ultraLateRescueFillShortTeams(teams, openSlots, schedule, config) {
   }, {});
 
   while (progress && safety < 16000) {
+    if (budget?.isExpired?.()) break;
     safety += 1;
     progress = false;
 
@@ -1651,9 +1669,10 @@ function ultraLateRescueFillShortTeams(teams, openSlots, schedule, config) {
   }
 }
 
-function forceFillShortTeamsWithinTier(teams, openSlots, schedule, config) {
+function forceFillShortTeamsWithinTier(teams, openSlots, schedule, config, budget = null) {
   let safety = 0;
   while (teams.some((team) => getNeed(team) > 0) && safety < 8000) {
+    if (budget?.isExpired?.()) break;
     safety += 1;
     const slotGroups = buildOrderedSlotGroups(openSlots.filter((slot) => !slot.used && isRegularSeasonDate(slot.date, config)));
     if (!slotGroups.length) break;
@@ -1663,11 +1682,12 @@ function forceFillShortTeamsWithinTier(teams, openSlots, schedule, config) {
   }
 }
 
-function finalUnderTargetCompletionPass(teams, openSlots, schedule, config) {
+function finalUnderTargetCompletionPass(teams, openSlots, schedule, config, budget = null) {
   let progress = true;
   let safety = 0;
 
   while (progress && safety < 12000) {
+    if (budget?.isExpired?.()) break;
     safety += 1;
     progress = false;
 
@@ -2055,7 +2075,7 @@ function buildDateMatchingCandidates(groupTeams, needs, pairCounts, config, capa
     .slice(0, 160);
 }
 
-function buildRegularSeasonDatePlanForGroup(groupTeams, dates, slotCapacityByDate, config) {
+function buildRegularSeasonDatePlanForGroup(groupTeams, dates, slotCapacityByDate, config, budget = null) {
   const needs = Object.fromEntries(groupTeams.map((team) => [team.id, getNeed(team)]));
   const totalNeed = Object.values(needs).reduce((sum, value) => sum + Number(value || 0), 0);
   if (totalNeed === 0) return [];
@@ -2076,6 +2096,7 @@ function buildRegularSeasonDatePlanForGroup(groupTeams, dates, slotCapacityByDat
   }
 
   function search(dateIndex) {
+    if (budget?.isExpired?.()) return null;
     const remainingNeed = Object.values(needs).reduce((sum, value) => sum + Number(value || 0), 0);
     if (remainingNeed === 0) return [];
     if (dateIndex >= orderedDates.length) return null;
@@ -2145,7 +2166,7 @@ function chooseSlotForPlannedRegularSeasonGame(teamA, teamB, date, openSlots, co
   return null;
 }
 
-function completeRegularSeasonWithDatePlans(teams, openSlots, schedule, config, unscheduled) {
+function completeRegularSeasonWithDatePlans(teams, openSlots, schedule, config, unscheduled, budget = null) {
   const regularDates = getRegularSeasonDates(config);
   const slotCapacityByDate = Object.fromEntries(
     regularDates.map((date) => [
@@ -2169,13 +2190,21 @@ function completeRegularSeasonWithDatePlans(teams, openSlots, schedule, config, 
     });
 
   for (const group of groups) {
+    if (budget?.isExpired?.()) {
+      unscheduled.push({
+        matchup: group.key.replace(/::/g, ' - '),
+        reason: 'Stopped exact regular-season planning to keep the app responsive.',
+        suggestion: 'The fallback schedulers will continue from the games already placed.',
+      });
+      break;
+    }
     if (!group.groupTeams.some((team) => getNeed(team) > 0)) continue;
     const groupNeed = group.groupTeams.reduce((sum, team) => sum + getNeed(team), 0);
     const maxNeed = Math.max(...group.groupTeams.map((team) => getNeed(team)));
     if (groupNeed % 2 !== 0 || maxNeed > regularDates.length || group.groupTeams.length > 8) {
       continue;
     }
-    const plan = buildRegularSeasonDatePlanForGroup(group.groupTeams, regularDates, slotCapacityByDate, config);
+    const plan = buildRegularSeasonDatePlanForGroup(group.groupTeams, regularDates, slotCapacityByDate, config, budget);
     if (!plan) {
       unscheduled.push({
         matchup: group.key.replace(/::/g, ' - '),
@@ -2206,6 +2235,7 @@ function completeRegularSeasonWithDatePlans(teams, openSlots, schedule, config, 
 
 function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreReports = []) {
   const normalized = normalizeConfig(config);
+  const budget = createSchedulerBudget(2500);
   const teams = buildTeams(normalized).map((team) => ({ ...team, baseDivision: team.division, tierLabel: '' }));
   const openSlots = buildOpenSlots(normalized);
   const schedule = [];
@@ -2237,11 +2267,12 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     tierSummary.push(...tierAssignments.summary);
   }
 
-  completeRegularSeasonWithDatePlans(teams, openSlots, schedule, normalized, unscheduled);
-  completeRegularSeasonWithinTiers(teams, openSlots, schedule, normalized);
+  completeRegularSeasonWithDatePlans(teams, openSlots, schedule, normalized, unscheduled, budget);
+  completeRegularSeasonWithinTiers(teams, openSlots, schedule, normalized, budget);
 
   let safety = 0;
   while (teams.some((team) => getNeed(team) > 0) && safety < 12000) {
+    if (budget.isExpired()) break;
     safety += 1;
     const slotGroups = buildOrderedSlotGroups(openSlots.filter((slot) => !slot.used && isRegularSeasonDate(slot.date, normalized)));
     if (!slotGroups.length) break;
@@ -2251,31 +2282,31 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
   }
 
   if (teams.some((team) => getNeed(team) > 0)) {
-    forceFillShortTeamsWithinTier(teams, openSlots, schedule, normalized);
+    forceFillShortTeamsWithinTier(teams, openSlots, schedule, normalized, budget);
   }
 
   if (teams.some((team) => getNeed(team) > 0)) {
-    trueForceFillShortTeamsWithinTier(teams, openSlots, schedule, normalized);
+    trueForceFillShortTeamsWithinTier(teams, openSlots, schedule, normalized, budget);
   }
 
   if (teams.some((team) => getNeed(team) > 0)) {
-    finalUnderTargetCompletionPass(teams, openSlots, schedule, normalized);
+    finalUnderTargetCompletionPass(teams, openSlots, schedule, normalized, budget);
   }
 
   if (teams.some((team) => getNeed(team) > 0)) {
-    ultraLateRescueFillShortTeams(teams, openSlots, schedule, normalized);
+    ultraLateRescueFillShortTeams(teams, openSlots, schedule, normalized, budget);
   }
 
   if (teams.some((team) => getNeed(team) > 0)) {
-    completeRegularSeasonWithinTiers(teams, openSlots, schedule, normalized);
+    completeRegularSeasonWithinTiers(teams, openSlots, schedule, normalized, budget);
   }
 
   if (teams.some((team) => getNeed(team) > 0)) {
-    lastChanceCompleteShortTeamsWithinGroups(teams, openSlots, schedule, normalized, { regularSeasonOnly: true });
+    lastChanceCompleteShortTeamsWithinGroups(teams, openSlots, schedule, normalized, { regularSeasonOnly: true, budget });
   }
 
   if (teams.some((team) => getNeed(team) > 0 && (team.baseDivision === "5th Boys" || team.division === "5th Boys"))) {
-    completeShortFifthBoysByTier(teams, openSlots, schedule, normalized);
+    completeShortFifthBoysByTier(teams, openSlots, schedule, normalized, budget);
   }
 
   const teamsByTier = teams.reduce((acc, team) => {
@@ -2297,11 +2328,13 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     });
   }
 
-  if (safety >= 12000 && teams.some((team) => getNeed(team) > 0)) {
+  if ((safety >= 12000 || budget.isExpired()) && teams.some((team) => getNeed(team) > 0)) {
     unscheduled.push({
       matchup: 'Regular season continuation',
-      reason: 'Stopped the January-and-later scheduler after too many pairing attempts to avoid the app freezing.',
-      suggestion: 'Try fewer enabled courts/dates, fewer target games, or use the sandbox to test a smaller continuation set first.',
+      reason: budget.isExpired()
+        ? 'Stopped the January-and-later scheduler after reaching the time budget to keep the app responsive.'
+        : 'Stopped the January-and-later scheduler after too many pairing attempts to avoid the app freezing.',
+      suggestion: 'If teams are still short, export the current setup bundle so we can inspect the exact continuation state.',
     });
   }
 
