@@ -6130,6 +6130,7 @@ function downloadJson(filename, payload) {
 
 const SETUP_STORAGE_KEY = "youth-sports-scheduler-setups-v1";
 const ADMIN_SANDBOX_STORAGE_KEY = "youth-sports-scheduler-admin-sandbox-v1";
+const PUBLISHED_STORAGE_KEY = "youth-sports-scheduler-published-v1";
 
 function loadSavedSetupsFromStorage() {
   if (typeof window === "undefined") return [];
@@ -6152,6 +6153,11 @@ function saveSavedSetupsToStorage(setups) {
 }
 
 async function savePublishedPayload(payload) {
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(PUBLISHED_STORAGE_KEY, JSON.stringify(payload));
+    } catch {}
+  }
   try {
     const res = await fetch(`/api/published-schedule?t=${Date.now()}`, {
       method: "POST",
@@ -6165,7 +6171,7 @@ async function savePublishedPayload(payload) {
     });
     return res.ok;
   } catch {
-    return false;
+    return typeof window !== "undefined";
   }
 }
 
@@ -6179,15 +6185,36 @@ async function loadPublishedPayload() {
         Pragma: "no-cache",
       },
     });
-    if (!res.ok) return null;
+    if (!res.ok) throw new Error("Could not load published payload.");
     const data = await res.json();
-    return data?.payload || null;
+    if (data?.payload) {
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(PUBLISHED_STORAGE_KEY, JSON.stringify(data.payload));
+        } catch {}
+      }
+      return data.payload;
+    }
   } catch {
-    return null;
+    if (typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem(PUBLISHED_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
   }
+
+  return null;
 }
 
 async function clearPublishedPayload() {
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.removeItem(PUBLISHED_STORAGE_KEY);
+    } catch {}
+  }
   try {
     const res = await fetch(`/api/published-schedule?t=${Date.now()}`, {
       method: "DELETE",
@@ -6199,7 +6226,7 @@ async function clearPublishedPayload() {
     });
     return res.ok;
   } catch {
-    return false;
+    return typeof window !== "undefined";
   }
 }
 
