@@ -2233,6 +2233,60 @@ function completeRegularSeasonWithDatePlans(teams, openSlots, schedule, config, 
   }
 }
 
+function completeResidualRegularSeasonDatePlans(teams, openSlots, schedule, config, unscheduled, budget = null) {
+  const regularDates = getRegularSeasonDates(config);
+  const slotCapacityByDate = Object.fromEntries(
+    regularDates.map((date) => [
+      date,
+      openSlots.filter((slot) => !slot.used && slot.date === date).length,
+    ])
+  );
+  const teamsByTier = teams.reduce((acc, team) => {
+    const key = team.division;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(team);
+    return acc;
+  }, {});
+
+  const groups = Object.entries(teamsByTier)
+    .map(([key, groupTeams]) => ({ key, groupTeams }))
+    .filter(({ groupTeams }) => groupTeams.some((team) => getNeed(team) > 0))
+    .map((group) => ({
+      ...group,
+      groupNeed: group.groupTeams.reduce((sum, team) => sum + getNeed(team), 0),
+    }))
+    .filter((group) =>
+      group.groupNeed > 0 &&
+      group.groupNeed <= 8 &&
+      group.groupNeed % 2 === 0 &&
+      group.groupTeams.length <= 10
+    )
+    .sort((a, b) => a.groupNeed - b.groupNeed);
+
+  for (const group of groups) {
+    if (budget?.isExpired?.()) break;
+    const plan = buildRegularSeasonDatePlanForGroup(group.groupTeams, regularDates, slotCapacityByDate, config, budget);
+    if (!plan?.length) continue;
+
+    let placedAny = false;
+    for (const item of plan) {
+      const slot = chooseSlotForPlannedRegularSeasonGame(item.teamA, item.teamB, item.date, openSlots, config, teams);
+      if (!slot) continue;
+      scheduleGame(schedule, slot, item.teamA, item.teamB, { tier: item.teamA.tierLabel || item.teamB.tierLabel || '' });
+      slotCapacityByDate[item.date] = Math.max(0, Number(slotCapacityByDate[item.date] || 0) - 1);
+      placedAny = true;
+    }
+
+    if (placedAny) {
+      unscheduled.push({
+        matchup: group.key.replace(/::/g, ' - '),
+        reason: 'Residual regular-season cleanup used an exact matchup/date plan.',
+        suggestion: 'This tier needed a late exact-plan rescue to finish remaining games.',
+      });
+    }
+  }
+}
+
 function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreReports = []) {
   const normalized = normalizeConfig(config);
   const budget = createSchedulerBudget(2500);
@@ -2307,6 +2361,10 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
 
   if (teams.some((team) => getNeed(team) > 0 && (team.baseDivision === "5th Boys" || team.division === "5th Boys"))) {
     completeShortFifthBoysByTier(teams, openSlots, schedule, normalized, budget);
+  }
+
+  if (teams.some((team) => getNeed(team) > 0)) {
+    completeResidualRegularSeasonDatePlans(teams, openSlots, schedule, normalized, unscheduled, budget);
   }
 
   const teamsByTier = teams.reduce((acc, team) => {
@@ -12071,6 +12129,5 @@ function buildDivisionRepeatMath(config) {
     };
   });
 }
-
 
 
