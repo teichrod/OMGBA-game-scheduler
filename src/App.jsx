@@ -6132,13 +6132,13 @@ const SETUP_STORAGE_KEY = "youth-sports-scheduler-setups-v1";
 const ADMIN_SANDBOX_STORAGE_KEY = "youth-sports-scheduler-admin-sandbox-v1";
 const PUBLISHED_STORAGE_KEY = "youth-sports-scheduler-published-v1";
 
-function shouldUsePublishedLocalFallback() {
-  if (typeof window === "undefined") return false;
+function readPublishedPayloadFromLocalStorage() {
+  if (typeof window === "undefined") return null;
   try {
-    const params = new URLSearchParams(window.location.search || "");
-    return (params.get("view") || "").toLowerCase() === "public";
+    const raw = window.localStorage.getItem(PUBLISHED_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -6195,7 +6195,7 @@ async function loadPublishedPayload() {
         Pragma: "no-cache",
       },
     });
-    if (!res.ok) throw new Error("Could not load published payload.");
+    if (!res.ok) return null;
     const data = await res.json();
     if (data?.payload) {
       if (typeof window !== "undefined") {
@@ -6206,14 +6206,7 @@ async function loadPublishedPayload() {
       return data.payload;
     }
   } catch {
-    if (shouldUsePublishedLocalFallback()) {
-      try {
-        const raw = window.localStorage.getItem(PUBLISHED_STORAGE_KEY);
-        return raw ? JSON.parse(raw) : null;
-      } catch {
-        return null;
-      }
-    }
+    return null;
   }
 
   return null;
@@ -7538,7 +7531,8 @@ export default function App() {
 
   async function refreshPublishedSnapshot() {
     try {
-      const published = normalizePublishedStore(await loadPublishedPayload());
+      const loadedPayload = await loadPublishedPayload();
+      const published = normalizePublishedStore(loadedPayload || readPublishedPayloadFromLocalStorage());
       setPublishedSnapshot(published);
       if (!isPublicMode) {
         setPublishedMeta(published.current?.meta || null);
@@ -7557,7 +7551,8 @@ export default function App() {
 
     async function loadPublicSchedule() {
       if (!isPublicMode) return;
-      const published = normalizePublishedStore(await loadPublishedPayload());
+      const loadedPayload = await loadPublishedPayload();
+      const published = normalizePublishedStore(loadedPayload || readPublishedPayloadFromLocalStorage());
       const currentSeason = published.current;
       if (cancelled) return;
       setPublishedSnapshot(published);
