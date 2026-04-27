@@ -6132,6 +6132,16 @@ const SETUP_STORAGE_KEY = "youth-sports-scheduler-setups-v1";
 const ADMIN_SANDBOX_STORAGE_KEY = "youth-sports-scheduler-admin-sandbox-v1";
 const PUBLISHED_STORAGE_KEY = "youth-sports-scheduler-published-v1";
 
+function shouldUsePublishedLocalFallback() {
+  if (typeof window === "undefined") return false;
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    return (params.get("view") || "").toLowerCase() === "public";
+  } catch {
+    return false;
+  }
+}
+
 function loadSavedSetupsFromStorage() {
   if (typeof window === "undefined") return [];
   try {
@@ -6196,7 +6206,7 @@ async function loadPublishedPayload() {
       return data.payload;
     }
   } catch {
-    if (typeof window !== "undefined") {
+    if (shouldUsePublishedLocalFallback()) {
       try {
         const raw = window.localStorage.getItem(PUBLISHED_STORAGE_KEY);
         return raw ? JSON.parse(raw) : null;
