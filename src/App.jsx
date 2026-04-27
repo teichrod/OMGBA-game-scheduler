@@ -7521,26 +7521,6 @@ export default function App() {
   }, [isPublicMode]);
 
   useEffect(() => {
-    if (!isPublicMode) return;
-    if (!publicSeasonOptions.length) return;
-    const optionIds = publicSeasonOptions.map((entry) => entry.id);
-    if (!optionIds.includes(selectedPublicSeasonId)) {
-      setSelectedPublicSeasonId(publicSeasonOptions[0].id);
-    }
-  }, [isPublicMode, publicSeasonOptions, selectedPublicSeasonId]);
-
-  useEffect(() => {
-    if (!isPublicMode) return;
-    const selectedSeason = publicSeasonOptions.find((entry) => entry.id === selectedPublicSeasonId)?.season
-      || publicSeasonOptions[0]?.season
-      || null;
-    setResult(selectedSeason?.result || null);
-    setPublishedMeta(selectedSeason?.meta || null);
-    setScoreReports(selectedSeason?.scoreReports || []);
-    setTournamentResult(selectedSeason?.tournament || null);
-  }, [isPublicMode, selectedPublicSeasonId, publicSeasonOptions]);
-
-  useEffect(() => {
     if (isPublicMode) return undefined;
 
     const updateIsAdminCompact = () => {
@@ -7833,6 +7813,25 @@ export default function App() {
     }
     return options;
   }, [publishedSnapshot]);
+  useEffect(() => {
+    if (!isPublicMode) return;
+    if (!publicSeasonOptions.length) return;
+    const optionIds = publicSeasonOptions.map((entry) => entry.id);
+    if (!optionIds.includes(selectedPublicSeasonId)) {
+      setSelectedPublicSeasonId(publicSeasonOptions[0].id);
+    }
+  }, [isPublicMode, publicSeasonOptions, selectedPublicSeasonId]);
+
+  useEffect(() => {
+    if (!isPublicMode) return;
+    const selectedSeason = publicSeasonOptions.find((entry) => entry.id === selectedPublicSeasonId)?.season
+      || publicSeasonOptions[0]?.season
+      || null;
+    setResult(selectedSeason?.result || null);
+    setPublishedMeta(selectedSeason?.meta || null);
+    setScoreReports(selectedSeason?.scoreReports || []);
+    setTournamentResult(selectedSeason?.tournament || null);
+  }, [isPublicMode, selectedPublicSeasonId, publicSeasonOptions]);
   const displayedTournament = isPublicMode
     ? tournamentResult
     : tournamentResult || publishedSnapshot?.current?.tournament || null;
@@ -9618,11 +9617,8 @@ export default function App() {
             <div style={styles.publicHeroTop}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "start" }}>
                 <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontSize: 12, color: "#1d4ed8", fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                    Public League Hub
-                  </div>
                   <div style={{ fontSize: isMobilePublic ? 24 : 32, fontWeight: 800, color: "#0f172a" }}>
-                    COURTrax {config.seasonYear}-{String(config.seasonYear + 1).slice(-2)}
+                    NWML {config.seasonYear}-{String(config.seasonYear + 1).slice(-2)}
                   </div>
                   <div style={{ color: "#334155", fontSize: 15, maxWidth: 720 }}>
                     Follow the season, track your team, check standings, and report final scores without digging through spreadsheets.
@@ -9639,11 +9635,6 @@ export default function App() {
                       Completed {publishedMeta.seasonCompletedAt}
                     </span>
                   ) : null}
-                  <div style={styles.publicChipRow}>
-                    <span style={{ ...styles.publicQuickChip, background: "#dbeafe", borderColor: "#bfdbfe", color: "#1d4ed8" }}>Schedule</span>
-                    <span style={{ ...styles.publicQuickChip, background: "#dcfce7", borderColor: "#bbf7d0", color: "#166534" }}>Standings</span>
-                    <span style={{ ...styles.publicQuickChip, background: "#fef3c7", borderColor: "#fde68a", color: "#92400e" }}>Score Reporting</span>
-                  </div>
                 </div>
               </div>
               <div style={styles.publicHeroStats}>
@@ -11128,19 +11119,20 @@ export default function App() {
                                       ? styles.publicStandingsRowTop
                                       : (isSelectedTeam ? styles.publicStandingsRowSelected : null);
                                     return (
-                                    <tr key={`${group.key}-${row.team}`} style={rowStyle || undefined}>
-                                      <td style={{ ...styles.td, textAlign: "center", fontWeight: 800, color: index < 3 ? "#1d4ed8" : "#0f172a" }}>{index + 1}</td>
-                                      <td style={{ ...styles.td, textAlign: "left", fontWeight: isSelectedTeam ? 800 : 600, color: isSelectedTeam ? "#1d4ed8" : "#0f172a" }}>{row.team}</td>
-                                      <td style={{ ...styles.td, textAlign: "center" }}>{row.wins}</td>
-                                      <td style={{ ...styles.td, textAlign: "center" }}>{row.losses}</td>
-                                      <td style={{ ...styles.td, textAlign: "center" }}>{row.ties}</td>
-                                      <td style={{ ...styles.td, textAlign: "center" }}>{(row.winPct || 0).toFixed(3)}</td>
-                                      <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsFor}</td>
-                                      <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsAgainst}</td>
-                                      <td style={{ ...styles.td, textAlign: "center" }}>{row.pointDiff}</td>
-                                      <td style={{ ...styles.td, textAlign: "center", fontWeight: 700 }}>{(row.performanceRating || 0).toFixed(1)}</td>
-                                    </tr>
-                                  )})}
+                                      <tr key={`${group.key}-${row.team}`} style={rowStyle || undefined}>
+                                        <td style={{ ...styles.td, textAlign: "center", fontWeight: 800, color: index < 3 ? "#1d4ed8" : "#0f172a" }}>{index + 1}</td>
+                                        <td style={{ ...styles.td, textAlign: "left", fontWeight: isSelectedTeam ? 800 : 600, color: isSelectedTeam ? "#1d4ed8" : "#0f172a" }}>{row.team}</td>
+                                        <td style={{ ...styles.td, textAlign: "center" }}>{row.wins}</td>
+                                        <td style={{ ...styles.td, textAlign: "center" }}>{row.losses}</td>
+                                        <td style={{ ...styles.td, textAlign: "center" }}>{row.ties}</td>
+                                        <td style={{ ...styles.td, textAlign: "center" }}>{(row.winPct || 0).toFixed(3)}</td>
+                                        <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsFor}</td>
+                                        <td style={{ ...styles.td, textAlign: "center" }}>{row.pointsAgainst}</td>
+                                        <td style={{ ...styles.td, textAlign: "center" }}>{row.pointDiff}</td>
+                                        <td style={{ ...styles.td, textAlign: "center", fontWeight: 700 }}>{(row.performanceRating || 0).toFixed(1)}</td>
+                                      </tr>
+                                    );
+                                  })}
                                   {!rows.length ? (
                                     <tr><td style={styles.td} colSpan={10}>No verified scores yet.</td></tr>
                                   ) : null}
