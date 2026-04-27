@@ -15,7 +15,7 @@ const DIVISIONS = [
   "7th Boys",
   "8th Boys",
   "5th/6th Girls",
-  "7th/8th Girls",
+  "7th/89th Girls",
 ];
 
 const DEFAULT_COURTS = [
