@@ -677,7 +677,7 @@ function getConfiguredPreseasonEndDate(config) {
   return String(config?.preseasonEndDate || fallback);
 }
 
-function createSchedulerBudget(maxMs = 2500) {
+function createSchedulerBudget(maxMs = 6000) {
   const startedAt = Date.now();
   return {
     startedAt,
@@ -765,7 +765,7 @@ function buildRegularSeasonTierAssignments(teams, standingsRows, config = DEFAUL
   const count = teams.length;
   if (count < 12) {
     return {
-      groups: [{ key: teams[0]?.baseDivision || teams[0]?.division || '', label: '', teams: [...teams] }],
+      groups: [{ key: teams[0]?.baseDivision || teams[0]?.division || '', label: '', teams: teams.map((team) => ({ ...team, regularSeasonGroupSize: teams.length })) }],
       summary: [],
     };
   }
@@ -1983,7 +1983,7 @@ function hadPreseasonMeetingBetween(teamA, teamB, config) {
 
 function canAddPairUnderRepeatPolicy(teamA, teamB, config, plannedCount = 0, slot = null) {
   const currentCount = getPairCountBetween(teamA, teamB) + Number(plannedCount || 0);
-  const repeatLimit = getAllowedRepeatLimit(config, teamA?.division || '');
+  const repeatLimit = getAllowedRepeatLimit(config, teamA?.division || '', teamA, teamB);
   if (currentCount >= repeatLimit) return false;
   if (!slot || !isRegularSeasonDate(slot.date, config)) return true;
   if (currentCount <= 0) return true;
@@ -2201,7 +2201,7 @@ function completeRegularSeasonWithDatePlans(teams, openSlots, schedule, config, 
     if (!group.groupTeams.some((team) => getNeed(team) > 0)) continue;
     const groupNeed = group.groupTeams.reduce((sum, team) => sum + getNeed(team), 0);
     const maxNeed = Math.max(...group.groupTeams.map((team) => getNeed(team)));
-    if (groupNeed % 2 !== 0 || maxNeed > regularDates.length || group.groupTeams.length > 8) {
+    if (groupNeed % 2 !== 0 || maxNeed > regularDates.length || group.groupTeams.length > 10) {
       continue;
     }
     const plan = buildRegularSeasonDatePlanForGroup(group.groupTeams, regularDates, slotCapacityByDate, config, budget);
@@ -2257,9 +2257,9 @@ function completeResidualRegularSeasonDatePlans(teams, openSlots, schedule, conf
     }))
     .filter((group) =>
       group.groupNeed > 0 &&
-      group.groupNeed <= 8 &&
+      group.groupNeed <= 10 &&
       group.groupNeed % 2 === 0 &&
-      group.groupTeams.length <= 10
+      group.groupTeams.length <= 12
     )
     .sort((a, b) => a.groupNeed - b.groupNeed);
 
@@ -2287,9 +2287,139 @@ function completeResidualRegularSeasonDatePlans(teams, openSlots, schedule, conf
   }
 }
 
+function restoreMutableTeamState(target, snapshot) {
+  for (const key of Object.keys(target)) {
+    delete target[key];
+  }
+  Object.assign(target, cloneTeamState(snapshot));
+}
+function buildTinyResidualCandidates(team, groupTeams, openSlots, schedule, config, allTeams) {
+  const optionSets = [
+    { ignoreTimeVariety: false, ignoreEarlyCap: false },
+    { ignoreTimeVariety: true, ignoreEarlyCap: false },
+    { ignoreTimeVariety: true, ignoreEarlyCap: true },
+  ];
+  const candidates = [];
+  const seen = new Set();
+  const opponents = groupTeams
+    .filter((opponent) => opponent.id !== team.id && getNeed(opponent) > 0)
+    .sort((a, b) => {
+      const repeatDiff = (team.opponents?.[a.name] || 0) - (team.opponents?.[b.name] || 0);
+      if (repeatDiff !== 0) return repeatDiff;
+      const needDiff = getNeed(b) - getNeed(a);
+      if (needDiff !== 0) return needDiff;
+      return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true });
+    });
+  const slots = openSlots
+    .filter((slot) => !slot.used && isRegularSeasonDate(slot.date, config))
+    .sort((a, b) => {
+      const aDeficit = getDateMinimumDeficit(schedule, a.date, config);
+      const bDeficit = getDateMinimumDeficit(schedule, b.date, config);
+      if (bDeficit !== aDeficit) return bDeficit - aDeficit;
+      return compareSlotLike(a, b);
+    });
+  for (const opponent of opponents) {
+    for (const slot of slots) {
+      for (const options of optionSets) {
+        if (!canPairInSlot(team, opponent, slot, config, { ...options, allTeams })) continue;
+        const key = [opponent.id, slot.date, slot.time, slot.court].join('|');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        candidates.push({
+          teamA: team,
+          teamB: opponent,
+          slot,
+          score: [
+            -getDateMinimumDeficit(schedule, slot.date, config),
+            parseShortDate(slot.date),
+            getTimeIndex(slot.time),
+            team.opponents?.[opponent.name] || 0,
+            slotPenalty(team, opponent, slot, config),
+          ],
+        });
+      }
+    }
+  }
+  return candidates.sort((a, b) => {
+    for (let i = 0; i < a.score.length; i += 1) {
+      if (a.score[i] !== b.score[i]) return a.score[i] - b.score[i];
+    }
+    return 0;
+  });
+}
+function completeTinyResidualTierExactly(teams, openSlots, schedule, config, budget = null) {
+  const tiers = Object.values(
+    teams.reduce((acc, team) => {
+      const key = team.division;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(team);
+      return acc;
+    }, {})
+  );
+  let changed = false;
+  for (const groupTeams of tiers) {
+    const totalNeed = groupTeams.reduce((sum, team) => sum + getNeed(team), 0);
+    if (totalNeed <= 0 || totalNeed % 2 !== 0 || totalNeed > 6) continue;
+    if (budget?.isExpired?.()) break;
+    const allTeams = teams.map((team) => cloneTeamState(team));
+    const allTeamMap = Object.fromEntries(allTeams.map((team) => [team.name, team]));
+    const workingGroup = groupTeams.map((team) => allTeamMap[team.name]).filter(Boolean);
+    const workingSlots = openSlots.map((slot) => ({ ...slot }));
+    const workingSchedule = schedule.map((game) => ({ ...game }));
+    const originalLength = workingSchedule.length;
+    const search = () => {
+      if (budget?.isExpired?.()) return false;
+      const activeGroup = workingGroup.filter((team) => getNeed(team) > 0);
+      if (!activeGroup.length) return true;
+      const ranked = activeGroup
+        .map((team) => ({
+          team,
+          candidates: buildTinyResidualCandidates(team, workingGroup, workingSlots, workingSchedule, config, allTeams),
+        }))
+        .sort((a, b) => {
+          if (a.candidates.length !== b.candidates.length) return a.candidates.length - b.candidates.length;
+          const needDiff = getNeed(b.team) - getNeed(a.team);
+          if (needDiff !== 0) return needDiff;
+          return String(a.team.name || '').localeCompare(String(b.team.name || ''), undefined, { numeric: true });
+        });
+      const lead = ranked[0];
+      if (!lead || !lead.candidates.length) return false;
+      for (const candidate of lead.candidates) {
+        const teamASnapshot = cloneTeamState(candidate.teamA);
+        const teamBSnapshot = cloneTeamState(candidate.teamB);
+        const slotUsed = candidate.slot.used;
+        const scheduleLength = workingSchedule.length;
+        scheduleGame(workingSchedule, candidate.slot, candidate.teamA, candidate.teamB, {
+          tier: candidate.teamA.tierLabel || candidate.teamB.tierLabel || '',
+        });
+        if (search()) return true;
+        restoreMutableTeamState(candidate.teamA, teamASnapshot);
+        restoreMutableTeamState(candidate.teamB, teamBSnapshot);
+        candidate.slot.used = slotUsed;
+        workingSchedule.length = scheduleLength;
+      }
+      return false;
+    };
+    if (!search()) continue;
+    const addedGames = workingSchedule.slice(originalLength);
+    for (const game of addedGames) {
+      const slot = openSlots.find((entry) => !entry.used && entry.date === game.date && entry.time === game.time && entry.court === game.court);
+      const homeTeam = teams.find((team) => team.name === game.home);
+      const awayTeam = teams.find((team) => team.name === game.away);
+      if (!slot || !homeTeam || !awayTeam) continue;
+      scheduleGame(schedule, slot, homeTeam, awayTeam, {
+        preserveHomeAway: true,
+        tier: game.tier || homeTeam.tierLabel || awayTeam.tierLabel || '',
+      });
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreReports = []) {
   const normalized = normalizeConfig(config);
-  const budget = createSchedulerBudget(2500);
+  const budget = createSchedulerBudget(6000);
   const teams = buildTeams(normalized).map((team) => ({ ...team, baseDivision: team.division, tierLabel: '' }));
   const openSlots = buildOpenSlots(normalized);
   const schedule = [];
@@ -2367,6 +2497,9 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     completeResidualRegularSeasonDatePlans(teams, openSlots, schedule, normalized, unscheduled, budget);
   }
 
+  if (teams.some((team) => getNeed(team) > 0)) {
+    completeTinyResidualTierExactly(teams, openSlots, schedule, normalized, budget);
+  }
   const teamsByTier = teams.reduce((acc, team) => {
     const key = team.division;
     if (!acc[key]) acc[key] = [];
@@ -3024,12 +3157,24 @@ function applyGame(team, slot, opponentName, isHome) {
   team.maxSameTimeSlot = maxSameTimeSlot(team.gamesByTime);
 }
 
-function getAllowedRepeatLimit(config, division) {
+function getAllowedRepeatLimit(config, division, teamA = null, teamB = null, schedule = []) {
   const baseDivision = String(division || '').split('::')[0];
-  const count = Number(config.divisions[baseDivision] || config.divisions[division] || 0);
+  const count = Number(
+    teamA?.regularSeasonGroupSize
+    || teamB?.regularSeasonGroupSize
+    || inferRegularSeasonGroupSize(config, division, schedule)
+    || config.divisions?.[baseDivision]
+    || config.divisions?.[division]
+    || 0
+  );
   const opponentsPerTeam = Math.max(0, count - 1);
   if (opponentsPerTeam === 0) return 0;
-  return 2;
+  const targetGames = Math.max(
+    Number(teamA?.targetGames || 0),
+    Number(teamB?.targetGames || 0),
+    Number(config?.divisionGames?.[baseDivision] || config?.divisionGames?.[division] || 0)
+  );
+  return targetGames > opponentsPerTeam ? 2 : 1;
 }
 
 function violatesTimeVariety(team, slotTime) {
@@ -3845,6 +3990,24 @@ function findBestDivisionCompletionCandidate(division, teams, slotGroups, config
   }
 
   return bestDesperation;
+}
+
+function inferRegularSeasonGroupSize(config, division, schedule = []) {
+  const divisionKey = String(division || "");
+  if (!divisionKey) return 0;
+  const divisionGames = (Array.isArray(schedule) ? schedule : []).filter((game) => game?.division === divisionKey);
+  const teamNames = new Set();
+  for (const game of divisionGames) {
+    if (game?.home) teamNames.add(game.home);
+    if (game?.away) teamNames.add(game.away);
+  }
+  if (teamNames.size > 0) return teamNames.size;
+  const baseDivision = divisionKey.split("::")[0];
+  const baseCount = Number(config?.divisions?.[baseDivision] || config?.divisions?.[divisionKey] || 0);
+  if (!divisionKey.includes("::")) return baseCount;
+  const lowerHalf = Math.floor(baseCount / 2);
+  const upperHalf = Math.ceil(baseCount / 2);
+  return divisionKey.endsWith("Division 1") ? lowerHalf : upperHalf;
 }
 
 function canStillUseTeamOnDate(team, slot, config, options = {}) {
@@ -5099,7 +5262,7 @@ function getRepeatedOpponentViolations(schedule, config) {
 
   for (const [key, count] of Object.entries(pairCounts)) {
     const [division, teamA, teamB] = key.split("||");
-    const allowed = getAllowedRepeatLimit(config, division);
+    const allowed = getAllowedRepeatLimit(config, division, null, null, schedule);
     const preseasonCount = preseasonPairCounts[key] || 0;
     const violatesRepeatCap = count > allowed;
     const violatesPreseasonRepeatRule = count > 1 && preseasonCount <= 0;
@@ -12129,5 +12292,8 @@ function buildDivisionRepeatMath(config) {
     };
   });
 }
+
+
+
 
 
