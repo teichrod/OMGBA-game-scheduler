@@ -2521,6 +2521,290 @@ function completeTinyResidualTierExactly(teams, openSlots, schedule, config, bud
   return changed;
 }
 
+function getPhaseDates(config, phase) {
+  return getEnabledGameDates(config).filter((date) => (
+    phase === 'preseason' ? isPreseasonDate(date, config) : isRegularSeasonDate(date, config)
+  ));
+}
+
+function canPlanPhasePair(teamA, teamB, pairCounts, config, phase) {
+  if (!teamA || !teamB || teamA.id === teamB.id || teamA.division !== teamB.division) return false;
+  if (phase === 'regular') {
+    return canPlanRegularSeasonPair(teamA, teamB, pairCounts, config);
+  }
+
+  const key = [teamA.id, teamB.id].sort().join('||');
+  const plannedCount = Number(pairCounts[key] || 0);
+  const currentCount = getPairCountBetween(teamA, teamB) + plannedCount;
+  const repeatLimit = getAllowedRepeatLimit(config, teamA?.division || '', teamA, teamB);
+  return currentCount < repeatLimit;
+}
+
+function buildPhaseDateMatchingCandidates(groupTeams, needs, pairCounts, config, capacity, phase) {
+  const activeTeams = groupTeams
+    .filter((team) => Number(needs[team.id] || 0) > 0)
+    .sort((a, b) => {
+      const needDiff = Number(needs[b.id] || 0) - Number(needs[a.id] || 0);
+      if (needDiff !== 0) return needDiff;
+      return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true });
+    });
+
+  const candidates = [];
+  const seen = new Set();
+
+  function pushCandidate(games) {
+    const signature = games
+      .map((game) => [game.teamA.id, game.teamB.id].sort().join('~'))
+      .sort()
+      .join('|');
+    if (seen.has(signature)) return;
+    seen.add(signature);
+    candidates.push(games.map((game) => ({ ...game })));
+  }
+
+  function search(startIndex, usedIds, current) {
+    pushCandidate(current);
+    if (current.length >= capacity) return;
+
+    for (let i = startIndex; i < activeTeams.length; i += 1) {
+      const team = activeTeams[i];
+      if ((needs[team.id] || 0) <= 0 || usedIds.has(team.id)) continue;
+
+      for (let j = i + 1; j < activeTeams.length; j += 1) {
+        const opponent = activeTeams[j];
+        if ((needs[opponent.id] || 0) <= 0 || usedIds.has(opponent.id)) continue;
+        if (!canPlanPhasePair(team, opponent, pairCounts, config, phase)) continue;
+
+        usedIds.add(team.id);
+        usedIds.add(opponent.id);
+        current.push({ teamA: team, teamB: opponent });
+        search(i + 1, usedIds, current);
+        current.pop();
+        usedIds.delete(team.id);
+        usedIds.delete(opponent.id);
+      }
+    }
+  }
+
+  search(0, new Set(), []);
+
+  return candidates
+    .sort((a, b) => {
+      if (b.length !== a.length) return b.length - a.length;
+      const aNeedScore = a.reduce((sum, game) => sum + Number(needs[game.teamA.id] || 0) + Number(needs[game.teamB.id] || 0), 0);
+      const bNeedScore = b.reduce((sum, game) => sum + Number(needs[game.teamA.id] || 0) + Number(needs[game.teamB.id] || 0), 0);
+      return bNeedScore - aNeedScore;
+    })
+    .slice(0, 120);
+}
+
+function buildPhaseDatePlanForGroup(groupTeams, dates, slotCapacityByDate, config, phase, budget = null) {
+  const needs = Object.fromEntries(groupTeams.map((team) => [team.id, getNeed(team)]));
+  const totalNeed = Object.values(needs).reduce((sum, value) => sum + Number(value || 0), 0);
+  if (totalNeed === 0) return [];
+  if (totalNeed % 2 !== 0) return null;
+
+  const pairCounts = {};
+  const orderedDates = [...dates].sort((a, b) => parseShortDate(a) - parseShortDate(b));
+  const perDateLimit = Math.floor(groupTeams.length / 2);
+
+  function hasEnoughFutureDates(dateIndex) {
+    const remainingDates = Math.max(0, orderedDates.length - dateIndex);
+    return groupTeams.every((team) => Number(needs[team.id] || 0) <= remainingDates);
+  }
+
+  function remainingSlotCapacity(dateIndex) {
+    return orderedDates
+      .slice(dateIndex)
+      .reduce((sum, date) => sum + Math.max(0, Math.min(perDateLimit, Number(slotCapacityByDate[date] || 0))), 0);
+  }
+
+  function search(dateIndex) {
+    if (budget?.isExpired?.()) return null;
+    const remainingNeed = Object.values(needs).reduce((sum, value) => sum + Number(value || 0), 0);
+    if (remainingNeed === 0) return [];
+    if (dateIndex >= orderedDates.length) return null;
+    if (remainingNeed > remainingSlotCapacity(dateIndex) * 2) return null;
+    if (!hasEnoughFutureDates(dateIndex)) return null;
+
+    const date = orderedDates[dateIndex];
+    const capacity = Math.min(
+      Math.floor(remainingNeed / 2),
+      Math.max(0, Math.min(perDateLimit, Number(slotCapacityByDate[date] || 0)))
+    );
+    const candidates = buildPhaseDateMatchingCandidates(groupTeams, needs, pairCounts, config, capacity, phase);
+
+    for (const candidate of candidates) {
+      for (const game of candidate) {
+        const key = [game.teamA.id, game.teamB.id].sort().join('||');
+        pairCounts[key] = Number(pairCounts[key] || 0) + 1;
+        needs[game.teamA.id] -= 1;
+        needs[game.teamB.id] -= 1;
+      }
+
+      const next = search(dateIndex + 1);
+      if (next) {
+        return [
+          ...candidate.map((game) => ({ date, teamA: game.teamA, teamB: game.teamB })),
+          ...next,
+        ];
+      }
+
+      for (const game of candidate) {
+        const key = [game.teamA.id, game.teamB.id].sort().join('||');
+        pairCounts[key] -= 1;
+        needs[game.teamA.id] += 1;
+        needs[game.teamB.id] += 1;
+      }
+    }
+
+    return null;
+  }
+
+  return search(0);
+}
+
+function chooseSlotForPlannedPhaseGame(teamA, teamB, date, openSlots, config, allTeams, phase) {
+  const dateSlots = openSlots
+    .filter((slot) => !slot.used && slot.date === date && (phase === 'preseason' ? isPreseasonDate(slot.date, config) : isRegularSeasonDate(slot.date, config)))
+    .sort((a, b) => {
+      const penaltyDiff = slotPenalty(teamA, teamB, a, config) - slotPenalty(teamA, teamB, b, config);
+      if (penaltyDiff !== 0) return penaltyDiff;
+      return compareSlotLike(a, b);
+    });
+
+  const optionSets = [
+    { ignoreTimeVariety: false, ignoreEarlyCap: false },
+    { ignoreTimeVariety: true, ignoreEarlyCap: false },
+    { ignoreTimeVariety: true, ignoreEarlyCap: true },
+  ];
+
+  for (const options of optionSets) {
+    for (const slot of dateSlots) {
+      if (canPairInSlot(teamA, teamB, slot, config, { ...options, allTeams })) {
+        return slot;
+      }
+    }
+  }
+
+  return null;
+}
+
+function scorePlannedGameForSlot(item, slot, schedule, config) {
+  const repeatCount = item.teamA.opponents?.[item.teamB.name] || 0;
+  const dateDeficit = getDateMinimumDeficit(schedule, slot.date, config);
+  const needScore = getNeed(item.teamA) + getNeed(item.teamB);
+  const fairnessPenalty = fairnessScore(item.teamA) + fairnessScore(item.teamB);
+  return (needScore * 1600)
+    + (dateDeficit * 2400)
+    - (item.roundIndex * 180)
+    - (slotPenalty(item.teamA, item.teamB, slot, config) * 4)
+    - fairnessPenalty
+    - (repeatCount * 600);
+}
+
+function buildPlannedGamesForGroups(groups, dates, slotCapacityByDate, config, phase, unscheduled, budget = null) {
+  const plannedGames = [];
+
+  const orderedGroups = [...groups].sort((a, b) => {
+    const needA = a.teams.reduce((sum, team) => sum + getNeed(team), 0);
+    const needB = b.teams.reduce((sum, team) => sum + getNeed(team), 0);
+    if (needB !== needA) return needB - needA;
+    return String(a.key || '').localeCompare(String(b.key || ''));
+  });
+
+  for (const group of orderedGroups) {
+    if (budget?.isExpired?.()) break;
+    const plan = buildPhaseDatePlanForGroup(group.teams, dates, slotCapacityByDate, config, phase, budget);
+    if (!plan) {
+      const shortTeams = group.teams
+        .filter((team) => getNeed(team) > 0)
+        .map((team) => `${team.name} (${team.gamesScheduled}/${team.targetGames})`);
+      unscheduled.push({
+        matchup: group.key.replace(/::/g, ' - '),
+        reason: `Could not build a complete ${phase} matchup/date plan for this group.`,
+        suggestion: shortTeams.join('; '),
+      });
+      continue;
+    }
+
+    const roundBuckets = [];
+    for (const item of plan) {
+      let placed = false;
+      for (const bucket of roundBuckets) {
+        if (bucket.date !== item.date) continue;
+        if (bucket.teamIds.has(item.teamA.id) || bucket.teamIds.has(item.teamB.id)) continue;
+        bucket.games.push(item);
+        bucket.teamIds.add(item.teamA.id);
+        bucket.teamIds.add(item.teamB.id);
+        placed = true;
+        break;
+      }
+      if (!placed) {
+        roundBuckets.push({
+          date: item.date,
+          teamIds: new Set([item.teamA.id, item.teamB.id]),
+          games: [item],
+        });
+      }
+    }
+
+    roundBuckets.forEach((bucket, roundIndex) => {
+      for (const game of bucket.games) {
+        plannedGames.push({
+          ...game,
+          groupKey: group.key,
+          tier: group.label || game.teamA.tierLabel || game.teamB.tierLabel || '',
+          roundIndex,
+          phase,
+        });
+        slotCapacityByDate[game.date] = Math.max(0, Number(slotCapacityByDate[game.date] || 0) - 1);
+      }
+    });
+  }
+
+  return plannedGames.sort((a, b) => compareSlotLike(a, b));
+}
+
+function placePlannedGames(plannedGames, openSlots, schedule, teams, config, phase) {
+  const byDate = plannedGames.reduce((acc, item) => {
+    if (!acc[item.date]) acc[item.date] = [];
+    acc[item.date].push(item);
+    return acc;
+  }, {});
+
+  for (const date of Object.keys(byDate).sort((a, b) => parseShortDate(a) - parseShortDate(b))) {
+    const items = byDate[date];
+    items.sort((a, b) => {
+      const aLegal = openSlots.filter((slot) => chooseSlotForPlannedPhaseGame(a.teamA, a.teamB, date, [slot], config, teams, phase)).length;
+      const bLegal = openSlots.filter((slot) => chooseSlotForPlannedPhaseGame(b.teamA, b.teamB, date, [slot], config, teams, phase)).length;
+      if (aLegal !== bLegal) return aLegal - bLegal;
+      const needDiff = (getNeed(b.teamA) + getNeed(b.teamB)) - (getNeed(a.teamA) + getNeed(a.teamB));
+      if (needDiff !== 0) return needDiff;
+      return a.roundIndex - b.roundIndex;
+    });
+
+    for (const item of items) {
+      const slot = chooseSlotForPlannedPhaseGame(item.teamA, item.teamB, date, openSlots, config, teams, phase);
+      if (!slot) continue;
+      scheduleGame(schedule, slot, item.teamA, item.teamB, { tier: item.tier });
+    }
+  }
+}
+
+function finalizePhaseSchedule(baseSchedule, config, unscheduled, finishTrace, labelPrefix) {
+  let improvedSchedule = baseSchedule.map((game) => ({ ...game }));
+  finishTrace.push(buildFinishTraceEntry(`${labelPrefix} start`, improvedSchedule, config));
+  improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+  finishTrace.push(buildFinishTraceEntry(`${labelPrefix} repair missing`, improvedSchedule, config));
+  improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+  finishTrace.push(buildFinishTraceEntry(`${labelPrefix} compact earlier`, improvedSchedule, config));
+  improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
+  finishTrace.push(buildFinishTraceEntry(`${labelPrefix} final repair`, improvedSchedule, config));
+  improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
+  finishTrace.push(buildFinishTraceEntry(`${labelPrefix} final compact`, improvedSchedule, config));
+  return buildResultFromSchedule(improvedSchedule, config, unscheduled);
+}
 function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreReports = []) {
   const normalized = normalizeConfig(config);
   const budget = createSchedulerBudget(6000);
@@ -2529,125 +2813,59 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
   const schedule = [];
   const unscheduled = [];
   const finishTrace = [];
-  const pushFinishTrace = (label, sourceSchedule = schedule) => {
-    finishTrace.push(buildFinishTraceEntry(label, sourceSchedule, normalized));
-  };
 
   const carryForwardGames = (Array.isArray(existingSchedule) ? existingSchedule : [])
     .filter((game) => isPreseasonDate(game.date, normalized) || game.locked)
     .map((game) => ({ ...game, locked: true }));
-
   applyLockedGames(schedule, teams, openSlots, normalized, carryForwardGames, unscheduled, { skipValidation: true });
 
   const preseasonSchedule = schedule.filter((game) => isPreseasonDate(game.date, normalized));
   const standingsByDivision = buildDivisionStandings(preseasonSchedule, scoreReports);
   const tierSummary = [];
+  const groups = [];
 
   for (const division of DIVISIONS) {
     const divisionTeams = teams.filter((team) => team.baseDivision === division);
     const tierAssignments = buildRegularSeasonTierAssignments(divisionTeams, standingsByDivision[division] || [], normalized);
     for (const group of tierAssignments.groups) {
       for (const team of group.teams) {
-        team.division = group.key;
-        team.tierLabel = group.label || '';
+        const target = teams.find((entry) => entry.id === team.id);
+        if (!target) continue;
+        target.division = group.key;
+        target.tierLabel = group.label || '';
+        target.regularSeasonGroupSize = group.teams.length;
       }
+      groups.push({
+        key: group.key,
+        label: group.label,
+        teams: teams.filter((team) => team.division === group.key),
+      });
     }
     tierSummary.push(...tierAssignments.summary);
   }
 
-  completeRegularSeasonWithDatePlans(teams, openSlots, schedule, normalized, unscheduled, budget);
-  completeRegularSeasonWithinTiers(teams, openSlots, schedule, normalized, budget);
-
-  let safety = 0;
-  while (teams.some((team) => getNeed(team) > 0) && safety < 12000) {
-    if (budget.isExpired()) break;
-    safety += 1;
-    const slotGroups = buildOrderedSlotGroups(openSlots.filter((slot) => !slot.used && isRegularSeasonDate(slot.date, normalized)));
-    if (!slotGroups.length) break;
-    const candidate = findBestTierContinuationCandidate(teams, slotGroups, normalized, schedule);
-    if (!candidate) break;
-    scheduleGame(schedule, candidate.slot, candidate.teamA, candidate.teamB, { tier: candidate.teamA.tierLabel });
-  }
-
-  if (teams.some((team) => getNeed(team) > 0)) {
-    forceFillShortTeamsWithinTier(teams, openSlots, schedule, normalized, budget);
-  }
-
-  if (teams.some((team) => getNeed(team) > 0)) {
-    trueForceFillShortTeamsWithinTier(teams, openSlots, schedule, normalized, budget);
-  }
-
-  if (teams.some((team) => getNeed(team) > 0)) {
-    finalUnderTargetCompletionPass(teams, openSlots, schedule, normalized, budget);
-  }
-
-  if (teams.some((team) => getNeed(team) > 0)) {
-    ultraLateRescueFillShortTeams(teams, openSlots, schedule, normalized, budget);
-  }
+  const regularDates = getPhaseDates(normalized, 'regular');
+  const slotCapacityByDate = Object.fromEntries(
+    regularDates.map((date) => [date, openSlots.filter((slot) => !slot.used && slot.date === date).length])
+  );
+  const plannedGames = buildPlannedGamesForGroups(groups, regularDates, slotCapacityByDate, normalized, 'regular', unscheduled, budget);
+  placePlannedGames(plannedGames, openSlots, schedule, teams, normalized, 'regular');
 
   if (teams.some((team) => getNeed(team) > 0)) {
     completeRegularSeasonWithinTiers(teams, openSlots, schedule, normalized, budget);
   }
-
+  if (teams.some((team) => getNeed(team) > 0)) {
+    completeTinyResidualTierExactly(teams, openSlots, schedule, normalized, budget);
+  }
   if (teams.some((team) => getNeed(team) > 0)) {
     lastChanceCompleteShortTeamsWithinGroups(teams, openSlots, schedule, normalized, { regularSeasonOnly: true, budget });
   }
 
-  if (teams.some((team) => getNeed(team) > 0 && (team.baseDivision === "5th Boys" || team.division === "5th Boys"))) {
-    completeShortFifthBoysByTier(teams, openSlots, schedule, normalized, budget);
-  }
-
-  if (teams.some((team) => getNeed(team) > 0)) {
-    completeResidualRegularSeasonDatePlans(teams, openSlots, schedule, normalized, unscheduled, budget);
-  }
-
-  if (teams.some((team) => getNeed(team) > 0)) {
-    completeTinyResidualTierExactly(teams, openSlots, schedule, normalized, budget);
-  }
-  const teamsByTier = teams.reduce((acc, team) => {
-    const key = team.division;
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(team);
-    return acc;
-  }, {});
-
-  for (const [tierKey, tierTeams] of Object.entries(teamsByTier)) {
-    const needy = tierTeams.filter((team) => getNeed(team) > 0);
-    if (!needy.length) continue;
-    unscheduled.push({
-      matchup: tierKey.replace(/::/g, ' - '),
-      reason: 'Could not finish every remaining game within the available regular-season slots while staying inside the tier.',
-      suggestion: needy
-        .map((team) => buildShortTeamDiagnostics(team, tierTeams, openSlots, normalized, teams, { regularSeasonOnly: true }))
-        .join('; '),
-    });
-  }
-
-  if ((safety >= 12000 || budget.isExpired()) && teams.some((team) => getNeed(team) > 0)) {
-    unscheduled.push({
-      matchup: 'Regular season continuation',
-      reason: budget.isExpired()
-        ? 'Stopped the January-and-later scheduler after reaching the time budget to keep the app responsive.'
-        : 'Stopped the January-and-later scheduler after too many pairing attempts to avoid the app freezing.',
-      suggestion: 'If teams are still short, export the current setup bundle so we can inspect the exact continuation state.',
-    });
-  }
-
-  pushFinishTrace('Regular start', schedule);
-  let finalizedSchedule = repairMissingTeamGamesInSchedule(schedule, normalized);
-  pushFinishTrace('After repair missing', finalizedSchedule);
-  finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
-  pushFinishTrace('After compact earlier', finalizedSchedule);
-  finalizedSchedule = repairMissingTeamGamesInSchedule(finalizedSchedule, normalized);
-  pushFinishTrace('After second repair', finalizedSchedule);
-  finalizedSchedule = compactScheduleEarlier(finalizedSchedule, normalized);
-  pushFinishTrace('Regular final compact', finalizedSchedule);
-  finalizedSchedule = sortScheduleGames(finalizedSchedule);
-  pushFinishTrace('Regular sorted', finalizedSchedule);
-
-  let result = buildResultFromSchedule(finalizedSchedule, normalized, []);
+  let result = finalizePhaseSchedule(schedule, normalized, [], finishTrace, 'Regular');
   const unresolvedUnscheduled = result.auditSummary.missingTeams > 0 ? unscheduled : [];
-  result = buildResultFromSchedule(finalizedSchedule, normalized, unresolvedUnscheduled);
+  if (unresolvedUnscheduled.length) {
+    result = buildResultFromSchedule(result.schedule, normalized, unresolvedUnscheduled);
+  }
   return {
     ...result,
     seasonPhase: 'regular',
@@ -2656,7 +2874,6 @@ function generateTieredRegularSeasonEngine(config, existingSchedule = [], scoreR
     finishTrace,
   };
 }
-
 function createInitialState() {
   const seasonYear = 2026;
   const saturdays = getSeasonSaturdays(seasonYear).map((date) => ({ date, enabled: false }));
@@ -4878,194 +5095,48 @@ function sortScheduleGames(schedule) {
 }
 
 function generateScheduleEngine(config, lockedGames = []) {
-  const teams = buildTeams(config);
-  const openSlots = buildOpenSlots(config);
+  const normalized = normalizeConfig(config);
+  const budget = createSchedulerBudget(6000);
+  const teams = buildTeams(normalized);
+  const openSlots = buildOpenSlots(normalized);
   const schedule = [];
   const unscheduled = [];
-  const repeatTrace = [];
   const finishTrace = [];
-  const pushRepeatTrace = (label, sourceSchedule = schedule) => {
-    repeatTrace.push(buildRepeatTraceEntry(label, sourceSchedule, config));
-  };
-  const pushFinishTrace = (label, sourceSchedule = schedule) => {
-    finishTrace.push(buildFinishTraceEntry(label, sourceSchedule, config));
-  };
 
-  pushRepeatTrace('Start');
-  applyLockedGames(schedule, teams, openSlots, config, lockedGames, unscheduled);
-  pushRepeatTrace('After locked games');
-  scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, config);
-  scheduleFifthBoysPreseasonRoundRobinDates(teams, openSlots, schedule, unscheduled, config);
-  pushRepeatTrace('After 5th Boys doubleheader day');
+  applyLockedGames(schedule, teams, openSlots, normalized, lockedGames, unscheduled);
+  scheduleFifthBoysDoubleheaderDay(teams, openSlots, schedule, unscheduled, normalized);
 
-  const divisionPlans = {};
-  for (const division of DIVISIONS) {
-    const divisionTeams = teams.filter((team) => team.division === division);
-    const targetGames = Number(config.divisionGames[division] || 0);
-    divisionPlans[division] = divisionTeams.every((team) => getNeed(team) <= 0)
-      ? []
-      : buildDivisionMatchPlan(divisionTeams, targetGames, config, division);
-  }
-
-  seedEarlyPreseasonDatesFor5thBoys(teams, divisionPlans, openSlots, schedule, config);
-  placePlannedGamesByDate(teams, divisionPlans, openSlots, schedule, unscheduled, config);
-  pushRepeatTrace('After planned games by date');
-
-  for (const division of DIVISIONS) {
-    const leftovers = divisionPlans[division] || [];
-    if (!leftovers.length) continue;
-    const divisionTeams = teams.filter((team) => team.division === division);
-    placePlannedDivisionGames(teams, divisionTeams, leftovers, openSlots, schedule, unscheduled, config);
-    divisionPlans[division] = [];
-  }
-
-  pushRepeatTrace('After planned division leftovers');
-  forceScheduleRemainingGames(teams, openSlots, schedule, unscheduled, config);
-  completeShortPreseasonGamesByDivision(teams, openSlots, schedule, config);
-  completeShortFifthBoysPreseasonGames(teams, openSlots, schedule, config);
-  rebalanceShortPreseasonTeamsByReplacingGames(teams, schedule, config);
-  pushRepeatTrace('After completion fallback');
-
-  let improvedSchedule = schedule.map((game) => ({ ...game }));
-  pushFinishTrace('Preseason start', improvedSchedule);
-  improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
-  pushFinishTrace('After repair missing', improvedSchedule);
-
-  let previewTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
-  let previewRows = Object.values(previewTeamMap);
-  let allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
-
-  if (allTeamsScheduled) {
-    improvedSchedule = rebalanceScheduleTimes(improvedSchedule, config);
-    improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
-
-    if (Number(config.minGamesPerWeek || 0) > 0) {
-      improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
-      improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
-      improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
-      improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
-      improvedSchedule = rebalanceToMinimumWeeklyGames(improvedSchedule, config);
-      improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
-    } else {
-      improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
-      improvedSchedule = rebalanceTowardFinalSaturday(improvedSchedule, config);
-      improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
-    }
-
-    previewTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
-    previewRows = Object.values(previewTeamMap);
-    allTeamsScheduled = previewRows.every((team) => team.gamesScheduled === team.targetGames);
-  }
-
-  pushRepeatTrace('Before repeat repair', improvedSchedule);
-  pushFinishTrace('Before repeat repair', improvedSchedule);
-  improvedSchedule = rebuildAvoidableRepeatDivisions(improvedSchedule, config);
-  pushRepeatTrace('After avoidable-repeat rebuild', improvedSchedule);
-  pushFinishTrace('After avoidable-repeat rebuild', improvedSchedule);
-  improvedSchedule = tryReduceRepeatedOpponents(improvedSchedule, config);
-  pushRepeatTrace('After repeat-opponent repair', improvedSchedule);
-  pushFinishTrace('After repeat-opponent repair', improvedSchedule);
-  improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
-  pushFinishTrace('After repair missing', improvedSchedule);
-  improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
-  pushFinishTrace('After compact earlier', improvedSchedule);
-  improvedSchedule = repairMissingTeamGamesInSchedule(improvedSchedule, config);
-  pushFinishTrace('After second repair', improvedSchedule);
-  improvedSchedule = compactScheduleEarlier(improvedSchedule, config);
-  pushFinishTrace('Preseason final compact', improvedSchedule);
-  improvedSchedule = sortScheduleGames(improvedSchedule);
-  pushRepeatTrace('Final schedule', improvedSchedule);
-  pushFinishTrace('Preseason sorted', improvedSchedule);
-
-  const finalTeamMap = makeTeamMapFromSchedule(improvedSchedule, config);
-  const finalTeams = Object.values(finalTeamMap);
-  const repeatedOpponentData = getRepeatedOpponentViolations(improvedSchedule, config);
-
-  const auditRows = finalTeams.map((team) => ({
-    team: team.name,
-    division: team.division,
-    games: team.gamesScheduled,
-    target: team.targetGames,
-    early: team.earlyGames,
-    home: team.home,
-    away: team.away,
-    dh: team.doubleHeaders,
-    morning: team.morningGames || 0,
-    afternoon: team.afternoonGames || 0,
-    maxSameTime: team.maxSameTimeSlot,
-    issues: [
-      team.gamesScheduled < team.targetGames
-        ? 'Missing games'
-        : team.gamesScheduled > team.targetGames
-          ? 'Too many games'
-          : null,
-      team.earlyGames > Number(config.maxEarlyGames) ? 'Too many early games' : null,
-      getHomeAwayIssueLabel(team),
-      team.doubleHeaders > (team.maxDoubleheadersPerTeam || 0) ? 'Too many doubleheaders' : null,
-      team.maxSameTimeSlot > (team.targetGames <= 8 ? 2 : 3) ? 'Time slot concentration' : null,
-      (team.morningGames || 0) < getMinimumMorningGames(team) ||
-      (team.afternoonGames || 0) < getMinimumAfternoonGames(team) ||
-      Math.max(team.morningGames || 0, team.afternoonGames || 0) > Math.ceil(team.targetGames * 0.62)
-        ? 'Poor AM/PM balance'
-        : null,
-      repeatedOpponentData.teamViolationCounts[team.name] ? 'Repeated opponent' : null,
-    ].filter(Boolean),
+  const preseasonDates = getPhaseDates(normalized, 'preseason');
+  const slotCapacityByDate = Object.fromEntries(
+    preseasonDates.map((date) => [date, openSlots.filter((slot) => !slot.used && slot.date === date).length])
+  );
+  const groups = DIVISIONS.map((division) => ({
+    key: division,
+    label: '',
+    teams: teams.filter((team) => team.division === division),
   }));
 
-  const weeklyMinimumViolations = getWeeklyMinimumViolations(improvedSchedule, config);
-  const weeklyMinimumDeficit = weeklyMinimumViolations.reduce((sum, entry) => sum + (entry.deficit || 0), 0);
+  const plannedGames = buildPlannedGamesForGroups(groups, preseasonDates, slotCapacityByDate, normalized, 'preseason', unscheduled, budget);
+  placePlannedGames(plannedGames, openSlots, schedule, teams, normalized, 'preseason');
 
-  const auditSummary = {
-    totalGames: improvedSchedule.length,
-    totalTeams: teams.length,
-    allTeamsScheduled: auditRows.every((row) => row.games === row.target),
-    earlyViolations: auditRows.filter((row) => row.early > Number(config.maxEarlyGames)).length,
-    homeAwayIssues: finalTeams.filter((team) => hasHomeAwayIssue(team)).length,
-    missingTeams: auditRows.filter((row) => row.games !== row.target).length,
-    timeVarietyIssues: auditRows.filter((row) => row.issues.includes('Poor AM/PM balance') || row.maxSameTime > (row.target <= 8 ? 2 : 3)).length,
-    weeklyMinimumIssues: weeklyMinimumViolations.length,
-    weeklyMinimumDeficit,
-    repeatedOpponentIssues: repeatedOpponentData.pairViolations.length,
-    middleGapCount: getMiddleGapCount(improvedSchedule, config),
-    enabledDates: config.saturdays.filter((entry) => entry.enabled).length,
-    enabledCourts: Object.values(config.dateCourtSettings).reduce(
-      (sum, courts) => sum + courts.filter((court) => court.enabled && String(court.name || '').trim() !== '').length,
-      0
-    ),
+  if (teams.some((team) => getNeed(team) > 0)) {
+    completeShortPreseasonGamesByDivision(teams, openSlots, schedule, normalized);
+  }
+  if (teams.some((team) => getNeed(team) > 0)) {
+    completeShortFifthBoysPreseasonGames(teams, openSlots, schedule, normalized);
+  }
+  if (teams.some((team) => getNeed(team) > 0)) {
+    rebalanceShortPreseasonTeamsByReplacingGames(teams, schedule, normalized);
+  }
+
+  const result = finalizePhaseSchedule(schedule, normalized, unscheduled, finishTrace, 'Preseason');
+  return {
+    ...result,
+    repeatTrace: [],
+    finishTrace,
+    divisionRepeatMath: buildDivisionRepeatMath(normalized),
   };
-
-  if (!auditSummary.allTeamsScheduled) {
-    const missing = auditRows
-      .filter((row) => row.games !== row.target)
-      .map((row) => `${row.team} (${row.games}/${row.target})`);
-
-    if (missing.length) {
-      unscheduled.push({
-        matchup: 'Final completion check',
-        reason: 'Some teams are still short after per-day rotation and completion fallback',
-        suggestion: missing.join('; '),
-      });
-    }
-  }
-
-  if (weeklyMinimumViolations.length) {
-    unscheduled.push({
-      matchup: 'Minimum games per week',
-      reason: `One or more enabled Saturdays fell below the required minimum of ${Number(config.minGamesPerWeek || 0)} games, excluding the 5th Boys doubleheader date.`,
-      suggestion: weeklyMinimumViolations
-        .map((entry) => `${entry.date} (${entry.games}/${entry.minimum})`)
-        .join('; '),
-    });
-  }
-
-  return { schedule: improvedSchedule, auditRows, auditSummary, unscheduled, repeatTrace: annotateRepeatTrace(repeatTrace), finishTrace, divisionRepeatMath: buildDivisionRepeatMath(config) };
 }
-
-
-
-
 function buildDivisionUniqueMatchPlan(divisionTeams, targetGames, config, division) {
   const rounds = buildRoundRobinRounds(divisionTeams);
   if (!rounds.length) return [];
