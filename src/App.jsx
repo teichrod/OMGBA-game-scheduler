@@ -786,6 +786,8 @@ function buildRegularSeasonTierAssignments(teams, standingsRows, config = DEFAUL
   const divisionOne = orderedTeams.slice(0, splitIndex);
   const divisionTwo = orderedTeams.slice(splitIndex);
   const baseDivision = teams[0]?.baseDivision || teams[0]?.division || '';
+  const withGroupSize = (group) => group.map((team) => ({ ...team, regularSeasonGroupSize: group.length }));
+  const forGroupEvaluation = (group) => group.map((team) => ({ ...team, regularSeasonGroupSize: group.length }));
   const remainingParity = (group) => group.reduce((sum, team) => sum + Math.max(0, Number(team.targetGames || 0) - Number(team.gamesScheduled || 0)), 0) % 2;
   const rankIndex = new Map(orderedTeams.map((team, index) => [team.id, index]));
   const remainingNeed = (team) => Math.max(0, Number(team.targetGames || 0) - Number(team.gamesScheduled || 0));
@@ -800,22 +802,125 @@ function buildRegularSeasonTierAssignments(teams, standingsRows, config = DEFAUL
     group
       .filter((opponent) => opponent.id !== team.id)
       .reduce((sum, opponent) => sum + remainingRepeatCapacity(team, opponent), 0);
+  const legalOpponentCountWithinGroup = (team, group) =>
+    group.filter((opponent) =>
+      opponent.id !== team.id &&
+      remainingNeed(opponent) > 0 &&
+      remainingRepeatCapacity(team, opponent) > 0
+    ).length;
+  const exactGroupShortfall = (group) => {
+    const working = forGroupEvaluation(group).filter((team) => remainingNeed(team) > 0);
+    if (working.length < 2) {
+      return working.reduce((sum, team) => sum + remainingNeed(team), 0);
+    }
+
+    const needs = working.map((team) => remainingNeed(team));
+    const caps = working.map((teamA, i) =>
+      working.map((teamB, j) => {
+        if (i === j) return 0;
+        return remainingRepeatCapacity(teamA, teamB);
+      })
+    );
+    const memo = new Map();
+
+    const capacityForTeam = (nextNeeds, nextCaps, index) =>
+      nextCaps[index].reduce((sum, cap, opponentIndex) => (
+        opponentIndex === index || nextNeeds[opponentIndex] <= 0 ? sum : sum + Math.min(cap, nextNeeds[opponentIndex])
+      ), 0);
+
+    const search = (nextNeeds, nextCaps) => {
+      const remaining = nextNeeds.reduce((sum, need) => sum + need, 0);
+      if (remaining === 0) return 0;
+
+      const key = `${nextNeeds.join(',')}|${nextCaps.map((row) => row.join(',')).join('|')}`;
+      if (memo.has(key)) return memo.get(key);
+
+      let lowerBound = remaining;
+      for (let i = 0; i < nextNeeds.length; i += 1) {
+        const unmet = Math.max(0, nextNeeds[i] - capacityForTeam(nextNeeds, nextCaps, i));
+        lowerBound = Math.max(lowerBound, unmet * 2);
+      }
+
+      const teamIndex = nextNeeds
+        .map((need, index) => ({ index, need, capacity: capacityForTeam(nextNeeds, nextCaps, index) }))
+        .filter((entry) => entry.need > 0)
+        .sort((a, b) => {
+          if (a.capacity !== b.capacity) return a.capacity - b.capacity;
+          if (b.need !== a.need) return b.need - a.need;
+          return String(working[a.index].name || '').localeCompare(String(working[b.index].name || ''), undefined, { numeric: true });
+        })[0]?.index;
+
+      if (teamIndex == null) {
+        memo.set(key, 0);
+        return 0;
+      }
+
+      const opponents = nextNeeds
+        .map((need, index) => ({
+          index,
+          need,
+          cap: nextCaps[teamIndex][index],
+          capacity: capacityForTeam(nextNeeds, nextCaps, index),
+        }))
+        .filter((entry) => entry.index !== teamIndex && entry.need > 0 && entry.cap > 0)
+        .sort((a, b) => {
+          if (b.need !== a.need) return b.need - a.need;
+          if (a.capacity !== b.capacity) return a.capacity - b.capacity;
+          if (b.cap !== a.cap) return b.cap - a.cap;
+          return String(working[a.index].name || '').localeCompare(String(working[b.index].name || ''), undefined, { numeric: true });
+        });
+
+      if (!opponents.length) {
+        memo.set(key, lowerBound);
+        return lowerBound;
+      }
+
+      let best = lowerBound;
+      for (const opponent of opponents) {
+        const followingNeeds = [...nextNeeds];
+        const followingCaps = nextCaps.map((row) => [...row]);
+        followingNeeds[teamIndex] -= 1;
+        followingNeeds[opponent.index] -= 1;
+        followingCaps[teamIndex][opponent.index] -= 1;
+        followingCaps[opponent.index][teamIndex] -= 1;
+        best = Math.min(best, search(followingNeeds, followingCaps));
+        if (best === 0) break;
+      }
+
+      memo.set(key, best);
+      return best;
+    };
+
+    return search(needs, caps);
+  };
   const groupFeasibilityPenalty = (group) => {
-    const totalNeed = group.reduce((sum, team) => sum + remainingNeed(team), 0);
-    const teamDeficit = group.reduce((sum, team) => {
+    const evaluationGroup = forGroupEvaluation(group);
+    const totalNeed = evaluationGroup.reduce((sum, team) => sum + remainingNeed(team), 0);
+    const teamDeficit = evaluationGroup.reduce((sum, team) => {
       const need = remainingNeed(team);
       if (!need) return sum;
-      return sum + Math.max(0, need - repeatCapacityWithinGroup(team, group));
+      return sum + Math.max(0, need - repeatCapacityWithinGroup(team, evaluationGroup));
     }, 0);
-    const pairCapacity = group.reduce((sum, team, index) => {
-      for (let i = index + 1; i < group.length; i += 1) {
-        const opponent = group[i];
+    const pairCapacity = evaluationGroup.reduce((sum, team, index) => {
+      for (let i = index + 1; i < evaluationGroup.length; i += 1) {
+        const opponent = evaluationGroup[i];
         sum += remainingRepeatCapacity(team, opponent);
       }
       return sum;
     }, 0);
+    const strandedNeedPenalty = evaluationGroup.reduce((sum, team) => {
+      const need = remainingNeed(team);
+      if (!need) return sum;
+      if (legalOpponentCountWithinGroup(team, evaluationGroup) > 0) return sum;
+      return sum + need;
+    }, 0);
+    const exactShortfall = exactGroupShortfall(evaluationGroup);
 
-    return (teamDeficit * 10000) + ((totalNeed % 2) * 2500) + (Math.max(0, Math.ceil(totalNeed / 2) - pairCapacity) * 5000);
+    return (exactShortfall * 250000)
+      + (strandedNeedPenalty * 100000)
+      + (teamDeficit * 10000)
+      + ((totalNeed % 2) * 2500)
+      + (Math.max(0, Math.ceil(totalNeed / 2) - pairCapacity) * 5000);
   };
   const combinedFeasibilityPenalty = () => groupFeasibilityPenalty(divisionOne) + groupFeasibilityPenalty(divisionTwo);
 
@@ -881,8 +986,8 @@ function buildRegularSeasonTierAssignments(teams, standingsRows, config = DEFAUL
 
   return {
     groups: [
-      { key: `${baseDivision}::Division 1`, label: 'Division 1', teams: divisionOne },
-      { key: `${baseDivision}::Division 2`, label: 'Division 2', teams: divisionTwo },
+      { key: `${baseDivision}::Division 1`, label: 'Division 1', teams: withGroupSize(divisionOne) },
+      { key: `${baseDivision}::Division 2`, label: 'Division 2', teams: withGroupSize(divisionTwo) },
     ],
     summary: orderedTeams.map((team, index) => ({
       team: team.name,
@@ -892,7 +997,6 @@ function buildRegularSeasonTierAssignments(teams, standingsRows, config = DEFAUL
     })),
   };
 }
-
 function findBestTierContinuationCandidate(teams, slotGroups, config, currentSchedule = []) {
   const nonRepeatAvailabilityCache = {};
   const needyTeams = teams
