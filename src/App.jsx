@@ -2763,7 +2763,15 @@ function buildPlannedGamesForGroups(groups, dates, slotCapacityByDate, config, p
     });
   }
 
-  return plannedGames.sort((a, b) => compareSlotLike(a, b));
+  return plannedGames.sort((a, b) => {
+    const dateDiff = parseShortDate(a.date) - parseShortDate(b.date);
+    if (dateDiff !== 0) return dateDiff;
+    if ((a.roundIndex || 0) !== (b.roundIndex || 0)) return (a.roundIndex || 0) - (b.roundIndex || 0);
+    const aGroup = String(a.groupKey || '');
+    const bGroup = String(b.groupKey || '');
+    if (aGroup !== bGroup) return aGroup.localeCompare(bGroup, undefined, { numeric: true });
+    return `${a.teamA?.name || ''}-${a.teamB?.name || ''}`.localeCompare(`${b.teamA?.name || ''}-${b.teamB?.name || ''}`, undefined, { numeric: true });
+  });
 }
 
 function placePlannedGames(plannedGames, openSlots, schedule, teams, config, phase) {
